@@ -1,0 +1,7 @@
+rumps
+pynput
+sounddevice
+numpy
+pyperclip
+elevenlabs
+python-dotenv
