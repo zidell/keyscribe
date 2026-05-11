@@ -4,5 +4,6 @@ macOS 메뉴바 앱. Right Option 키를 누르는 동안 마이크로 녹음하
 
 ## 주의사항
 
-- `.env` 파일은 절대 읽지 말 것. API 키 등 민감한 정보가 포함되어 있다.
+- `.env` 파일은 더 이상 사용하지 않는다.
+- `~/Library/Application Support/voice-stt/user_config.json` 파일은 절대 읽지 말 것. API 키 등 민감한 정보가 저장된다.
 - `config.json`에는 민감한 값이 없으므로 읽어도 무방하다.

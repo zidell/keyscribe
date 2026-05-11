@@ -66,16 +66,30 @@ def save_user_config(data: dict):
 
 
 class RecordingOverlay:
-    WIDTH = 180
-    HEIGHT = 44
+    WIDTH = 200
+    HEIGHT = 48
 
     def __init__(self):
         try:
             from AppKit import (
                 NSWindow, NSTextField, NSColor, NSFont, NSMakeRect,
-                NSBorderlessWindowMask, NSBackingStoreBuffered,
-                NSFloatingWindowLevel, NSScreen,
+                NSBackingStoreBuffered, NSScreen,
             )
+            # 상수 이름이 macOS 버전마다 다름 — 순서대로 시도
+            try:
+                from AppKit import NSWindowStyleMaskBorderless as _borderless
+            except ImportError:
+                try:
+                    from AppKit import NSBorderlessWindowMask as _borderless
+                except ImportError:
+                    _borderless = 0
+            try:
+                from AppKit import NSWindowLevelFloating as _floating_level
+            except ImportError:
+                try:
+                    from AppKit import NSFloatingWindowLevel as _floating_level
+                except ImportError:
+                    _floating_level = 3
             try:
                 from AppKit import NSTextAlignmentCenter as _align_center
             except ImportError:
@@ -87,11 +101,11 @@ class RecordingOverlay:
 
             self._win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(x, y, self.WIDTH, self.HEIGHT),
-                NSBorderlessWindowMask,
+                _borderless,
                 NSBackingStoreBuffered,
                 False,
             )
-            self._win.setLevel_(NSFloatingWindowLevel)
+            self._win.setLevel_(_floating_level)
             self._win.setOpaque_(False)
             self._win.setBackgroundColor_(NSColor.clearColor())
             self._win.setHasShadow_(True)
@@ -103,9 +117,13 @@ class RecordingOverlay:
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(0.08, 0.08, 0.08, 0.82).CGColor()
             )
             content.layer().setCornerRadius_(14)
+            content.layer().setMasksToBounds_(True)
 
+            # 15pt 폰트 렌더링 높이 ≈ 20pt → 박스 높이에서 수직 중앙 정렬
+            font_h = 20
+            label_y = (self.HEIGHT - font_h) // 2
             self._label = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(0, 0, self.WIDTH, self.HEIGHT)
+                NSMakeRect(0, label_y, self.WIDTH, font_h)
             )
             self._label.setEditable_(False)
             self._label.setBezeled_(False)
@@ -155,7 +173,7 @@ class VoiceSTTApp(rumps.App):
         self.apikey_item = rumps.MenuItem("API Key 설정...", callback=self._on_set_api_key)
         self.menu = [self.status_item, self.last_item, None, self.apikey_item, None]
 
-        self.overlay = RecordingOverlay()
+        self.overlay: RecordingOverlay | None = None  # 런루프 시작 후 초기화
         self._ui_queue: queue.Queue = queue.Queue()
 
         listener = keyboard.Listener(
@@ -192,6 +210,11 @@ class VoiceSTTApp(rumps.App):
     # UI 큐 (백그라운드 → 메인 스레드)
     # ------------------------------------------------------------------
 
+    @rumps.timer(0.3)
+    def _init_overlay_once(self, sender):
+        sender.stop()
+        self.overlay = RecordingOverlay()
+
     def _ui(self, fn):
         self._ui_queue.put(fn)
 
@@ -227,7 +250,7 @@ class VoiceSTTApp(rumps.App):
         self._ui(lambda: (
             setattr(self, "title", "🔴"),
             setattr(self.status_item, "title", "상태: 녹음중..."),
-            self.overlay.show("🔴  녹음중"),
+            self.overlay.show("🔴  녹음중") if self.overlay else None,
         ))
 
         self.stream = sd.InputStream(
@@ -247,7 +270,7 @@ class VoiceSTTApp(rumps.App):
         self._ui(lambda: (
             setattr(self, "title", "⏳"),
             setattr(self.status_item, "title", "상태: 변환중..."),
-            self.overlay.show("⏳  변환중..."),
+            self.overlay.show("⏳  변환중...") if self.overlay else None,
         ))
 
         if self.stream:
@@ -312,7 +335,7 @@ class VoiceSTTApp(rumps.App):
                 os.unlink(tmp_path)
             self._ui(lambda: (
                 setattr(self, "title", "🎙"),
-                self.overlay.hide(),
+                self.overlay.hide() if self.overlay else None,
             ))
 
     # ------------------------------------------------------------------
