@@ -39,27 +39,10 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 USER_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "voice-stt" / "user_config.json"
 
 
-def ensure_accessibility_permission():
-    import subprocess
-
+def is_accessibility_granted() -> bool:
     lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("ApplicationServices"))
     lib.AXIsProcessTrusted.restype = ctypes.c_bool
-
-    if lib.AXIsProcessTrusted():
-        return
-
-    subprocess.Popen([
-        "open",
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-    ])
-    subprocess.run([
-        "osascript", "-e",
-        'display dialog "voice-stt 가 접근성 권한을 필요로 합니다.\\n\\n'
-        "시스템 환경설정 > 개인 정보 보호 및 보안 > 접근성 에서 "
-        '이 앱을 허용한 후 다시 실행해 주세요." '
-        'buttons {"확인"} default button "확인" with title "voice-stt"',
-    ])
-    raise SystemExit(0)
+    return lib.AXIsProcessTrusted()
 
 
 def load_config() -> dict:
@@ -171,6 +154,9 @@ class VoiceSTTApp(rumps.App):
     def __init__(self):
         super().__init__("🎙", quit_button="종료")
         self.recording = False
+        self._transcribing = False
+        self._cancelled = False
+        self._reset_timer: threading.Timer | None = None
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
 
@@ -186,7 +172,18 @@ class VoiceSTTApp(rumps.App):
         self.status_item = rumps.MenuItem("상태: 대기중")
         self.last_item = rumps.MenuItem("마지막 변환: -")
         self.apikey_item = rumps.MenuItem("API Key 설정...", callback=self._on_set_api_key)
-        self.menu = [self.status_item, self.last_item, None, self.apikey_item, None]
+        self.config_item = rumps.MenuItem("설정...", callback=self._on_edit_config)
+        self.restart_item = rumps.MenuItem("재실행", callback=self._restart)
+
+        if not is_accessibility_granted():
+            self._accessibility_item = rumps.MenuItem(
+                "⚠️ 접근성 권한 필요 — 클릭하여 설정 열기",
+                callback=self._open_accessibility_prefs,
+            )
+            self.menu = [self.status_item, self.last_item, None, self._accessibility_item, None, self.apikey_item, self.config_item, None, self.restart_item, None]
+        else:
+            self._accessibility_item = None
+            self.menu = [self.status_item, self.last_item, None, self.apikey_item, self.config_item, None, self.restart_item, None]
 
         self.overlay: RecordingOverlay | None = None  # 런루프 시작 후 초기화
         self._ui_queue: queue.Queue = queue.Queue()
@@ -197,6 +194,29 @@ class VoiceSTTApp(rumps.App):
         )
         listener.daemon = True
         listener.start()
+
+    # ------------------------------------------------------------------
+    # 접근성 권한 안내
+    # ------------------------------------------------------------------
+
+    def _open_accessibility_prefs(self, _):
+        import subprocess
+        subprocess.Popen([
+            "open",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ])
+        rumps.notification("voice-stt", "", "권한 허용 후 앱을 재시작해 주세요.")
+
+    def _restart(self, _):
+        import subprocess
+        import sys
+        exe = sys.executable
+        if ".app/Contents" in exe:
+            bundle = exe[:exe.index(".app/Contents") + 4]
+            subprocess.Popen(["open", bundle])
+        else:
+            subprocess.Popen([sys.executable] + sys.argv)
+        rumps.quit_application()
 
     # ------------------------------------------------------------------
     # API Key 설정 다이얼로그 (메인 스레드, 메뉴 클릭 콜백)
@@ -220,6 +240,37 @@ class VoiceSTTApp(rumps.App):
                 rumps.notification("voice-stt", "", "API Key가 저장되었습니다.")
             else:
                 rumps.alert(title="voice-stt", message="API Key를 입력해 주세요.")
+
+    # ------------------------------------------------------------------
+    # 설정 편집 (config.json 직접 수정)
+    # ------------------------------------------------------------------
+
+    def _on_edit_config(self, _):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                current = f.read()
+        except Exception:
+            current = "{}"
+
+        window = rumps.Window(
+            title="설정 (config.json)",
+            message="JSON을 수정한 후 저장하세요.",
+            default_text=current,
+            ok="저장",
+            cancel="취소",
+            dimensions=(400, 180),
+        )
+        response = window.run()
+        if response.clicked:
+            text = response.text.strip()
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as e:
+                rumps.alert(title="voice-stt", message=f"JSON 오류:\n{e}")
+                return
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(parsed, f, ensure_ascii=False, indent=2)
+            rumps.notification("voice-stt", "", "설정이 저장되었습니다.")
 
     # ------------------------------------------------------------------
     # UI 큐 (백그라운드 → 메인 스레드)
@@ -247,8 +298,10 @@ class VoiceSTTApp(rumps.App):
     # ------------------------------------------------------------------
 
     def _on_press(self, key):
-        if key == keyboard.Key.alt_r and not self.recording:
+        if key == keyboard.Key.alt_r and not self.recording and not self._transcribing:
             self._start_recording()
+        elif key == keyboard.Key.esc and (self.recording or self._transcribing):
+            self._cancel_recording()
 
     def _on_release(self, key):
         if key == keyboard.Key.alt_r and self.recording:
@@ -258,7 +311,31 @@ class VoiceSTTApp(rumps.App):
     # 녹음 (pynput 백그라운드 스레드에서 호출됨)
     # ------------------------------------------------------------------
 
+    def _cancel_recording(self):
+        self._cancelled = True
+        self.recording = False
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+        self._ui(lambda: (
+            setattr(self, "title", "🎙"),
+            setattr(self.status_item, "title", "상태: 취소됨"),
+            self.overlay.hide() if self.overlay else None,
+        ))
+        if self._reset_timer:
+            self._reset_timer.cancel()
+        self._reset_timer = threading.Timer(
+            2.5,
+            lambda: self._ui(lambda: setattr(self.status_item, "title", "상태: 대기중")),
+        )
+        self._reset_timer.start()
+
     def _start_recording(self):
+        if self._reset_timer:
+            self._reset_timer.cancel()
+            self._reset_timer = None
+        self._cancelled = False
         self.recording = True
         self.audio_frames = []
 
@@ -293,6 +370,9 @@ class VoiceSTTApp(rumps.App):
             self.stream.close()
             self.stream = None
 
+        if self._cancelled:
+            return
+        self._transcribing = True
         threading.Thread(target=self._transcribe, daemon=True).start()
 
     # ------------------------------------------------------------------
@@ -307,6 +387,9 @@ class VoiceSTTApp(rumps.App):
             api_key = self._api_key
             if not api_key:
                 raise ValueError("API Key가 설정되지 않았습니다. 메뉴에서 'API Key 설정...'을 눌러 입력해 주세요.")
+
+            if self._cancelled:
+                return
 
             audio_data = np.concatenate(self.audio_frames, axis=0)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -327,6 +410,9 @@ class VoiceSTTApp(rumps.App):
                     keyterms=config.get("keyterms", []) or None,
                 )
 
+            if self._cancelled:
+                return
+
             text = (result.text or "").strip()
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
@@ -342,16 +428,19 @@ class VoiceSTTApp(rumps.App):
             import traceback
             traceback.print_exc()
             print(f"[voice-stt] 오류: {e}", flush=True)
-            err = type(e).__name__
-            self._ui(lambda err=err: setattr(self.status_item, "title", f"상태: 오류 - {err}"))
+            if not self._cancelled:
+                err = type(e).__name__
+                self._ui(lambda err=err: setattr(self.status_item, "title", f"상태: 오류 - {err}"))
 
         finally:
+            self._transcribing = False
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            self._ui(lambda: (
-                setattr(self, "title", "🎙"),
-                self.overlay.hide() if self.overlay else None,
-            ))
+            if not self._cancelled:
+                self._ui(lambda: (
+                    setattr(self, "title", "🎙"),
+                    self.overlay.hide() if self.overlay else None,
+                ))
 
     # ------------------------------------------------------------------
     # 붙여넣기 + Enter (메인 스레드에서 호출됨)
@@ -365,12 +454,11 @@ class VoiceSTTApp(rumps.App):
             kb.press("v")
             kb.release("v")
 
-        time.sleep(0.05)
+        time.sleep(0.1)
 
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
 
 
 if __name__ == "__main__":
-    ensure_accessibility_permission()
     VoiceSTTApp().run()
