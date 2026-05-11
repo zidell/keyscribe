@@ -13,6 +13,21 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
+# 빌드된 앱(.app)에서는 ssl이 CA 파일을 찾지 못한다.
+# certifi 인증서를 파일 경로 대신 문자열(cadata)로 직접 주입해 경로 문제를 우회한다.
+import ssl
+import certifi as _certifi_mod
+with open(_certifi_mod.where(), "r", encoding="ascii") as _f:
+    _CA_DATA = _f.read()
+_orig_create_ssl_context = ssl.create_default_context
+def _certifi_ssl_context(purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None, capath=None, cadata=None):
+    if cadata is None:
+        cadata = _CA_DATA
+        cafile = None
+        capath = None
+    return _orig_create_ssl_context(purpose, cafile=cafile, capath=capath, cadata=cadata)
+ssl.create_default_context = _certifi_ssl_context
+
 import numpy as np
 import pyperclip
 import rumps
