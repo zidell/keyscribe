@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import wave
 import time
 import queue
@@ -64,10 +65,21 @@ def save_user_config(data: dict):
 
 
 class RecordingOverlay:
-    WIDTH = 200
-    HEIGHT = 48
+    WIDTH = 230
+    HEIGHT = 52
+    BAR_COUNT = 5
+    BAR_W = 3
+    BAR_GAP = 4
+    BAR_MAX_H = 28
+    BAR_MIN_H = 4
 
     def __init__(self):
+        self._available = False
+        self._volume = 0.0
+        self._phase = 0.0
+        self._bar_layers = []
+        self._bar_xs = []
+
         try:
             from AppKit import (
                 NSWindow, NSTextField, NSColor, NSFont, NSMakeRect,
@@ -89,13 +101,16 @@ class RecordingOverlay:
                 except ImportError:
                     _floating_level = 3
             try:
-                from AppKit import NSTextAlignmentCenter as _align_center
+                from AppKit import NSTextAlignmentLeft as _align_left
             except ImportError:
-                _align_center = 2
+                _align_left = 0
 
-            screen = NSScreen.mainScreen().frame()
-            x = (screen.size.width - self.WIDTH) / 2
-            y = 80
+            # 해상도에 따라 중앙 하단 배치 (Dock 위)
+            screen = NSScreen.mainScreen()
+            vis = screen.visibleFrame()
+            full = screen.frame()
+            x = (full.size.width - self.WIDTH) / 2
+            y = vis.origin.y + 40
 
             self._win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(x, y, self.WIDTH, self.HEIGHT),
@@ -112,24 +127,46 @@ class RecordingOverlay:
             content = self._win.contentView()
             content.setWantsLayer_(True)
             content.layer().setBackgroundColor_(
-                NSColor.colorWithCalibratedRed_green_blue_alpha_(0.08, 0.08, 0.08, 0.82).CGColor()
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(0.1, 0.1, 0.1, 0.88).CGColor()
             )
-            content.layer().setCornerRadius_(14)
+            content.layer().setCornerRadius_(self.HEIGHT / 2)
             content.layer().setMasksToBounds_(True)
 
-            # 15pt 폰트 렌더링 높이 ≈ 20pt → 박스 높이에서 수직 중앙 정렬
             font_h = 20
             label_y = (self.HEIGHT - font_h) // 2
+            label_x = 22
+            label_w = 118
             self._label = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(0, label_y, self.WIDTH, font_h)
+                NSMakeRect(label_x, label_y, label_w, font_h)
             )
             self._label.setEditable_(False)
             self._label.setBezeled_(False)
             self._label.setDrawsBackground_(False)
             self._label.setTextColor_(NSColor.whiteColor())
-            self._label.setAlignment_(_align_center)
-            self._label.setFont_(NSFont.systemFontOfSize_(15))
+            self._label.setAlignment_(_align_left)
+            self._label.setFont_(NSFont.systemFontOfSize_(14))
             content.addSubview_(self._label)
+
+            # 볼륨 인디케이터 바
+            bar_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.28, 0.28, 1.0)
+            bar_area_x = label_x + label_w + 6
+            bar_total_w = self.BAR_COUNT * self.BAR_W + (self.BAR_COUNT - 1) * self.BAR_GAP
+            avail_w = self.WIDTH - bar_area_x - 22
+            bar_start_x = bar_area_x + (avail_w - bar_total_w) / 2
+
+            try:
+                from Quartz import CALayer
+                for i in range(self.BAR_COUNT):
+                    bx = bar_start_x + i * (self.BAR_W + self.BAR_GAP)
+                    layer = CALayer.layer()
+                    layer.setFrame_(NSMakeRect(bx, (self.HEIGHT - self.BAR_MIN_H) / 2, self.BAR_W, self.BAR_MIN_H))
+                    layer.setBackgroundColor_(bar_color.CGColor())
+                    layer.setCornerRadius_(self.BAR_W / 2)
+                    content.layer().addSublayer_(layer)
+                    self._bar_layers.append(layer)
+                    self._bar_xs.append(bx)
+            except Exception:
+                pass  # 바 없이도 동작
 
             self._available = True
         except Exception:
@@ -138,6 +175,29 @@ class RecordingOverlay:
             print("[voice-stt] 오버레이 초기화 실패 — 오버레이 없이 계속 실행합니다.")
             self._available = False
 
+    def set_volume(self, level: float):
+        self._volume = max(0.0, min(1.0, level))
+
+    def tick(self):
+        if not self._available or not self._bar_layers:
+            return
+        self._phase += 0.4
+        self._volume *= 0.88  # 자연스러운 감쇠
+        v = self._volume
+        try:
+            from Quartz import CATransaction
+            from AppKit import NSMakeRect
+            CATransaction.begin()
+            CATransaction.setDisableActions_(True)
+            for i, layer in enumerate(self._bar_layers):
+                wave = 0.5 + 0.5 * math.sin(self._phase + i * 1.3)
+                lv = v * (0.5 + 0.5 * wave) + (1 - v) * 0.12 * wave
+                h = self.BAR_MIN_H + lv * (self.BAR_MAX_H - self.BAR_MIN_H)
+                layer.setFrame_(NSMakeRect(self._bar_xs[i], (self.HEIGHT - h) / 2, self.BAR_W, h))
+            CATransaction.commit()
+        except Exception:
+            pass
+
     def show(self, text: str = "🔴  녹음중"):
         if self._available:
             self._label.setStringValue_(text)
@@ -145,6 +205,7 @@ class RecordingOverlay:
 
     def hide(self):
         if self._available:
+            self._volume = 0.0
             self._win.orderOut_(None)
 
 
@@ -292,6 +353,8 @@ class VoiceSTTApp(rumps.App):
                 fn()
         except queue.Empty:
             pass
+        if self.overlay and (self.recording or self._transcribing):
+            self.overlay.tick()
 
     # ------------------------------------------------------------------
     # 키 이벤트 (pynput 백그라운드 스레드)
@@ -355,6 +418,9 @@ class VoiceSTTApp(rumps.App):
 
     def _audio_callback(self, indata, frames, time_info, status):
         self.audio_frames.append(indata.copy())
+        rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+        if self.overlay:
+            self.overlay.set_volume(min(1.0, rms / 4000.0))
 
     def _stop_and_transcribe(self):
         self.recording = False
