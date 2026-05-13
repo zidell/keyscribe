@@ -201,6 +201,14 @@ class RecordingOverlay:
     def show(self, text: str = "🔴  녹음중"):
         if self._available:
             self._label.setStringValue_(text)
+            from AppKit import NSScreen, NSMakeRect
+            screen = NSScreen.mainScreen()
+            full = screen.frame()
+            vis = screen.visibleFrame()
+            x = (full.size.width - self.WIDTH) / 2
+            y = vis.origin.y + 40
+            cur = self._win.frame()
+            self._win.setFrame_display_(NSMakeRect(x, y, cur.size.width, cur.size.height), False)
             self._win.orderFrontRegardless()
 
     def hide(self):
