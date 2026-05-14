@@ -416,13 +416,35 @@ class VoiceSTTApp(rumps.App):
             self.overlay.show("🔴  녹음중") if self.overlay else None,
         ))
 
-        self.stream = sd.InputStream(
-            samplerate=self.SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            callback=self._audio_callback,
-        )
-        self.stream.start()
+        try:
+            self.stream = sd.InputStream(
+                samplerate=self.SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                callback=self._audio_callback,
+            )
+            self.stream.start()
+        except Exception as e:
+            print(f"[voice-stt] 마이크 오류: {e}", flush=True)
+            if self.stream:
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+            self.stream = None
+            self.recording = False
+            self._ui(lambda: (
+                setattr(self, "title", "🎙"),
+                setattr(self.status_item, "title", "상태: 마이크 오류"),
+                self.overlay.hide() if self.overlay else None,
+            ))
+            if self._reset_timer:
+                self._reset_timer.cancel()
+            self._reset_timer = threading.Timer(
+                2.5,
+                lambda: self._ui(lambda: setattr(self.status_item, "title", "상태: 대기중")),
+            )
+            self._reset_timer.start()
 
     def _audio_callback(self, indata, frames, time_info, status):
         self.audio_frames.append(indata.copy())
@@ -455,6 +477,7 @@ class VoiceSTTApp(rumps.App):
 
     def _transcribe(self):
         tmp_path = None
+        error_occurred = False
         try:
             config = load_config()
 
@@ -464,6 +487,9 @@ class VoiceSTTApp(rumps.App):
 
             if self._cancelled:
                 return
+
+            if not self.audio_frames:
+                raise ValueError("녹음된 오디오 데이터가 없습니다.")
 
             audio_data = np.concatenate(self.audio_frames, axis=0)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -475,14 +501,34 @@ class VoiceSTTApp(rumps.App):
                 wf.setframerate(self.SAMPLE_RATE)
                 wf.writeframes(audio_data.tobytes())
 
-            client = ElevenLabs(api_key=api_key)
-            with open(tmp_path, "rb") as f:
-                result = client.speech_to_text.convert(
-                    file=f,
-                    model_id="scribe_v2",
-                    language_code=config.get("language", "ko"),
-                    keyterms=config.get("keyterms", []) or None,
-                )
+            result = None
+            last_exc = None
+            for attempt in range(1, 3):
+                if self._cancelled:
+                    return
+                try:
+                    client = ElevenLabs(api_key=api_key, timeout=5.0)
+                    with open(tmp_path, "rb") as f:
+                        result = client.speech_to_text.convert(
+                            file=f,
+                            model_id="scribe_v2",
+                            language_code=config.get("language", "ko"),
+                            keyterms=config.get("keyterms", []) or None,
+                        )
+                    last_exc = None
+                    break
+                except Exception as e:
+                    last_exc = e
+                    print(f"[voice-stt] API 오류 (시도 {attempt}/2): {e}", flush=True)
+                    if attempt == 1 and not self._cancelled:
+                        self._ui(lambda: (
+                            setattr(self.status_item, "title", "상태: 재시도중..."),
+                            self.overlay.show("🔄  재시도중...") if self.overlay else None,
+                        ))
+                        time.sleep(1.0)
+
+            if last_exc is not None:
+                raise last_exc
 
             if self._cancelled:
                 return
@@ -499,22 +545,34 @@ class VoiceSTTApp(rumps.App):
                 self._ui(lambda: setattr(self.status_item, "title", "상태: 텍스트 없음"))
 
         except Exception as e:
+            error_occurred = True
             import traceback
             traceback.print_exc()
             print(f"[voice-stt] 오류: {e}", flush=True)
             if not self._cancelled:
-                err = type(e).__name__
-                self._ui(lambda err=err: setattr(self.status_item, "title", f"상태: 오류 - {err}"))
+                self._ui(lambda: (
+                    setattr(self.status_item, "title", "상태: 실패"),
+                    self.overlay.show("❌  실패했습니다") if self.overlay else None,
+                ))
+                if self._reset_timer:
+                    self._reset_timer.cancel()
+                self._reset_timer = threading.Timer(
+                    2.5,
+                    lambda: self._ui(lambda: (
+                        setattr(self.status_item, "title", "상태: 대기중"),
+                        self.overlay.hide() if self.overlay else None,
+                    )),
+                )
+                self._reset_timer.start()
 
         finally:
             self._transcribing = False
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             if not self._cancelled:
-                self._ui(lambda: (
-                    setattr(self, "title", "🎙"),
-                    self.overlay.hide() if self.overlay else None,
-                ))
+                self._ui(lambda: setattr(self, "title", "🎙"))
+                if not error_occurred:
+                    self._ui(lambda: self.overlay.hide() if self.overlay else None)
 
     # ------------------------------------------------------------------
     # 붙여넣기 + Enter (메인 스레드에서 호출됨)
