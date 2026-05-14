@@ -374,10 +374,20 @@ else:
     class RecordingOverlay:
         WIDTH = 230
         HEIGHT = 52
+        BAR_COUNT = 5
+        BAR_W = 3
+        BAR_GAP = 4
+        BAR_MAX_H = 28
+        BAR_MIN_H = 4
 
         def __init__(self, root):
             self._available = False
             self._volume = 0.0
+            self._phase = 0.0
+            self._bar_ids: list[int] = []
+            self._bar_xs: list[float] = []
+            self._canvas = None
+            self._text_id = None
 
             try:
                 self._win = tk.Toplevel(root)
@@ -393,13 +403,38 @@ else:
                 y = sh - self.HEIGHT - 60
                 self._win.geometry(f"{self.WIDTH}x{self.HEIGHT}+{x}+{y}")
 
-                self._label = tk.Label(
-                    self._win, text="", bg='#1a1a1a', fg='white',
-                    font=('Segoe UI', 12),
+                self._canvas = tk.Canvas(
+                    self._win, width=self.WIDTH, height=self.HEIGHT,
+                    bg='#1a1a1a', highlightthickness=0,
                 )
-                self._label.place(relx=0.5, rely=0.5, anchor='center')
+                self._canvas.pack(fill='both', expand=True)
+
+                label_x = 22
+                label_w = 118
+                self._text_id = self._canvas.create_text(
+                    label_x, self.HEIGHT // 2,
+                    text="", fill='white', font=('Segoe UI', 12), anchor='w',
+                )
+
+                bar_area_x = label_x + label_w + 6
+                bar_total_w = self.BAR_COUNT * self.BAR_W + (self.BAR_COUNT - 1) * self.BAR_GAP
+                avail_w = self.WIDTH - bar_area_x - 22
+                bar_start_x = bar_area_x + (avail_w - bar_total_w) / 2
+                mid_y = self.HEIGHT / 2
+
+                for i in range(self.BAR_COUNT):
+                    bx = bar_start_x + i * (self.BAR_W + self.BAR_GAP)
+                    y0 = mid_y - self.BAR_MIN_H / 2
+                    y1 = mid_y + self.BAR_MIN_H / 2
+                    bid = self._canvas.create_rectangle(
+                        bx, y0, bx + self.BAR_W, y1,
+                        fill='#ff4747', outline='',
+                    )
+                    self._bar_ids.append(bid)
+                    self._bar_xs.append(bx)
+
                 self._available = True
-                log.info("Windows 오버레이 초기화 완료")
+                log.info("Windows 오버레이 초기화 완료 (볼륨 바 포함)")
             except Exception:
                 log.exception("Windows 오버레이 초기화 실패")
 
@@ -407,12 +442,28 @@ else:
             self._volume = max(0.0, min(1.0, level))
 
         def tick(self):
-            pass  # Windows 오버레이는 애니메이션 없음
+            if not self._available or not self._bar_ids:
+                return
+            self._phase += 0.4
+            self._volume *= 0.88
+            v = self._volume
+            try:
+                mid_y = self.HEIGHT / 2
+                for i, bid in enumerate(self._bar_ids):
+                    wave = 0.5 + 0.5 * math.sin(self._phase + i * 1.3)
+                    lv = v * (0.5 + 0.5 * wave) + (1 - v) * 0.12 * wave
+                    h = self.BAR_MIN_H + lv * (self.BAR_MAX_H - self.BAR_MIN_H)
+                    bx = self._bar_xs[i]
+                    y0 = mid_y - h / 2
+                    y1 = mid_y + h / 2
+                    self._canvas.coords(bid, bx, y0, bx + self.BAR_W, y1)
+            except Exception:
+                log.exception("오버레이 tick 오류")
 
         def show(self, text: str = "🔴  녹음중"):
             if self._available:
                 log.debug("오버레이 표시: '%s'", text)
-                self._label.config(text=text)
+                self._canvas.itemconfigure(self._text_id, text=text)
                 self._win.deiconify()
 
         def hide(self):
@@ -433,6 +484,7 @@ class VoiceSTTCore:
       _set_tray_title(title)  — 트레이 아이콘/타이틀 변경
       _set_status(status)     — 메뉴의 상태 텍스트 변경
       _set_last(text)         — 마지막 변환 결과 텍스트 변경
+      _set_toggle_state(on)   — 메뉴의 "토글 모드" 체크 상태 갱신
     """
     SAMPLE_RATE = 16000
 
@@ -603,6 +655,29 @@ class VoiceSTTCore:
                 log.debug("트리거 키 뗌 — 녹음중 아님 (transcribing=%s)", self._transcribing)
 
     # ------------------------------------------------------------------
+    # 마이크 스트림 생성 (PortAudio 캐시 자동 복구)
+    # ------------------------------------------------------------------
+
+    def _create_input_stream(self, **kwargs) -> "sd.InputStream":
+        """
+        sd.InputStream 생성. PortAudioError 발생 시 PortAudio를 재초기화하고
+        디바이스 목록을 새로 읽은 뒤 한 번 재시도한다.
+        앱 시작 시점에 마이크가 enumerate 되어 있지 않아 디폴트 디바이스 캐시가
+        비어있는 상태에서 회복하기 위함.
+        """
+        try:
+            return sd.InputStream(**kwargs)
+        except sd.PortAudioError as e:
+            log.warning("InputStream 생성 실패 — PortAudio 재초기화 후 재시도: %s", e)
+            try:
+                sd._terminate()
+                sd._initialize()
+                log.info("PortAudio 재초기화 완료")
+            except Exception:
+                log.exception("PortAudio 재초기화 실패")
+            return sd.InputStream(**kwargs)
+
+    # ------------------------------------------------------------------
     # 시스템 오디오 음소거
     # ------------------------------------------------------------------
 
@@ -649,14 +724,18 @@ class VoiceSTTCore:
     # ------------------------------------------------------------------
 
     def _paste_text(self, text: str):
+        # Windows는 항상 type 모드 — 레거시 게임(스타크래프트 등) 채팅이 Ctrl+V를 무시함
         log.debug("_paste_text — %d자", len(text))
-        pyperclip.copy(text)
-        log.info("클립보드 복사 완료")
         kb = keyboard.Controller()
-        paste_mod = keyboard.Key.cmd if PLATFORM == "darwin" else keyboard.Key.ctrl
-        with kb.pressed(paste_mod):
-            kb.press("v")
-            kb.release("v")
+        if PLATFORM == "win32":
+            kb.type(text)
+            log.info("타이핑 입력 완료 (%d자)", len(text))
+        else:
+            pyperclip.copy(text)
+            log.info("클립보드 복사 완료")
+            with kb.pressed(keyboard.Key.cmd):
+                kb.press("v")
+                kb.release("v")
         time.sleep(0.1)
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
@@ -666,15 +745,18 @@ class VoiceSTTCore:
         config = load_config()
         before_key = self._key_from_str(config.get("toggle_before_key", "enter"))
         log.debug("_send_before_and_paste — before_key=%r, %d자", before_key, len(text))
-        pyperclip.copy(text)
         kb = keyboard.Controller()
         kb.press(before_key)
         kb.release(before_key)
         time.sleep(0.15)
-        paste_mod = keyboard.Key.cmd if PLATFORM == "darwin" else keyboard.Key.ctrl
-        with kb.pressed(paste_mod):
-            kb.press("v")
-            kb.release("v")
+        if PLATFORM == "win32":
+            kb.type(text)
+            log.info("타이핑 입력 완료 (%d자)", len(text))
+        else:
+            pyperclip.copy(text)
+            with kb.pressed(keyboard.Key.cmd):
+                kb.press("v")
+                kb.release("v")
         time.sleep(0.1)
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
@@ -736,7 +818,7 @@ class VoiceSTTCore:
         ))
         try:
             log.debug("마이크 스트림 생성 — samplerate=%d", self.SAMPLE_RATE)
-            self.stream = sd.InputStream(
+            self.stream = self._create_input_stream(
                 samplerate=self.SAMPLE_RATE,
                 channels=1,
                 dtype="int16",
@@ -756,13 +838,18 @@ class VoiceSTTCore:
             self._ui(lambda: (
                 self._set_tray_title("🎙"),
                 self._set_status("상태: 마이크 오류"),
-                self.overlay.hide() if self.overlay else None,
+                self.overlay.show("❌  마이크 없음") if self.overlay else None,
             ))
             if self._reset_timer:
                 self._reset_timer.cancel()
-            self._reset_timer = threading.Timer(
-                2.5, lambda: self._ui(lambda: self._set_status("상태: 대기중"))
-            )
+
+            def _on_mic_error_reset():
+                self._ui(lambda: (
+                    self._set_status("상태: 대기중"),
+                    self.overlay.hide() if self.overlay else None,
+                ))
+
+            self._reset_timer = threading.Timer(2.5, _on_mic_error_reset)
             self._reset_timer.start()
 
     def _audio_callback(self, indata, frames, time_info, status):
@@ -954,6 +1041,7 @@ class VoiceSTTCore:
         self._ui(lambda: (
             self._set_tray_title("👂"),
             self._set_status("상태: 듣는중 (Toggle ON)"),
+            self._set_toggle_state(True),
             self.overlay.show("👂  듣는중...") if self.overlay else None,
         ))
 
@@ -963,8 +1051,20 @@ class VoiceSTTCore:
         self._ui(lambda: (
             self._set_tray_title("🎙"),
             self._set_status("상태: 대기중"),
+            self._set_toggle_state(False),
             self.overlay.hide() if self.overlay else None,
         ))
+
+    def _request_toggle_mode(self):
+        """메뉴 클릭 등 외부에서 토글 모드 전환을 요청한다."""
+        if self._toggle_listening:
+            log.info("메뉴 — Toggle 리스닝 OFF")
+            self._stop_vad_listening()
+        elif self._transcribing:
+            log.debug("메뉴 — 변환중이라 토글 요청 무시")
+        else:
+            log.info("메뉴 — Toggle 리스닝 ON")
+            self._start_vad_listening()
 
     def _vad_loop(self):
         config = load_config()
@@ -979,15 +1079,19 @@ class VoiceSTTCore:
             chunk_q.put(indata.copy())
             rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
             if self.overlay:
-                self.overlay.set_volume(min(1.0, rms / 4000.0))
+                # threshold를 0점으로 재정규화 — 실제로 STT에 들어가는 소리만 시각화
+                self.overlay.set_volume(min(1.0, max(0.0, rms - threshold) / 4000.0))
 
         speech_frames: list[np.ndarray] = []
         silence_count = 0
         speaking = False
 
         log.info("VAD 루프 진입 — threshold=%d, silence_sec=%.1f", threshold, silence_sec)
+        diag_rms: list[float] = []
+        diag_chunks_target = int(1.0 / chunk_sec)  # 처음 1초만 수집
+        diag_logged = False
         try:
-            with sd.InputStream(
+            with self._create_input_stream(
                 samplerate=self.SAMPLE_RATE,
                 channels=1,
                 dtype="int16",
@@ -1001,6 +1105,24 @@ class VoiceSTTCore:
                         continue
 
                     rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+
+                    if not diag_logged:
+                        diag_rms.append(rms)
+                        if len(diag_rms) >= diag_chunks_target:
+                            avg = sum(diag_rms) / len(diag_rms)
+                            mx = max(diag_rms)
+                            mn = min(diag_rms)
+                            log.info(
+                                "VAD 진단 — 첫 1초 RMS: avg=%.0f, min=%.0f, max=%.0f, threshold=%d",
+                                avg, mn, mx, threshold,
+                            )
+                            if mn >= threshold:
+                                log.warning(
+                                    "VAD 진단: 최저 RMS(%.0f)도 임계값(%d) 이상 — "
+                                    "침묵 감지 불가. config.toml의 vad_threshold를 %d 이상으로 올리세요.",
+                                    mn, threshold, int(mn * 1.5),
+                                )
+                            diag_logged = True
 
                     if rms >= threshold:
                         if not speaking:
@@ -1031,7 +1153,26 @@ class VoiceSTTCore:
                                 log.info("VAD: 음성 구간 → 대기열 (%d 청크, 대기 %d개)",
                                          len(frames_to_send), self._vad_segment_queue.qsize())
         except Exception:
-            log.exception("VAD 루프 오류")
+            log.exception("VAD 루프 오류 — 마이크 사용 불가")
+            # 토글 모드를 자동으로 OFF 시키고 사용자에게 알린다
+            self._toggle_listening = False
+            self._ui(lambda: (
+                self._set_tray_title("🎙"),
+                self._set_status("상태: 마이크 오류"),
+                self._set_toggle_state(False),
+                self.overlay.show("❌  마이크 없음") if self.overlay else None,
+            ))
+            if self._reset_timer:
+                self._reset_timer.cancel()
+
+            def _on_vad_mic_error_reset():
+                self._ui(lambda: (
+                    self._set_status("상태: 대기중"),
+                    self.overlay.hide() if self.overlay else None,
+                ))
+
+            self._reset_timer = threading.Timer(3.0, _on_vad_mic_error_reset)
+            self._reset_timer.start()
         finally:
             log.info("VAD 루프 종료")
 
@@ -1129,6 +1270,7 @@ if PLATFORM == "darwin":
 
             self.status_item = rumps.MenuItem("상태: 대기중")
             self.last_item = rumps.MenuItem("마지막 변환: -")
+            self.toggle_mode_item = rumps.MenuItem("토글 모드", callback=self._on_toggle_mode)
             self.apikey_item = rumps.MenuItem("API Key 설정...", callback=self._on_set_api_key)
             self.config_item = rumps.MenuItem("설정...", callback=self._on_edit_config)
             self.restart_item = rumps.MenuItem("재실행", callback=self._restart)
@@ -1157,9 +1299,10 @@ if PLATFORM == "darwin":
                     callback=self._open_accessibility_prefs,
                 )
                 self.menu = [self.status_item, self.last_item, None, self._accessibility_item,
-                             None, self.apikey_item, self.config_item, None, self.restart_item, None]
+                             None, self.toggle_mode_item, None,
+                             self.apikey_item, self.config_item, None, self.restart_item, None]
             else:
-                self.menu = [self.status_item, self.last_item, None,
+                self.menu = [self.status_item, self.last_item, None, self.toggle_mode_item, None,
                              self.apikey_item, self.config_item, None, self.restart_item, None]
 
             self._core_init()
@@ -1175,6 +1318,12 @@ if PLATFORM == "darwin":
 
         def _set_last(self, text: str):
             self.last_item.title = text
+
+        def _set_toggle_state(self, on: bool):
+            self.toggle_mode_item.state = 1 if on else 0
+
+        def _on_toggle_mode(self, _):
+            self._request_toggle_mode()
 
         # ── rumps 타이머 ──
 
@@ -1331,6 +1480,12 @@ elif PLATFORM == "win32":
                     pystray.MenuItem(lambda item: self._status_text, None, enabled=False),
                     pystray.MenuItem(lambda item: self._last_text, None, enabled=False),
                     pystray.Menu.SEPARATOR,
+                    pystray.MenuItem(
+                        "토글 모드",
+                        lambda icon, item: self._on_toggle_mode(),
+                        checked=lambda item: self._toggle_listening,
+                    ),
+                    pystray.Menu.SEPARATOR,
                     pystray.MenuItem("API Key 설정...", self._schedule_api_key_dialog),
                     pystray.MenuItem("설정...", self._schedule_config_dialog),
                     pystray.MenuItem("재실행", lambda icon, item: self._restart()),
@@ -1366,6 +1521,13 @@ elif PLATFORM == "win32":
         def _set_last(self, text: str):
             self._last_text = text
             self._tray.update_menu()
+
+        def _set_toggle_state(self, on: bool):
+            # pystray의 checked 람다가 _toggle_listening을 참조하므로 메뉴만 갱신
+            self._tray.update_menu()
+
+        def _on_toggle_mode(self):
+            self._request_toggle_mode()
 
         # ── UI 큐 (tkinter after 루프) ──
 
@@ -1412,18 +1574,30 @@ elif PLATFORM == "win32":
                 current = ""
 
             win = tk.Toplevel(self._root)
-            win.title("설정 (config.toml)")
-            win.geometry("700x520")
+            win.title("설정 (config.toml) — Ctrl+S 저장")
+            win.geometry("760x560")
+            win.minsize(600, 400)
             win.resizable(True, True)
+            # 부모(_root)가 withdraw 상태이므로 transient는 쓰지 않는다 — 일부 환경에서 자식 창이 같이 숨겨진다
+            try:
+                win.deiconify()
+                win.lift()
+                win.attributes('-topmost', True)
+                win.after(500, lambda: win.attributes('-topmost', False))
+                win.focus_force()
+            except Exception:
+                log.exception("설정 창 표시 속성 설정 실패")
 
-            text_widget = scrolledtext.ScrolledText(win, width=90, height=32, font=("Consolas", 11))
-            text_widget.pack(fill='both', expand=True, padx=8, pady=8)
+            # 버튼을 먼저 pack해서 창이 좁아져도 항상 보이게 한다
+            btn_frame = tk.Frame(win)
+            btn_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+            text_widget = scrolledtext.ScrolledText(win, width=90, height=28, font=("Consolas", 11))
+            text_widget.pack(side='top', fill='both', expand=True, padx=10, pady=(10, 0))
             text_widget.insert('1.0', current)
 
-            btn_frame = tk.Frame(win)
-            btn_frame.pack(fill='x', padx=8, pady=(0, 8))
-
             def _save():
+                log.info("설정 다이얼로그 — 저장 클릭")
                 text = text_widget.get('1.0', 'end').strip()
                 try:
                     tomllib.loads(text)
@@ -1438,8 +1612,32 @@ elif PLATFORM == "win32":
                 tkmsgbox.showinfo("voice-stt", "설정이 저장되었습니다.", parent=win)
                 win.destroy()
 
-            tk.Button(btn_frame, text="저장", command=_save, width=8).pack(side='right', padx=4)
-            tk.Button(btn_frame, text="취소", command=win.destroy, width=8).pack(side='right')
+            def _close_with_check():
+                if text_widget.get('1.0', 'end').strip() != current.strip():
+                    if not tkmsgbox.askokcancel(
+                        "변경 사항 버리기",
+                        "저장하지 않은 변경 사항이 있습니다. 정말 닫을까요?",
+                        parent=win,
+                    ):
+                        return
+                win.destroy()
+
+            save_btn = tk.Button(
+                btn_frame, text="저장 (Ctrl+S)", command=_save,
+                width=14, height=2, bg='#2d7dd2', fg='white',
+                activebackground='#225fa3', activeforeground='white',
+                font=('Segoe UI', 10, 'bold'),
+            )
+            save_btn.pack(side='right', padx=4)
+            tk.Button(
+                btn_frame, text="취소", command=_close_with_check,
+                width=10, height=2, font=('Segoe UI', 10),
+            ).pack(side='right')
+
+            win.bind('<Control-s>', lambda e: _save())
+            win.bind('<Control-S>', lambda e: _save())
+            win.protocol("WM_DELETE_WINDOW", _close_with_check)
+            text_widget.focus_set()
 
         # ── 재실행 / 종료 ──
 
