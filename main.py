@@ -779,8 +779,8 @@ class VoiceSTTApp(rumps.App):
                     return
                 try:
                     log.info("ElevenLabs API 호출 (시도 %d/2)", attempt)
-                    log.debug("API 파라미터 — model=scribe_v2, language='%s', keyterms=%s, sdk_timeout=%.1fs, hard_timeout=%.0fs",
-                              config.get("language", "ko"), config.get("keyterms", []), sdk_timeout, hard_timeout)
+                    log.debug("API 파라미터 — model=scribe_v2, language='%s', keyterms=%s, no_verbatim=%s, sdk_timeout=%.1fs, hard_timeout=%.0fs",
+                              config.get("language", "ko"), config.get("keyterms", []), config.get("no_verbatim", True), sdk_timeout, hard_timeout)
                     client = ElevenLabs(api_key=api_key, timeout=sdk_timeout)
 
                     _holder: dict = {}
@@ -796,6 +796,7 @@ class VoiceSTTApp(rumps.App):
                                     model_id="scribe_v2",
                                     language_code=config.get("language", "ko"),
                                     keyterms=config.get("keyterms", []) or None,
+                                    no_verbatim=config.get("no_verbatim", True),
                                 )
                             log.debug("API 호출 스레드 완료 — 결과 수신 (thread_id=%d)", inner_tid)
                         except BaseException as _exc:
