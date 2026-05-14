@@ -446,6 +446,7 @@ class VoiceSTTCore:
         self._prev_muted: bool | None = None
         self._toggle_listening = False
         self._vad_thread: threading.Thread | None = None
+        self._vad_pending_frames: list[np.ndarray] | None = None
         self._cfg_trigger_key = keyboard.Key.alt_r
         self._cfg_toggle_combo: frozenset | None = None
         self._pressed_keys: set = set()
@@ -1029,8 +1030,9 @@ class VoiceSTTCore:
                                     args=(frames_to_send,),
                                     daemon=True,
                                 ).start()
-                            elif self._transcribing:
-                                log.debug("VAD: 이미 변환중 — 이번 구간 건너뜀")
+                            elif self._transcribing and frames_to_send:
+                                self._vad_pending_frames = frames_to_send
+                                log.info("VAD: 변환중 — %d 청크 대기열 저장", len(frames_to_send))
         except Exception:
             log.exception("VAD 루프 오류")
         finally:
@@ -1084,19 +1086,33 @@ class VoiceSTTCore:
                     os.unlink(tmp_path)
                 except Exception:
                     pass
-            self._transcribing = False
-            if self._toggle_listening:
+
+            pending = self._vad_pending_frames
+            self._vad_pending_frames = None
+
+            if pending and self._toggle_listening:
+                log.info("VAD: 대기 중이던 %d 청크 즉시 처리", len(pending))
+                self._transcribing = True
                 self._ui(lambda: (
-                    self._set_tray_title("👂"),
-                    self._set_status("상태: 듣는중 (Toggle ON)"),
-                    self.overlay.show("👂  듣는중...") if self.overlay else None,
+                    self._set_tray_title("⏳"),
+                    self._set_status("상태: 변환중..."),
+                    self.overlay.show("⏳  변환중...") if self.overlay else None,
                 ))
+                threading.Thread(target=self._transcribe_vad, args=(pending,), daemon=True).start()
             else:
-                self._ui(lambda: (
-                    self._set_tray_title("🎙"),
-                    self._set_status("상태: 대기중"),
-                    self.overlay.hide() if self.overlay else None,
-                ))
+                self._transcribing = False
+                if self._toggle_listening:
+                    self._ui(lambda: (
+                        self._set_tray_title("👂"),
+                        self._set_status("상태: 듣는중 (Toggle ON)"),
+                        self.overlay.show("👂  듣는중...") if self.overlay else None,
+                    ))
+                else:
+                    self._ui(lambda: (
+                        self._set_tray_title("🎙"),
+                        self._set_status("상태: 대기중"),
+                        self.overlay.hide() if self.overlay else None,
+                    ))
 
 
 # ================================================================== #
