@@ -9,6 +9,7 @@ import threading
 import tempfile
 import ctypes
 import ctypes.util
+import subprocess
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -327,6 +328,7 @@ class VoiceSTTApp(rumps.App):
         self._reset_timer: threading.Timer | None = None
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
+        self._prev_muted: bool | None = None
         log.debug("상태 변수 초기화 완료 — recording=False, _transcribing=False, _cancelled=False")
 
         user_cfg = load_user_config()
@@ -405,6 +407,46 @@ class VoiceSTTApp(rumps.App):
             subprocess.Popen([sys.executable] + sys.argv)
         log.info("재실행 프로세스 시작 — 현재 앱 종료")
         rumps.quit_application()
+
+    # ------------------------------------------------------------------
+    # 시스템 오디오 음소거
+    # ------------------------------------------------------------------
+
+    def _mute_system_audio(self):
+        config = load_config()
+        if not config.get("mute_during_recording", True):
+            return
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", "output muted of (get volume settings)"],
+                capture_output=True, text=True, timeout=1.0,
+            )
+            self._prev_muted = result.stdout.strip() == "true"
+            if not self._prev_muted:
+                subprocess.run(
+                    ["osascript", "-e", "set volume output muted true"],
+                    timeout=1.0,
+                )
+                log.info("시스템 오디오 음소거 설정")
+            else:
+                log.debug("시스템 오디오 이미 음소거 상태 — 변경 없음")
+        except Exception:
+            log.exception("시스템 오디오 음소거 실패")
+            self._prev_muted = None
+
+    def _restore_system_audio(self):
+        if self._prev_muted is None:
+            return
+        if not self._prev_muted:
+            try:
+                subprocess.run(
+                    ["osascript", "-e", "set volume output muted false"],
+                    timeout=1.0,
+                )
+                log.info("시스템 오디오 음소거 해제")
+            except Exception:
+                log.exception("시스템 오디오 음소거 해제 실패")
+        self._prev_muted = None
 
     # ------------------------------------------------------------------
     # API Key 설정
@@ -548,6 +590,7 @@ class VoiceSTTApp(rumps.App):
                   self.recording, self._transcribing, self._cancelled, "있음" if self.stream else "없음")
         self._cancelled = True
         self.recording = False
+        self._restore_system_audio()
         if self.stream:
             try:
                 log.debug("마이크 스트림 중지 시작")
@@ -587,6 +630,8 @@ class VoiceSTTApp(rumps.App):
         self.recording = True
         self.audio_frames = []
         log.debug("상태 초기화 — recording=True, cancelled=False, audio_frames 초기화")
+
+        self._mute_system_audio()
 
         self._ui(lambda: (
             setattr(self, "title", "🔴"),
@@ -644,6 +689,7 @@ class VoiceSTTApp(rumps.App):
         log.debug("_stop_and_transcribe 진입 — frames=%d, cancelled=%s, stream=%s",
                   len(self.audio_frames), self._cancelled, "있음" if self.stream else "없음")
         self.recording = False
+        self._restore_system_audio()
         frames_count = len(self.audio_frames)
 
         self._ui(lambda: (

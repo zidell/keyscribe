@@ -85,6 +85,44 @@ python3 main.py
 
 ---
 
+## 터미널 없이 백그라운드 실행 (launchd)
+
+빌드 없이 `python3 main.py`를 직접 실행합니다. macOS launchd에 등록하면 로그인 시 자동 시작되고, 터미널을 닫아도 계속 실행됩니다.
+
+### 등록
+
+```bash
+# 로그 디렉토리 생성
+mkdir -p ~/Library/Logs/voice-stt
+
+# launchd에 등록 및 즉시 시작
+launchctl load ~/Library/LaunchAgents/com.zidell.voice-stt.plist
+```
+
+> plist 파일: `~/Library/LaunchAgents/com.zidell.voice-stt.plist`
+
+### 자주 쓰는 명령어
+
+```bash
+# 상태 확인
+launchctl list | grep voice-stt
+
+# 재시작 (main.py 수정 후)
+launchctl unload ~/Library/LaunchAgents/com.zidell.voice-stt.plist && launchctl load ~/Library/LaunchAgents/com.zidell.voice-stt.plist
+
+# 중지
+launchctl unload ~/Library/LaunchAgents/com.zidell.voice-stt.plist
+```
+
+### 로그
+
+| 파일 | 내용 |
+|------|------|
+| `~/Library/Logs/voice-stt/voice-stt.log` | 앱 로그 (녹음/STT/오류 등) |
+| `~/Library/Logs/voice-stt/launchd-stderr.log` | launchd stderr (import 오류 등) |
+
+---
+
 ## 빌드 (.app 번들 생성)
 
 소스 없이 실행 가능한 macOS 앱으로 패키징합니다.
