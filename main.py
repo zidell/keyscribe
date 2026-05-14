@@ -4,40 +4,101 @@ import math
 import wave
 import time
 import queue
+import logging
 import threading
 import tempfile
 import ctypes
 import ctypes.util
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-# 빌드된 앱(.app)에서는 ssl이 CA 파일을 찾지 못한다.
-# certifi 인증서를 파일 경로 대신 문자열(cadata)로 직접 주입해 경로 문제를 우회한다.
+# ------------------------------------------------------------------
+# 로거 설정 — ~/Library/Logs/voice-stt/voice-stt.log
+# 자정마다 롤오버, 하루치(backupCount=1)만 보관
+# ------------------------------------------------------------------
+_LOG_DIR = Path.home() / "Library" / "Logs" / "voice-stt"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_log_handler = TimedRotatingFileHandler(
+    _LOG_DIR / "voice-stt.log",
+    when="midnight",
+    backupCount=1,
+    encoding="utf-8",
+)
+_log_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
+log = logging.getLogger("voice-stt")
+log.setLevel(logging.DEBUG)
+log.addHandler(_log_handler)
+
+import sys
+log.info("=" * 60)
+log.info("앱 시작 — Python %s | frozen=%s", sys.version.split()[0], getattr(sys, "frozen", False))
+
+# ------------------------------------------------------------------
+# SSL — 빌드된 앱(.app)에서 CA 파일 경로를 못 찾는 문제 우회
+# ------------------------------------------------------------------
 import ssl
 import certifi as _certifi_mod
-with open(_certifi_mod.where(), "r", encoding="ascii") as _f:
-    _CA_DATA = _f.read()
-_orig_create_ssl_context = ssl.create_default_context
-def _certifi_ssl_context(purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None, capath=None, cadata=None):
-    if cadata is None:
-        cadata = _CA_DATA
-        cafile = None
-        capath = None
-    return _orig_create_ssl_context(purpose, cafile=cafile, capath=capath, cadata=cadata)
-ssl.create_default_context = _certifi_ssl_context
+try:
+    with open(_certifi_mod.where(), "r", encoding="ascii") as _f:
+        _CA_DATA = _f.read()
+    _orig_create_ssl_context = ssl.create_default_context
+    def _certifi_ssl_context(purpose=ssl.Purpose.SERVER_AUTH, *, cafile=None, capath=None, cadata=None):
+        if cadata is None:
+            cadata = _CA_DATA
+            cafile = None
+            capath = None
+        return _orig_create_ssl_context(purpose, cafile=cafile, capath=capath, cadata=cadata)
+    ssl.create_default_context = _certifi_ssl_context
+    log.info("SSL certifi 패치 완료")
+except Exception:
+    log.exception("SSL certifi 패치 실패")
 
-import numpy as np
-import pyperclip
-import rumps
-import sounddevice as sd
-from elevenlabs.client import ElevenLabs
-from pynput import keyboard
+try:
+    import numpy as np
+    log.info("numpy 로드 OK")
+except Exception:
+    log.exception("numpy 로드 실패")
+
+try:
+    import pyperclip
+    log.info("pyperclip 로드 OK")
+except Exception:
+    log.exception("pyperclip 로드 실패")
+
+try:
+    import rumps
+    log.info("rumps 로드 OK")
+except Exception:
+    log.exception("rumps 로드 실패")
+
+try:
+    import sounddevice as sd
+    log.info("sounddevice 로드 OK")
+except Exception:
+    log.exception("sounddevice 로드 실패")
+
+try:
+    from elevenlabs.client import ElevenLabs
+    log.info("elevenlabs 로드 OK")
+except Exception:
+    log.exception("elevenlabs 로드 실패")
+
+try:
+    from pynput import keyboard
+    log.info("pynput 로드 OK")
+except Exception:
+    log.exception("pynput 로드 실패")
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 USER_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "voice-stt" / "user_config.json"
+log.info("CONFIG_PATH: %s", CONFIG_PATH)
 
 
 def is_accessibility_granted() -> bool:
@@ -85,7 +146,6 @@ class RecordingOverlay:
                 NSWindow, NSTextField, NSColor, NSFont, NSMakeRect,
                 NSBackingStoreBuffered, NSScreen,
             )
-            # 상수 이름이 macOS 버전마다 다름 — 순서대로 시도
             try:
                 from AppKit import NSWindowStyleMaskBorderless as _borderless
             except ImportError:
@@ -105,7 +165,6 @@ class RecordingOverlay:
             except ImportError:
                 _align_left = 0
 
-            # 해상도에 따라 중앙 하단 배치 (Dock 위)
             screen = NSScreen.mainScreen()
             vis = screen.visibleFrame()
             full = screen.frame()
@@ -147,7 +206,6 @@ class RecordingOverlay:
             self._label.setFont_(NSFont.systemFontOfSize_(14))
             content.addSubview_(self._label)
 
-            # 볼륨 인디케이터 바
             bar_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.28, 0.28, 1.0)
             bar_area_x = label_x + label_w + 6
             bar_total_w = self.BAR_COUNT * self.BAR_W + (self.BAR_COUNT - 1) * self.BAR_GAP
@@ -165,14 +223,14 @@ class RecordingOverlay:
                     content.layer().addSublayer_(layer)
                     self._bar_layers.append(layer)
                     self._bar_xs.append(bx)
+                log.info("오버레이 볼륨 바 초기화 OK (%d개)", self.BAR_COUNT)
             except Exception:
-                pass  # 바 없이도 동작
+                log.exception("오버레이 볼륨 바 초기화 실패 — 바 없이 계속")
 
             self._available = True
+            log.info("오버레이 초기화 완료")
         except Exception:
-            import traceback
-            traceback.print_exc()
-            print("[voice-stt] 오버레이 초기화 실패 — 오버레이 없이 계속 실행합니다.")
+            log.exception("오버레이 초기화 실패 — 오버레이 없이 계속")
             self._available = False
 
     def set_volume(self, level: float):
@@ -182,7 +240,7 @@ class RecordingOverlay:
         if not self._available or not self._bar_layers:
             return
         self._phase += 0.4
-        self._volume *= 0.88  # 자연스러운 감쇠
+        self._volume *= 0.88
         v = self._volume
         try:
             from Quartz import CATransaction
@@ -221,7 +279,10 @@ class VoiceSTTApp(rumps.App):
     SAMPLE_RATE = 16000
 
     def __init__(self):
+        log.info("VoiceSTTApp.__init__ 시작")
         super().__init__("🎙", quit_button="종료")
+        log.info("rumps.App 초기화 완료")
+
         self.recording = False
         self._transcribing = False
         self._cancelled = False
@@ -229,7 +290,6 @@ class VoiceSTTApp(rumps.App):
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
 
-        # API 키: 우선순위 — 사용자 설정 > .env 환경변수 > config.json
         user_cfg = load_user_config()
         self._api_key: str = (
             user_cfg.get("api_key")
@@ -237,6 +297,7 @@ class VoiceSTTApp(rumps.App):
             or load_config().get("api_key")
             or ""
         )
+        log.info("API 키 로드: %s", "설정됨" if self._api_key else "미설정")
 
         self.status_item = rumps.MenuItem("상태: 대기중")
         self.last_item = rumps.MenuItem("마지막 변환: -")
@@ -244,7 +305,9 @@ class VoiceSTTApp(rumps.App):
         self.config_item = rumps.MenuItem("설정...", callback=self._on_edit_config)
         self.restart_item = rumps.MenuItem("재실행", callback=self._restart)
 
-        if not is_accessibility_granted():
+        accessibility = is_accessibility_granted()
+        log.info("접근성 권한: %s", accessibility)
+        if not accessibility:
             self._accessibility_item = rumps.MenuItem(
                 "⚠️ 접근성 권한 필요 — 클릭하여 설정 열기",
                 callback=self._open_accessibility_prefs,
@@ -254,15 +317,18 @@ class VoiceSTTApp(rumps.App):
             self._accessibility_item = None
             self.menu = [self.status_item, self.last_item, None, self.apikey_item, self.config_item, None, self.restart_item, None]
 
-        self.overlay: RecordingOverlay | None = None  # 런루프 시작 후 초기화
+        self.overlay: RecordingOverlay | None = None
         self._ui_queue: queue.Queue = queue.Queue()
 
+        log.info("키보드 리스너 시작 중...")
         listener = keyboard.Listener(
             on_press=self._on_press,
             on_release=self._on_release,
         )
         listener.daemon = True
-        listener.start()
+        threading.Thread(target=listener.start, daemon=True).start()
+        log.info("키보드 리스너 스레드 시작됨")
+        log.info("VoiceSTTApp.__init__ 완료 — run() 호출 대기")
 
     # ------------------------------------------------------------------
     # 접근성 권한 안내
@@ -280,6 +346,7 @@ class VoiceSTTApp(rumps.App):
         import subprocess
         import sys
         exe = sys.executable
+        log.info("재실행 요청 — exe: %s", exe)
         if ".app/Contents" in exe:
             bundle = exe[:exe.index(".app/Contents") + 4]
             subprocess.Popen(["open", bundle])
@@ -288,7 +355,7 @@ class VoiceSTTApp(rumps.App):
         rumps.quit_application()
 
     # ------------------------------------------------------------------
-    # API Key 설정 다이얼로그 (메인 스레드, 메뉴 클릭 콜백)
+    # API Key 설정
     # ------------------------------------------------------------------
 
     def _on_set_api_key(self, _):
@@ -306,12 +373,13 @@ class VoiceSTTApp(rumps.App):
             if new_key:
                 self._api_key = new_key
                 save_user_config({"api_key": new_key})
+                log.info("API 키 저장됨")
                 rumps.notification("voice-stt", "", "API Key가 저장되었습니다.")
             else:
                 rumps.alert(title="voice-stt", message="API Key를 입력해 주세요.")
 
     # ------------------------------------------------------------------
-    # 설정 편집 (config.json 직접 수정)
+    # 설정 편집
     # ------------------------------------------------------------------
 
     def _on_edit_config(self, _):
@@ -339,15 +407,17 @@ class VoiceSTTApp(rumps.App):
                 return
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(parsed, f, ensure_ascii=False, indent=2)
+            log.info("config.json 저장됨")
             rumps.notification("voice-stt", "", "설정이 저장되었습니다.")
 
     # ------------------------------------------------------------------
-    # UI 큐 (백그라운드 → 메인 스레드)
+    # UI 큐
     # ------------------------------------------------------------------
 
     @rumps.timer(0.3)
     def _init_overlay_once(self, sender):
         sender.stop()
+        log.info("오버레이 초기화 시작")
         self.overlay = RecordingOverlay()
 
     def _ui(self, fn):
@@ -365,21 +435,26 @@ class VoiceSTTApp(rumps.App):
             self.overlay.tick()
 
     # ------------------------------------------------------------------
-    # 키 이벤트 (pynput 백그라운드 스레드)
+    # 키 이벤트
     # ------------------------------------------------------------------
 
     def _on_press(self, key):
+        log.debug("키 눌림: %r", key)
         if key == keyboard.Key.alt_r and not self.recording and not self._transcribing:
+            log.info("Right Option 눌림 — 녹음 시작")
             self._start_recording()
         elif key == keyboard.Key.esc and (self.recording or self._transcribing):
+            log.info("ESC 눌림 — 녹음 취소")
             self._cancel_recording()
 
     def _on_release(self, key):
+        log.debug("키 뗌: %r", key)
         if key == keyboard.Key.alt_r and self.recording:
+            log.info("Right Option 뗌 — STT 변환 시작")
             self._stop_and_transcribe()
 
     # ------------------------------------------------------------------
-    # 녹음 (pynput 백그라운드 스레드에서 호출됨)
+    # 녹음
     # ------------------------------------------------------------------
 
     def _cancel_recording(self):
@@ -389,6 +464,7 @@ class VoiceSTTApp(rumps.App):
             self.stream.stop()
             self.stream.close()
             self.stream = None
+        log.info("녹음 취소됨")
         self._ui(lambda: (
             setattr(self, "title", "🎙"),
             setattr(self.status_item, "title", "상태: 취소됨"),
@@ -424,8 +500,9 @@ class VoiceSTTApp(rumps.App):
                 callback=self._audio_callback,
             )
             self.stream.start()
+            log.info("마이크 스트림 시작")
         except Exception as e:
-            print(f"[voice-stt] 마이크 오류: {e}", flush=True)
+            log.exception("마이크 오류")
             if self.stream:
                 try:
                     self.stream.close()
@@ -454,6 +531,7 @@ class VoiceSTTApp(rumps.App):
 
     def _stop_and_transcribe(self):
         self.recording = False
+        frames_count = len(self.audio_frames)
 
         self._ui(lambda: (
             setattr(self, "title", "⏳"),
@@ -466,13 +544,15 @@ class VoiceSTTApp(rumps.App):
             self.stream.close()
             self.stream = None
 
+        log.info("녹음 종료 — %d 청크 수집", frames_count)
+
         if self._cancelled:
             return
         self._transcribing = True
         threading.Thread(target=self._transcribe, daemon=True).start()
 
     # ------------------------------------------------------------------
-    # STT (별도 백그라운드 스레드)
+    # STT
     # ------------------------------------------------------------------
 
     def _transcribe(self):
@@ -483,7 +563,7 @@ class VoiceSTTApp(rumps.App):
 
             api_key = self._api_key
             if not api_key:
-                raise ValueError("API Key가 설정되지 않았습니다. 메뉴에서 'API Key 설정...'을 눌러 입력해 주세요.")
+                raise ValueError("API Key가 설정되지 않았습니다.")
 
             if self._cancelled:
                 return
@@ -492,6 +572,9 @@ class VoiceSTTApp(rumps.App):
                 raise ValueError("녹음된 오디오 데이터가 없습니다.")
 
             audio_data = np.concatenate(self.audio_frames, axis=0)
+            duration_sec = len(audio_data) / self.SAMPLE_RATE
+            log.info("STT 변환 시작 — 오디오 길이 %.1f초", duration_sec)
+
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 tmp_path = f.name
 
@@ -507,7 +590,8 @@ class VoiceSTTApp(rumps.App):
                 if self._cancelled:
                     return
                 try:
-                    client = ElevenLabs(api_key=api_key, timeout=5.0)
+                    log.info("ElevenLabs API 호출 (시도 %d/2)", attempt)
+                    client = ElevenLabs(api_key=api_key, timeout=10.0)
                     with open(tmp_path, "rb") as f:
                         result = client.speech_to_text.convert(
                             file=f,
@@ -516,10 +600,11 @@ class VoiceSTTApp(rumps.App):
                             keyterms=config.get("keyterms", []) or None,
                         )
                     last_exc = None
+                    log.info("API 응답 수신")
                     break
                 except Exception as e:
                     last_exc = e
-                    print(f"[voice-stt] API 오류 (시도 {attempt}/2): {e}", flush=True)
+                    log.warning("API 오류 (시도 %d/2): %s", attempt, e)
                     if attempt == 1 and not self._cancelled:
                         self._ui(lambda: (
                             setattr(self.status_item, "title", "상태: 재시도중..."),
@@ -534,6 +619,7 @@ class VoiceSTTApp(rumps.App):
                 return
 
             text = (result.text or "").strip()
+            log.info("변환 결과: %d자", len(text))
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
                 self._ui(lambda t=text, p=preview: (
@@ -542,13 +628,12 @@ class VoiceSTTApp(rumps.App):
                     setattr(self.status_item, "title", "상태: 대기중"),
                 ))
             else:
+                log.warning("변환 결과 텍스트 없음")
                 self._ui(lambda: setattr(self.status_item, "title", "상태: 텍스트 없음"))
 
         except Exception as e:
             error_occurred = True
-            import traceback
-            traceback.print_exc()
-            print(f"[voice-stt] 오류: {e}", flush=True)
+            log.exception("STT 오류: %s", e)
             if not self._cancelled:
                 self._ui(lambda: (
                     setattr(self.status_item, "title", "상태: 실패"),
@@ -575,11 +660,12 @@ class VoiceSTTApp(rumps.App):
                     self._ui(lambda: self.overlay.hide() if self.overlay else None)
 
     # ------------------------------------------------------------------
-    # 붙여넣기 + Enter (메인 스레드에서 호출됨)
+    # 붙여넣기 + Enter
     # ------------------------------------------------------------------
 
     def _paste_text(self, text: str):
         pyperclip.copy(text)
+        log.info("클립보드 복사 완료")
         kb = keyboard.Controller()
 
         with kb.pressed(keyboard.Key.cmd):
@@ -590,7 +676,10 @@ class VoiceSTTApp(rumps.App):
 
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
+        log.info("붙여넣기 + Enter 완료")
 
 
 if __name__ == "__main__":
+    log.info("run() 호출")
     VoiceSTTApp().run()
+    log.info("run() 종료")
