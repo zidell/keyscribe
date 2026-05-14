@@ -2,6 +2,7 @@ import os
 import json
 import math
 import wave
+import soundfile as sf
 import time
 import queue
 import logging
@@ -759,17 +760,16 @@ class VoiceSTTApp(rumps.App):
             log.info("STT 변환 시작 — 오디오 길이 %.1f초 (%d 샘플, %d bytes, %d 청크)",
                      duration_sec, len(audio_data), audio_bytes, frame_count)
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
                 tmp_path = f.name
-            log.debug("임시 WAV 파일 경로: %s", tmp_path)
+            log.debug("임시 FLAC 파일 경로: %s", tmp_path)
 
-            with wave.open(tmp_path, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(self.SAMPLE_RATE)
-                wf.writeframes(audio_data.tobytes())
-            wav_size = os.path.getsize(tmp_path)
-            log.debug("WAV 파일 저장 완료 — 크기=%d bytes", wav_size)
+            sf.write(tmp_path, audio_data, self.SAMPLE_RATE, format="FLAC", subtype="PCM_16")
+            flac_size = os.path.getsize(tmp_path)
+            log.debug("FLAC 파일 저장 완료 — 크기=%d bytes", flac_size)
+
+            hard_timeout = max(5.0, duration_sec + 10.0)
+            sdk_timeout = hard_timeout - 2.0
 
             result = None
             last_exc = None
@@ -779,9 +779,9 @@ class VoiceSTTApp(rumps.App):
                     return
                 try:
                     log.info("ElevenLabs API 호출 (시도 %d/2)", attempt)
-                    log.debug("API 파라미터 — model=scribe_v2, language='%s', keyterms=%s, sdk_timeout=8.0s, hard_timeout=10s",
-                              config.get("language", "ko"), config.get("keyterms", []))
-                    client = ElevenLabs(api_key=api_key, timeout=8.0)
+                    log.debug("API 파라미터 — model=scribe_v2, language='%s', keyterms=%s, sdk_timeout=%.1fs, hard_timeout=%.0fs",
+                              config.get("language", "ko"), config.get("keyterms", []), sdk_timeout, hard_timeout)
+                    client = ElevenLabs(api_key=api_key, timeout=sdk_timeout)
 
                     _holder: dict = {}
 
@@ -805,15 +805,15 @@ class VoiceSTTApp(rumps.App):
 
                     _t = threading.Thread(target=_call_api, daemon=True)
                     _t.start()
-                    log.debug("API 스레드 시작됨 — thread_id=%d, join 대기 최대 10s", _t.ident)
+                    log.debug("API 스레드 시작됨 — thread_id=%d, join 대기 최대 %.0fs", _t.ident, hard_timeout)
                     join_start = time.time()
-                    _t.join(timeout=10)
+                    _t.join(timeout=hard_timeout)
                     join_elapsed = time.time() - join_start
                     log.debug("API 스레드 join 완료 — 경과=%.2f초, alive=%s", join_elapsed, _t.is_alive())
 
                     if _t.is_alive():
-                        log.warning("API 스레드가 10초 후에도 응답 없음 — 하드 타임아웃 발동 (thread_id=%d)", _t.ident)
-                        raise TimeoutError("ElevenLabs API 응답 없음 (10초 초과)")
+                        log.warning("API 스레드가 %.0f초 후에도 응답 없음 — 하드 타임아웃 발동 (thread_id=%d)", hard_timeout, _t.ident)
+                        raise TimeoutError(f"ElevenLabs API 응답 없음 ({hard_timeout:.0f}초 초과)")
 
                     if "error" in _holder:
                         log.debug("API 스레드에서 예외 전파: [%s]", type(_holder["error"]).__name__)
