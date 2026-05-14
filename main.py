@@ -446,7 +446,8 @@ class VoiceSTTCore:
         self._prev_muted: bool | None = None
         self._toggle_listening = False
         self._vad_thread: threading.Thread | None = None
-        self._vad_pending_frames: list[np.ndarray] | None = None
+        self._vad_worker_thread: threading.Thread | None = None
+        self._vad_segment_queue: queue.Queue = queue.Queue()
         self._cfg_trigger_key = keyboard.Key.alt_r
         self._cfg_toggle_combo: frozenset | None = None
         self._pressed_keys: set = set()
@@ -939,9 +940,17 @@ class VoiceSTTCore:
 
     def _start_vad_listening(self):
         self._toggle_listening = True
+        # 이전 세션에 남은 구간 비우기
+        while not self._vad_segment_queue.empty():
+            try:
+                self._vad_segment_queue.get_nowait()
+            except queue.Empty:
+                break
         self._vad_thread = threading.Thread(target=self._vad_loop, daemon=True)
         self._vad_thread.start()
-        log.info("VAD 리스닝 시작")
+        self._vad_worker_thread = threading.Thread(target=self._vad_worker, daemon=True)
+        self._vad_worker_thread.start()
+        log.info("VAD 리스닝 + 워커 시작")
         self._ui(lambda: (
             self._set_tray_title("👂"),
             self._set_status("상태: 듣는중 (Toggle ON)"),
@@ -1017,26 +1026,33 @@ class VoiceSTTCore:
                             silence_count = 0
                             speaking = False
 
-                            if frames_to_send and not self._transcribing:
-                                log.info("VAD: 음성 구간 확정 — %d 청크", len(frames_to_send))
-                                self._transcribing = True
-                                self._ui(lambda: (
-                                    self._set_tray_title("⏳"),
-                                    self._set_status("상태: 변환중..."),
-                                    self.overlay.show("⏳  변환중...") if self.overlay else None,
-                                ))
-                                threading.Thread(
-                                    target=self._transcribe_vad,
-                                    args=(frames_to_send,),
-                                    daemon=True,
-                                ).start()
-                            elif self._transcribing and frames_to_send:
-                                self._vad_pending_frames = frames_to_send
-                                log.info("VAD: 변환중 — %d 청크 대기열 저장", len(frames_to_send))
+                            if frames_to_send:
+                                self._vad_segment_queue.put(frames_to_send)
+                                log.info("VAD: 음성 구간 → 대기열 (%d 청크, 대기 %d개)",
+                                         len(frames_to_send), self._vad_segment_queue.qsize())
         except Exception:
             log.exception("VAD 루프 오류")
         finally:
             log.info("VAD 루프 종료")
+
+    def _vad_worker(self):
+        """VAD 세그먼트 큐를 순서대로 처리하는 워커. VAD 루프와 독립적으로 동작."""
+        log.info("VAD 워커 진입")
+        while self._toggle_listening:
+            try:
+                frames = self._vad_segment_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            log.info("VAD 워커: 세그먼트 처리 시작 (%d 청크, 남은 대기 %d개)",
+                     len(frames), self._vad_segment_queue.qsize())
+            self._transcribing = True
+            self._ui(lambda: (
+                self._set_tray_title("⏳"),
+                self._set_status("상태: 변환중..."),
+                self.overlay.show("⏳  변환중...") if self.overlay else None,
+            ))
+            self._transcribe_vad(frames)  # 동기 호출 — 완료될 때까지 대기
+        log.info("VAD 워커 종료")
 
     def _transcribe_vad(self, frames: list[np.ndarray]):
         t_start = time.time()
@@ -1086,33 +1102,20 @@ class VoiceSTTCore:
                     os.unlink(tmp_path)
                 except Exception:
                     pass
-
-            pending = self._vad_pending_frames
-            self._vad_pending_frames = None
-
-            if pending and self._toggle_listening:
-                log.info("VAD: 대기 중이던 %d 청크 즉시 처리", len(pending))
-                self._transcribing = True
+            self._transcribing = False
+            # 큐에 다음 구간이 있으면 워커가 곧 다시 ⏳로 바꾸므로 잠깐 듣는중 표시
+            if self._toggle_listening:
                 self._ui(lambda: (
-                    self._set_tray_title("⏳"),
-                    self._set_status("상태: 변환중..."),
-                    self.overlay.show("⏳  변환중...") if self.overlay else None,
+                    self._set_tray_title("👂"),
+                    self._set_status("상태: 듣는중 (Toggle ON)"),
+                    self.overlay.show("👂  듣는중...") if self.overlay else None,
                 ))
-                threading.Thread(target=self._transcribe_vad, args=(pending,), daemon=True).start()
             else:
-                self._transcribing = False
-                if self._toggle_listening:
-                    self._ui(lambda: (
-                        self._set_tray_title("👂"),
-                        self._set_status("상태: 듣는중 (Toggle ON)"),
-                        self.overlay.show("👂  듣는중...") if self.overlay else None,
-                    ))
-                else:
-                    self._ui(lambda: (
-                        self._set_tray_title("🎙"),
-                        self._set_status("상태: 대기중"),
-                        self.overlay.hide() if self.overlay else None,
-                    ))
+                self._ui(lambda: (
+                    self._set_tray_title("🎙"),
+                    self._set_status("상태: 대기중"),
+                    self.overlay.hide() if self.overlay else None,
+                ))
 
 
 # ================================================================== #
