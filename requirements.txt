@@ -5,7 +5,6 @@ soundfile
 numpy
 pyperclip
 elevenlabs
-python-dotenv
 certifi
 
 # macOS 전용

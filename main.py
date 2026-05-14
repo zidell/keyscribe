@@ -22,9 +22,6 @@ except ImportError:
 
 import soundfile as sf
 
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-
 PLATFORM = sys.platform  # 'darwin' | 'win32'
 
 # ------------------------------------------------------------------ #
