@@ -616,10 +616,10 @@ class VoiceSTTCore:
         self._pressed_keys.add(key)
 
         if key == keyboard.Key.esc:
-            if self._toggle_listening:
-                log.info("ESC — Toggle 리스닝 OFF")
-                self._stop_vad_listening()
-            elif self.recording or self._transcribing:
+            # 토글 모드 중에는 ESC가 아무 일도 안 한다 — 게임/타이핑 중 ESC가
+            # 자주 눌려서 의도치 않게 토글이 꺼지는 문제를 막기 위함.
+            # push-to-talk 녹음 취소에만 ESC를 사용한다.
+            if not self._toggle_listening and (self.recording or self._transcribing):
                 log.info("ESC — 녹음 취소")
                 self._cancel_recording()
             return
