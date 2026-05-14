@@ -8,7 +8,10 @@
 
 # 누르는 동안 녹음, 떼면 STT 전송하는 트리거 키
 # 기본값: "right_option"
-# 선택지: "right_option" | "right_cmd" | "right_shift" | "right_ctrl"
+# macOS 선택지: "right_option" | "right_cmd" | "right_shift" | "right_ctrl"
+# Windows 선택지: "right_alt" | "right_ctrl" | "right_shift"
+# 참고: macOS "right_option" 과 Windows "right_alt" 는 같은 물리 키이므로
+#       이 값 그대로 Windows에서도 동작합니다.
 shortcut = "right_option"
 
 # STT 인식 언어 코드 (BCP-47 형식)
@@ -34,10 +37,11 @@ no_verbatim = true
 
 # ── 오디오 ────────────────────────────────────────────────────────────────────
 
-# 녹음 중 macOS 시스템 오디오 자동 음소거 여부
+# 녹음 중 시스템 오디오 자동 음소거 여부
 # 기본값: true
 # true  → 녹음 시작 시 스피커를 음소거하고 종료 시 복원
 # false → 음소거 없이 녹음 (에코·피드백이 없는 헤드셋 환경 등)
+# 참고: 현재 macOS에서만 동작합니다. Windows에서는 이 값을 무시합니다.
 mute_during_recording = true
 
 
@@ -45,7 +49,8 @@ mute_during_recording = true
 
 # 앱 전체를 활성화/비활성화하는 글로벌 단축키
 # 기본값: "ctrl+option+t"
-# 형식: 수식어(ctrl/option/shift/cmd) + 알파벳/숫자, "+" 로 조합
+# macOS 형식: 수식어(ctrl/option/shift/cmd) + 알파벳/숫자, "+" 로 조합
+# Windows 형식: 수식어(ctrl/alt/shift) + 알파벳/숫자 — "option" = "alt" 로 인식
 # 비워두면("") 토글 단축키가 비활성화된다.
 toggle_shortcut = "ctrl+option+t"
 

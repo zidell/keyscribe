@@ -1,7 +1,16 @@
-rumps
+# 공통
 pynput
 sounddevice
+soundfile
 numpy
 pyperclip
 elevenlabs
 python-dotenv
+certifi
+
+# macOS 전용
+rumps ; sys_platform == 'darwin'
+
+# Windows 전용
+pystray ; sys_platform == 'win32'
+Pillow ; sys_platform == 'win32'

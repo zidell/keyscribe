@@ -1,6 +1,6 @@
 # voice-stt
 
-macOS 메뉴바에서 실행되는 음성 → 텍스트 변환 도구입니다.  
+macOS 메뉴바 / Windows 트레이에서 실행되는 음성 → 텍스트 변환 도구입니다.  
 단축키를 누르고 있는 동안 녹음되고, 키를 놓으면 ElevenLabs Scribe v2 API로 텍스트 변환 후 현재 입력창에 자동으로 붙여넣기 + Enter 합니다.
 
 ---
@@ -35,13 +35,15 @@ API Key는 앱 메뉴의 **"API Key 설정..."** 에서 입력하면 각 컴퓨�
 
 ## 요구사항
 
-- macOS
-- Python 3.10+
+- macOS 또는 Windows 10/11
+- Python 3.11+
 - ElevenLabs API 키 ([elevenlabs.io](https://elevenlabs.io) → Profile → API Keys)
 
 ---
 
 ## 설치 및 실행
+
+### macOS
 
 ```bash
 cd ~/Sites/voice-stt
@@ -59,6 +61,24 @@ python3 main.py
 
 실행하면 macOS 메뉴바에 🎙 아이콘이 생깁니다.
 
+### Windows
+
+```powershell
+cd C:\Users\<사용자>\voice-stt
+
+# 가상환경 (선택)
+python -m venv .venv
+.venv\Scripts\activate
+
+# 패키지 설치
+pip install -r requirements.txt
+
+# 실행
+python main.py
+```
+
+실행하면 Windows 시스템 트레이에 원형 아이콘이 생깁니다.
+
 ### API Key 입력
 
 메뉴바 🎙 아이콘 클릭 → **"API Key 설정..."** → 키 입력 후 저장.  
@@ -66,12 +86,18 @@ python3 main.py
 
 ### 최초 실행 시 권한 허용 필요
 
+**macOS**
+
 | 권한 | 용도 |
 |------|------|
 | 마이크 | 음성 녹음 |
 | 손쉬운 사용 (Accessibility) | 전역 키 감지 및 키 입력 시뮬레이션 |
 
 > 손쉬운 사용 권한은 **시스템 설정 → 개인 정보 보호 및 보안 → 손쉬운 사용**에서 터미널(또는 앱)을 허용해야 합니다.
+
+**Windows**
+
+별도 권한 설정 불필요. 단, 키 입력 시뮬레이션이 관리자 권한으로 실행 중인 앱(일부 게임 등)에서 동작하지 않을 수 있습니다. 그 경우 `python main.py`를 관리자 권한으로 실행하세요.
 
 ---
 
