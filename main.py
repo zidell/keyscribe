@@ -6,6 +6,7 @@ import math
 import wave
 import time
 import queue
+import shutil
 import logging
 import threading
 import tempfile
@@ -152,6 +153,7 @@ except Exception:
 # 경로
 # ------------------------------------------------------------------ #
 CONFIG_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / "config.toml"
+CONFIG_EXAMPLE_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / "config.toml.example"
 
 def _get_user_config_path() -> Path:
     if PLATFORM == "darwin":
@@ -169,7 +171,21 @@ log.debug("USER_CONFIG_PATH: %s", USER_CONFIG_PATH)
 # ------------------------------------------------------------------ #
 # 설정 로드/저장
 # ------------------------------------------------------------------ #
+def _ensure_config_exists():
+    """config.toml이 없으면 config.toml.example을 복사한다 (첫 실행/새 컴퓨터)."""
+    if CONFIG_PATH.exists():
+        return
+    if not CONFIG_EXAMPLE_PATH.exists():
+        log.error("config.toml과 config.toml.example 둘 다 없음 — 설정 파일 누락")
+        return
+    try:
+        shutil.copy2(CONFIG_EXAMPLE_PATH, CONFIG_PATH)
+        log.info("config.toml 없음 — config.toml.example을 복사: %s", CONFIG_PATH)
+    except Exception:
+        log.exception("config.toml.example 복사 실패")
+
 def load_config() -> dict:
+    _ensure_config_exists()
     log.debug("config.toml 로드: %s", CONFIG_PATH)
     with open(CONFIG_PATH, "rb") as f:
         data = tomllib.load(f)
