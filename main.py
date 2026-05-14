@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import tomllib
 import math
 import wave
 import soundfile as sf
@@ -107,7 +109,7 @@ try:
 except Exception:
     log.exception("pynput 로드 실패")
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+CONFIG_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / "config.toml"
 USER_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "voice-stt" / "user_config.json"
 log.info("CONFIG_PATH: %s", CONFIG_PATH)
 log.debug("USER_CONFIG_PATH: %s", USER_CONFIG_PATH)
@@ -123,10 +125,10 @@ def is_accessibility_granted() -> bool:
 
 
 def load_config() -> dict:
-    log.debug("config.json 로드: %s", CONFIG_PATH)
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    log.debug("config.json 로드 완료 — 키: %s", list(data.keys()))
+    log.debug("config.toml 로드: %s", CONFIG_PATH)
+    with open(CONFIG_PATH, "rb") as f:
+        data = tomllib.load(f)
+    log.debug("config.toml 로드 완료 — 키: %s", list(data.keys()))
     return data
 
 
@@ -330,13 +332,17 @@ class VoiceSTTApp(rumps.App):
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
         self._prev_muted: bool | None = None
+        self._toggle_listening = False
+        self._vad_thread: threading.Thread | None = None
+        self._cfg_toggle_combo: frozenset | None = None
+        self._pressed_keys: set = set()
         log.debug("상태 변수 초기화 완료 — recording=False, _transcribing=False, _cancelled=False")
 
         user_cfg = load_user_config()
         api_key_source = (
             "user_config" if user_cfg.get("api_key")
             else "환경변수" if os.environ.get("ELEVENLABS_API_KEY")
-            else "config.json" if load_config().get("api_key")
+            else "config.toml" if load_config().get("api_key")
             else "없음"
         )
         self._api_key: str = (
@@ -371,6 +377,8 @@ class VoiceSTTApp(rumps.App):
         self._ui_queue: queue.Queue = queue.Queue()
         log.debug("UI 큐 초기화 완료")
 
+        self._reload_shortcut_cache()
+
         log.info("키보드 리스너 시작 중...")
         listener = keyboard.Listener(
             on_press=self._on_press,
@@ -380,6 +388,65 @@ class VoiceSTTApp(rumps.App):
         threading.Thread(target=listener.start, daemon=True).start()
         log.info("키보드 리스너 스레드 시작됨")
         log.info("VoiceSTTApp.__init__ 완료 — run() 호출 대기")
+
+    # ------------------------------------------------------------------
+    # 단축키 파싱 및 캐시
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _key_from_str(key_str: str):
+        _MAP = {
+            "right_option": keyboard.Key.alt_r,
+            "left_option":  keyboard.Key.alt,
+            "option":       keyboard.Key.alt,
+            "right_ctrl":   keyboard.Key.ctrl_r,
+            "left_ctrl":    keyboard.Key.ctrl,
+            "ctrl":         keyboard.Key.ctrl,
+            "right_shift":  keyboard.Key.shift_r,
+            "left_shift":   keyboard.Key.shift,
+            "shift":        keyboard.Key.shift,
+            "right_cmd":    keyboard.Key.cmd_r,
+            "left_cmd":     keyboard.Key.cmd,
+            "cmd":          keyboard.Key.cmd,
+            "enter":        keyboard.Key.enter,
+            "esc":          keyboard.Key.esc,
+            "tab":          keyboard.Key.tab,
+            "space":        keyboard.Key.space,
+            "f1":  keyboard.Key.f1,  "f2":  keyboard.Key.f2,
+            "f3":  keyboard.Key.f3,  "f4":  keyboard.Key.f4,
+            "f5":  keyboard.Key.f5,  "f6":  keyboard.Key.f6,
+            "f7":  keyboard.Key.f7,  "f8":  keyboard.Key.f8,
+            "f9":  keyboard.Key.f9,  "f10": keyboard.Key.f10,
+            "f11": keyboard.Key.f11, "f12": keyboard.Key.f12,
+        }
+        if key_str in _MAP:
+            return _MAP[key_str]
+        if len(key_str) == 1:
+            return keyboard.KeyCode.from_char(key_str)
+        log.warning("알 수 없는 키 문자열 '%s' — 무시됨", key_str)
+        return None
+
+    @staticmethod
+    def _parse_combo(combo_str: str) -> frozenset | None:
+        """'ctrl+option+t' 형태의 문자열을 pynput key frozenset으로 변환."""
+        if not combo_str:
+            return None
+        keys = []
+        for part in combo_str.lower().split("+"):
+            k = VoiceSTTApp._key_from_str(part.strip())
+            if k is None:
+                log.warning("combo 파싱 실패 — 알 수 없는 키: '%s'", part.strip())
+                return None
+            keys.append(k)
+        return frozenset(keys) if keys else None
+
+    def _reload_shortcut_cache(self):
+        try:
+            config = load_config()
+            self._cfg_toggle_combo = self._parse_combo(config.get("toggle_shortcut", ""))
+            log.debug("단축키 캐시 갱신 — toggle_combo=%r", self._cfg_toggle_combo)
+        except Exception:
+            log.exception("단축키 캐시 갱신 실패 — 기존 값 유지")
 
     # ------------------------------------------------------------------
     # 접근성 권한 안내
@@ -486,32 +553,54 @@ class VoiceSTTApp(rumps.App):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 current = f.read()
-            log.debug("현재 config.json 로드 완료 (%d bytes)", len(current))
+            log.debug("현재 config.toml 로드 완료 (%d bytes)", len(current))
         except Exception:
-            log.exception("config.json 로드 실패 — 빈 JSON 사용")
-            current = "{}"
+            log.exception("config.toml 로드 실패 — 빈 내용 사용")
+            current = ""
 
-        window = rumps.Window(
-            title="설정 (config.json)",
-            message="JSON을 수정한 후 저장하세요.",
-            default_text=current,
-            ok="저장",
-            cancel="취소",
-            dimensions=(400, 180),
+        from AppKit import (
+            NSAlert, NSScrollView, NSTextView, NSMakeRect, NSFont,
+            NSBezelBorder, NSColor,
         )
-        response = window.run()
-        if response.clicked:
-            text = response.text.strip()
+
+        W, H = 600, 440
+
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setHasHorizontalScroller_(False)
+        scroll.setAutohidesScrollers_(False)
+        scroll.setBorderType_(NSBezelBorder)
+
+        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
+        tv.setString_(current)
+        tv.setFont_(NSFont.fontWithName_size_("Menlo", 12))
+        tv.setAutomaticQuoteSubstitutionEnabled_(False)
+        tv.setAutomaticDashSubstitutionEnabled_(False)
+        tv.setRichText_(False)
+        scroll.setDocumentView_(tv)
+
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("설정 (config.toml)")
+        alert.setInformativeText_("TOML을 수정한 후 저장하세요.")
+        alert.addButtonWithTitle_("저장")
+        alert.addButtonWithTitle_("취소")
+        alert.setAccessoryView_(scroll)
+        alert.window().setInitialFirstResponder_(tv)
+
+        response = alert.runModal()
+        if response == 1000:  # 저장 버튼
+            text = tv.string().strip()
             try:
-                parsed = json.loads(text)
-                log.debug("JSON 파싱 완료 — 키: %s", list(parsed.keys()))
-            except json.JSONDecodeError as e:
-                log.warning("JSON 파싱 오류: %s", e)
-                rumps.alert(title="voice-stt", message=f"JSON 오류:\n{e}")
+                parsed = tomllib.loads(text)
+                log.debug("TOML 파싱 완료 — 키: %s", list(parsed.keys()))
+            except tomllib.TOMLDecodeError as e:
+                log.warning("TOML 파싱 오류: %s", e)
+                rumps.alert(title="voice-stt", message=f"TOML 오류:\n{e}")
                 return
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(parsed, f, ensure_ascii=False, indent=2)
-            log.info("config.json 저장됨")
+                f.write(text)
+            log.info("config.toml 저장됨")
+            self._reload_shortcut_cache()
             rumps.notification("voice-stt", "", "설정이 저장되었습니다.")
         else:
             log.debug("설정 편집 창 취소됨")
@@ -547,7 +636,7 @@ class VoiceSTTApp(rumps.App):
                 log.exception("UI 큐 콜백 오류 — 계속 진행")
         if processed > 0:
             log.debug("UI 큐 처리 완료 — %d개 항목 실행", processed)
-        if self.overlay and (self.recording or self._transcribing):
+        if self.overlay and (self.recording or self._transcribing or self._toggle_listening):
             self.overlay.tick()
 
     # ------------------------------------------------------------------
@@ -556,30 +645,51 @@ class VoiceSTTApp(rumps.App):
 
     def _on_press(self, key):
         log.debug("키 눌림: %r", key)
-        if key == keyboard.Key.alt_r:
-            if self.recording:
-                log.debug("Right Option 눌림 — 이미 녹음중 (recording=True), 무시")
-            elif self._transcribing:
-                log.debug("Right Option 눌림 — 변환중 (transcribing=True), 무시")
-            else:
-                log.info("Right Option 눌림 — 녹음 시작")
-                self._start_recording()
-        elif key == keyboard.Key.esc:
-            if self.recording or self._transcribing:
+        self._pressed_keys.add(key)
+
+        if key == keyboard.Key.esc:
+            if self._toggle_listening:
+                log.info("ESC 눌림 — Toggle 리스닝 OFF")
+                self._stop_vad_listening()
+            elif self.recording or self._transcribing:
                 log.info("ESC 눌림 — 녹음 취소 (recording=%s, transcribing=%s)",
                          self.recording, self._transcribing)
                 self._cancel_recording()
             else:
                 log.debug("ESC 눌림 — 녹음/변환 중 아님, 무시")
+            return
+
+        if self._cfg_toggle_combo and self._cfg_toggle_combo.issubset(self._pressed_keys):
+            if self._toggle_listening:
+                log.info("Toggle 단축키 — Toggle 리스닝 OFF")
+                self._stop_vad_listening()
+            elif not self._transcribing:
+                log.info("Toggle 단축키 — Toggle 리스닝 ON")
+                self._start_vad_listening()
+            else:
+                log.debug("Toggle 단축키 — 변환중, 무시")
+            return
+
+        if key == keyboard.Key.alt_r:
+            if self.recording:
+                log.debug("Right Option 눌림 — 이미 녹음중, 무시")
+            elif self._transcribing:
+                log.debug("Right Option 눌림 — 변환중, 무시")
+            elif self._toggle_listening:
+                log.debug("Right Option 눌림 — Toggle 리스닝 중, 무시")
+            else:
+                log.info("Right Option 눌림 — 녹음 시작")
+                self._start_recording()
 
     def _on_release(self, key):
         log.debug("키 뗌: %r", key)
+        self._pressed_keys.discard(key)
         if key == keyboard.Key.alt_r:
             if self.recording:
                 log.info("Right Option 뗌 — STT 변환 시작")
                 self._stop_and_transcribe()
             else:
-                log.debug("Right Option 뗌 — 녹음중 아님 (recording=False, transcribing=%s), 무시",
+                log.debug("Right Option 뗌 — 녹음중 아님 (transcribing=%s), 무시",
                           self._transcribing)
 
     # ------------------------------------------------------------------
@@ -733,9 +843,9 @@ class VoiceSTTApp(rumps.App):
         tmp_path = None
         error_occurred = False
         try:
-            log.debug("config.json 로드 시작")
+            log.debug("config.toml 로드 시작")
             config = load_config()
-            log.debug("config.json 로드 완료 — language='%s', keyterms=%s",
+            log.debug("config.toml 로드 완료 — language='%s', keyterms=%s",
                       config.get("language"), config.get("keyterms"))
 
             api_key = self._api_key
@@ -848,7 +958,7 @@ class VoiceSTTApp(rumps.App):
                 log.debug("취소 확인 (API 성공 후) — 붙여넣기 생략, 조기 종료")
                 return
 
-            text = (result.text or "").strip()
+            text = self._clean_text(result.text or "")
             log.info("변환 결과: %d자", len(text))
             log.debug("변환 결과 미리보기: %r", text[:80])
 
@@ -923,6 +1033,221 @@ class VoiceSTTApp(rumps.App):
             log.debug("_transcribe 종료 — thread_id=%d, 총 소요=%.2f초", thread_id, elapsed)
 
     # ------------------------------------------------------------------
+    # Toggle 모드 (VAD 연속 리스닝)
+    # ------------------------------------------------------------------
+
+    def _start_vad_listening(self):
+        self._toggle_listening = True
+        self._vad_thread = threading.Thread(target=self._vad_loop, daemon=True)
+        self._vad_thread.start()
+        log.info("VAD 리스닝 시작")
+        self._ui(lambda: (
+            setattr(self, "title", "👂"),
+            setattr(self.status_item, "title", "상태: 듣는중 (Toggle ON)"),
+            self.overlay.show("👂  듣는중...") if self.overlay else None,
+        ))
+
+    def _stop_vad_listening(self):
+        self._toggle_listening = False
+        log.info("VAD 리스닝 중지 요청")
+        self._ui(lambda: (
+            setattr(self, "title", "🎙"),
+            setattr(self.status_item, "title", "상태: 대기중"),
+            self.overlay.hide() if self.overlay else None,
+        ))
+
+    def _vad_loop(self):
+        config = load_config()
+        threshold = config.get("vad_threshold", 500)
+        silence_sec = config.get("vad_silence_sec", 1.0)
+
+        chunk_sec = 0.05
+        chunk_samples = int(self.SAMPLE_RATE * chunk_sec)
+        silence_chunks_needed = int(silence_sec / chunk_sec)
+
+        chunk_q: queue.Queue = queue.Queue()
+
+        def _vad_callback(indata, frames, time_info, status):
+            chunk_q.put(indata.copy())
+            rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+            if self.overlay:
+                self.overlay.set_volume(min(1.0, rms / 4000.0))
+
+        speech_frames: list[np.ndarray] = []
+        silence_count = 0
+        speaking = False
+
+        log.info("VAD 루프 진입 — threshold=%d, silence_sec=%.1f", threshold, silence_sec)
+        try:
+            with sd.InputStream(
+                samplerate=self.SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=chunk_samples,
+                callback=_vad_callback,
+            ):
+                while self._toggle_listening:
+                    try:
+                        chunk = chunk_q.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+
+                    rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+
+                    if rms >= threshold:
+                        if not speaking:
+                            speaking = True
+                            silence_count = 0
+                            log.info("VAD: 음성 감지 시작")
+                            self._ui(lambda: (
+                                setattr(self, "title", "🔴"),
+                                setattr(self.status_item, "title", "상태: 녹음중 (VAD)"),
+                                self.overlay.show("🔴  녹음중") if self.overlay else None,
+                            ))
+                        else:
+                            silence_count = 0
+                        speech_frames.append(chunk)
+                    elif speaking:
+                        silence_count += 1
+                        speech_frames.append(chunk)
+
+                        if silence_count >= silence_chunks_needed:
+                            frames_to_send = speech_frames[:-silence_count] if silence_count < len(speech_frames) else speech_frames
+                            speech_frames = []
+                            silence_count = 0
+                            speaking = False
+
+                            if frames_to_send and not self._transcribing:
+                                log.info("VAD: 음성 구간 확정 — %d 청크 전송", len(frames_to_send))
+                                self._transcribing = True
+                                self._ui(lambda: (
+                                    setattr(self, "title", "⏳"),
+                                    setattr(self.status_item, "title", "상태: 변환중..."),
+                                    self.overlay.show("⏳  변환중...") if self.overlay else None,
+                                ))
+                                t = threading.Thread(
+                                    target=self._transcribe_vad,
+                                    args=(frames_to_send,),
+                                    daemon=True,
+                                )
+                                t.start()
+                            elif self._transcribing:
+                                log.debug("VAD: 이미 변환중 — 이번 구간 건너뜀")
+        except Exception:
+            log.exception("VAD 루프 오류")
+        finally:
+            log.info("VAD 루프 종료")
+
+    def _transcribe_vad(self, frames: list[np.ndarray]):
+        t_start = time.time()
+        tmp_path = None
+        try:
+            config = load_config()
+            api_key = self._api_key
+            if not api_key:
+                raise ValueError("API Key가 설정되지 않았습니다.")
+
+            audio_data = np.concatenate(frames, axis=0)
+            duration_sec = len(audio_data) / self.SAMPLE_RATE
+            log.info("VAD STT 시작 — 오디오 %.1f초", duration_sec)
+
+            with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+                tmp_path = f.name
+            sf.write(tmp_path, audio_data, self.SAMPLE_RATE, format="FLAC", subtype="PCM_16")
+
+            hard_timeout = max(5.0, duration_sec + 10.0)
+            sdk_timeout = hard_timeout - 2.0
+
+            result = None
+            last_exc = None
+            for attempt in range(1, 3):
+                try:
+                    client = ElevenLabs(api_key=api_key, timeout=sdk_timeout)
+                    _holder: dict = {}
+
+                    def _call(_holder=_holder):
+                        try:
+                            with open(tmp_path, "rb") as f:
+                                _holder["result"] = client.speech_to_text.convert(
+                                    file=f,
+                                    model_id="scribe_v2",
+                                    language_code=config.get("language", "ko"),
+                                    keyterms=config.get("keyterms", []) or None,
+                                    no_verbatim=config.get("no_verbatim", True),
+                                )
+                        except BaseException as exc:
+                            _holder["error"] = exc
+
+                    _t = threading.Thread(target=_call, daemon=True)
+                    _t.start()
+                    _t.join(timeout=hard_timeout)
+                    if _t.is_alive():
+                        raise TimeoutError(f"ElevenLabs API 응답 없음 ({hard_timeout:.0f}초 초과)")
+                    if "error" in _holder:
+                        raise _holder["error"]
+                    result = _holder["result"]
+                    last_exc = None
+                    log.info("VAD STT 완료 (시도 %d, 소요=%.2f초)", attempt, time.time() - t_start)
+                    break
+                except Exception as e:
+                    last_exc = e
+                    log.warning("VAD STT 오류 (시도 %d): [%s] %s", attempt, type(e).__name__, e)
+                    if attempt == 1:
+                        time.sleep(1.0)
+
+            if last_exc is not None:
+                raise last_exc
+
+            text = self._clean_text(result.text or "")
+            if text:
+                preview = text[:40] + ("..." if len(text) > 40 else "")
+                log.info("VAD 변환 결과: %d자 — %r", len(text), text[:40])
+                before_key = config.get("toggle_before_key", "enter")
+                if before_key:
+                    self._ui(lambda t=text, p=preview: (
+                        self._send_before_and_paste(t),
+                        setattr(self.last_item, "title", f"마지막 변환: {p}"),
+                    ))
+                else:
+                    self._ui(lambda t=text, p=preview: (
+                        self._paste_text(t),
+                        setattr(self.last_item, "title", f"마지막 변환: {p}"),
+                    ))
+            else:
+                log.warning("VAD STT: 텍스트 없음")
+
+        except Exception:
+            log.exception("VAD STT 오류")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+            self._transcribing = False
+            if self._toggle_listening:
+                self._ui(lambda: (
+                    setattr(self, "title", "👂"),
+                    setattr(self.status_item, "title", "상태: 듣는중 (Toggle ON)"),
+                    self.overlay.show("👂  듣는중...") if self.overlay else None,
+                ))
+            else:
+                self._ui(lambda: (
+                    setattr(self, "title", "🎙"),
+                    setattr(self.status_item, "title", "상태: 대기중"),
+                    self.overlay.hide() if self.overlay else None,
+                ))
+
+    # ------------------------------------------------------------------
+    # 텍스트 정제
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        text = re.sub(r'\[.*?\]', '', text)
+        return ' '.join(text.split())
+
+    # ------------------------------------------------------------------
     # 붙여넣기 + Enter
     # ------------------------------------------------------------------
 
@@ -951,6 +1276,28 @@ class VoiceSTTApp(rumps.App):
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
         log.info("붙여넣기 + Enter 완료")
+
+    def _send_before_and_paste(self, text: str):
+        """toggle_before_key 전송 → 붙여넣기 → Enter."""
+        config = load_config()
+        before_key = self._key_from_str(config.get("toggle_before_key", "enter"))
+        log.debug("_send_before_and_paste — before_key=%r, 텍스트 길이=%d자", before_key, len(text))
+
+        pyperclip.copy(text)
+        kb = keyboard.Controller()
+
+        kb.press(before_key)
+        kb.release(before_key)
+        time.sleep(0.15)
+
+        with kb.pressed(keyboard.Key.cmd):
+            kb.press("v")
+            kb.release("v")
+        time.sleep(0.1)
+
+        kb.press(keyboard.Key.enter)
+        kb.release(keyboard.Key.enter)
+        log.info("toggle_before_and_paste 완료")
 
 
 if __name__ == "__main__":

@@ -3,5 +3,9 @@
   "language": "ko",
   "keyterms": [],
   "no_verbatim": true,
-  "mute_during_recording": true
+  "mute_during_recording": true,
+  "toggle_shortcut": "ctrl+option+t",
+  "toggle_before_key": "enter",
+  "vad_threshold": 500,
+  "vad_silence_sec": 1.0
 }
