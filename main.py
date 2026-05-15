@@ -588,6 +588,7 @@ class VoiceSTTCore:
         self.stream: sd.InputStream | None = None
         self._prev_muted: bool | None = None
         self._continuous_listening = False
+        self._continuous_paste_count = 0
         self._vad_thread: threading.Thread | None = None
         self._vad_worker_thread: threading.Thread | None = None
         self._vad_segment_queue: queue.Queue = queue.Queue()
@@ -1194,6 +1195,7 @@ class VoiceSTTCore:
 
     def _start_vad_listening(self):
         self._continuous_listening = True
+        self._continuous_paste_count = 0
         # 이전 세션에 남은 구간 비우기
         while not self._vad_segment_queue.empty():
             try:
@@ -1386,7 +1388,10 @@ class VoiceSTTCore:
 
             text = self._clean_text(result.text or "")
             if text:
-                preview = text[:40] + ("..." if len(text) > 40 else "")
+                if self._continuous_paste_count > 0:
+                    text = " " + text
+                self._continuous_paste_count += 1
+                preview = text.lstrip()[:40] + ("..." if len(text.lstrip()) > 40 else "")
                 log.info("VAD 변환 결과: %d자 — %r", len(text), text[:40])
                 self._ui(lambda t=text, p=preview: (
                     self._send_before_and_paste(t),
