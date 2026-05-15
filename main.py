@@ -818,8 +818,8 @@ class VoiceSTTCore:
         triggers = config.get("custom_key_trigger", {})
         triggered_keys = []
         for keyword, key_str in triggers.items():
-            if keyword in text:
-                text = text.replace(keyword, "")
+            if keyword.lower() in text.lower():
+                text = re.sub(re.escape(keyword), "", text, flags=re.IGNORECASE)
                 text = " ".join(text.split())
                 key = self._key_from_str(key_str)
                 if key:
