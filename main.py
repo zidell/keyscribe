@@ -869,7 +869,7 @@ class VoiceSTTCore:
                     kb.release("v")
             time.sleep(0.1)
 
-        if after_key:
+        if not triggered_keys and after_key:
             kb.press(after_key)
             kb.release(after_key)
             time.sleep(0.05)
@@ -887,6 +887,11 @@ class VoiceSTTCore:
             elif action[0] == "type":
                 kb.type(action[1])
                 log.info("custom_key_trigger 타이핑 — %r → %r", kw, action[1])
+                if after_key:
+                    time.sleep(0.05)
+                    kb.press(after_key)
+                    kb.release(after_key)
+                    log.info("after_key 실행 (type 트리거 후) — %r", after_key)
             elif action[0] == "clear":
                 select_all = keyboard.Key.cmd if PLATFORM == "darwin" else keyboard.Key.ctrl
                 with kb.pressed(select_all):
