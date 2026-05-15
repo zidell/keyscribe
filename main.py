@@ -695,7 +695,9 @@ class VoiceSTTCore:
                 self._cancel_recording()
             return
 
-        if self._cfg_continuous_combo and self._cfg_continuous_combo.issubset(self._pressed_keys):
+        if (self._cfg_continuous_combo
+                and key in self._cfg_continuous_combo
+                and self._cfg_continuous_combo.issubset(self._pressed_keys)):
             if self._continuous_listening:
                 log.info("연속입력 단축키 — 연속입력 리스닝 OFF")
                 self._stop_vad_listening()
