@@ -796,6 +796,7 @@ class VoiceSTTCore:
 
     def _paste_text(self, text: str):
         # Windows는 항상 type 모드 — 레거시 게임(스타크래프트 등) 채팅이 Ctrl+V를 무시함
+        text, triggered_keys = self._process_key_triggers(text)
         log.debug("_paste_text — %d자", len(text))
         kb = keyboard.Controller()
         if PLATFORM == "win32":
@@ -810,6 +811,11 @@ class VoiceSTTCore:
         time.sleep(0.1)
         kb.press(keyboard.Key.enter)
         kb.release(keyboard.Key.enter)
+        for kw, key in triggered_keys:
+            time.sleep(0.05)
+            kb.press(key)
+            kb.release(key)
+            log.info("custom_key_trigger 실행 — %r", kw)
         log.info("붙여넣기 + Enter 완료")
 
     def _process_key_triggers(self, text: str) -> tuple[str, list]:
