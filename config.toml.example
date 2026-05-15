@@ -16,6 +16,11 @@
 #       이 값 그대로 Windows에서도 동작합니다.
 shortcut = "right_option"
 
+# Push-to-talk 붙여넣기 직후에 자동으로 누를 키
+# 기본값: "enter"
+# 예시: "enter" (전송), "tab" (다음 필드), "" (없음)
+ptt_after_key = "enter"
+
 # STT 인식 언어 코드 (BCP-47 형식)
 # 기본값: "ko"
 # 예시: "ko" (한국어), "en" (영어), "ja" (일본어), "zh" (중국어)

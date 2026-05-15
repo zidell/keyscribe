@@ -836,10 +836,14 @@ class VoiceSTTCore:
                 log.debug("custom_key_trigger 감지 — keyword=%r action=%r", keyword, action)
         return text, triggered
 
-    def _send_before_and_paste(self, text: str):
+    def _send_before_and_paste(self, text: str, mode: str = "continuous"):
         config = load_config()
-        before_key_str = config.get("continuous_before_key", "enter")
-        after_key_str = config.get("continuous_after_key", "enter")
+        if mode == "ptt":
+            before_key_str = ""
+            after_key_str = config.get("ptt_after_key", "enter")
+        else:
+            before_key_str = config.get("continuous_before_key", "")
+            after_key_str = config.get("continuous_after_key", "")
 
         text, triggered_keys = self._process_key_triggers(text)
 
@@ -1113,7 +1117,7 @@ class VoiceSTTCore:
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
                 self._ui(lambda t=text, p=preview: (
-                    self._send_before_and_paste(t),
+                    self._send_before_and_paste(t, mode="ptt"),
                     self._set_last(f"마지막 변환: {p}"),
                     self._set_status("상태: 대기중"),
                 ))
