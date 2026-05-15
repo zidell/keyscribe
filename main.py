@@ -794,36 +794,29 @@ class VoiceSTTCore:
     # 붙여넣기
     # ------------------------------------------------------------------
 
-    def _paste_text(self, text: str):
-        # Windows는 항상 type 모드 — 레거시 게임(스타크래프트 등) 채팅이 Ctrl+V를 무시함
-        log.debug("_paste_text — %d자", len(text))
-        kb = keyboard.Controller()
-        if PLATFORM == "win32":
-            kb.type(text)
-            log.info("타이핑 입력 완료 (%d자)", len(text))
-        else:
-            pyperclip.copy(text)
-            log.info("클립보드 복사 완료")
-            with kb.pressed(keyboard.Key.cmd):
-                kb.press("v")
-                kb.release("v")
-        time.sleep(0.1)
-        kb.press(keyboard.Key.enter)
-        kb.release(keyboard.Key.enter)
-        log.info("붙여넣기 + Enter 완료")
-
     @staticmethod
     def _normalize_trigger(s: str) -> str:
         """한글·알파벳만 남기고 소문자화 (공백·특수문자 제거)"""
         return re.sub(r"[^가-힣a-z]", "", s.lower())
 
+    def _parse_trigger_action(self, value: str) -> tuple | None:
+        """트리거 값을 액션 튜플로 파싱.
+        ("keys", [Key, ...]) | ("type", str) | ("clear",)
+        """
+        if value.lower() == "clear":
+            return ("clear",)
+        parts = [self._key_from_str(p.strip()) for p in value.split("+")]
+        if all(k is not None for k in parts) and parts:
+            return ("keys", parts)
+        return ("type", value)
+
     def _process_key_triggers(self, text: str) -> tuple[str, list]:
-        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 트리거할 키 목록을 반환.
+        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 액션 목록을 반환.
         공백 기준으로 토큰 분리 후 연속 토큰 슬라이딩 윈도우로 매칭."""
         config = load_config()
         triggers = config.get("custom_key_trigger", {})
-        triggered_keys = []
-        for keyword, key_str in triggers.items():
+        triggered = []
+        for keyword, value in triggers.items():
             norm_kw = self._normalize_trigger(keyword)
             if not norm_kw:
                 continue
@@ -838,12 +831,10 @@ class VoiceSTTCore:
                     break
             if matched:
                 text = " ".join(tokens[:matched[0]] + tokens[matched[1]:])
-                parts = [self._key_from_str(p.strip()) for p in key_str.split("+")]
-                keys = [k for k in parts if k is not None]
-                if keys:
-                    triggered_keys.append((keyword, keys))
-                    log.debug("custom_key_trigger 감지 — keyword=%r keys=%r", keyword, key_str)
-        return text, triggered_keys
+                action = self._parse_trigger_action(value)
+                triggered.append((keyword, action))
+                log.debug("custom_key_trigger 감지 — keyword=%r action=%r", keyword, action)
+        return text, triggered
 
     def _send_before_and_paste(self, text: str):
         config = load_config()
@@ -879,15 +870,29 @@ class VoiceSTTCore:
             kb.release(after_key)
             time.sleep(0.05)
 
-        for kw, keys in triggered_keys:
-            for k in keys[:-1]:
-                kb.press(k)
-            kb.press(keys[-1])
-            kb.release(keys[-1])
-            for k in reversed(keys[:-1]):
-                kb.release(k)
+        for kw, action in triggered_keys:
+            if action[0] == "keys":
+                keys = action[1]
+                for k in keys[:-1]:
+                    kb.press(k)
+                kb.press(keys[-1])
+                kb.release(keys[-1])
+                for k in reversed(keys[:-1]):
+                    kb.release(k)
+                log.info("custom_key_trigger 키 실행 — %r", kw)
+            elif action[0] == "type":
+                kb.type(action[1])
+                log.info("custom_key_trigger 타이핑 — %r → %r", kw, action[1])
+            elif action[0] == "clear":
+                select_all = keyboard.Key.cmd if PLATFORM == "darwin" else keyboard.Key.ctrl
+                with kb.pressed(select_all):
+                    kb.press("a")
+                    kb.release("a")
+                time.sleep(0.05)
+                kb.press(keyboard.Key.delete)
+                kb.release(keyboard.Key.delete)
+                log.info("custom_key_trigger clear 실행 — %r", kw)
             time.sleep(0.05)
-            log.info("custom_key_trigger 실행 — %r", kw)
 
         log.info("continuous_before_and_paste 완료")
 
@@ -1108,7 +1113,7 @@ class VoiceSTTCore:
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
                 self._ui(lambda t=text, p=preview: (
-                    self._paste_text(t),
+                    self._send_before_and_paste(t),
                     self._set_last(f"마지막 변환: {p}"),
                     self._set_status("상태: 대기중"),
                 ))
