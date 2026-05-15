@@ -555,7 +555,7 @@ class VoiceSTTCore:
       _set_tray_title(title)  — 트레이 아이콘/타이틀 변경
       _set_status(status)     — 메뉴의 상태 텍스트 변경
       _set_last(text)         — 마지막 변환 결과 텍스트 변경
-      _set_toggle_state(on)   — 메뉴의 "토글 모드" 체크 상태 갱신
+      _set_continuous_state(on)   — 메뉴의 "연속입력 모드" 체크 상태 갱신
     """
     SAMPLE_RATE = 16000
 
@@ -567,12 +567,12 @@ class VoiceSTTCore:
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
         self._prev_muted: bool | None = None
-        self._toggle_listening = False
+        self._continuous_listening = False
         self._vad_thread: threading.Thread | None = None
         self._vad_worker_thread: threading.Thread | None = None
         self._vad_segment_queue: queue.Queue = queue.Queue()
         self._cfg_trigger_key = keyboard.Key.alt_r
-        self._cfg_toggle_combo: frozenset | None = None
+        self._cfg_continuous_combo: frozenset | None = None
         self._pressed_keys: set = set()
         self.overlay = None
         self._ui_queue: queue.Queue = queue.Queue()
@@ -648,9 +648,9 @@ class VoiceSTTCore:
             shortcut = config.get("shortcut", "")
             k = self._key_from_str(shortcut) if shortcut else None
             self._cfg_trigger_key = k if k else keyboard.Key.alt_r
-            self._cfg_toggle_combo = self._parse_combo(config.get("toggle_shortcut", ""))
+            self._cfg_continuous_combo = self._parse_combo(config.get("continuous_shortcut", ""))
             log.debug("단축키 캐시 갱신 — trigger=%r, toggle_combo=%r",
-                      self._cfg_trigger_key, self._cfg_toggle_combo)
+                      self._cfg_trigger_key, self._cfg_continuous_combo)
         except Exception:
             log.exception("단축키 캐시 갱신 실패 — 기존 값 유지")
 
@@ -675,7 +675,7 @@ class VoiceSTTCore:
                 log.exception("UI 큐 콜백 오류")
         if processed > 0:
             log.debug("UI 큐 처리 완료 — %d개", processed)
-        if self.overlay and (self.recording or self._transcribing or self._toggle_listening):
+        if self.overlay and (self.recording or self._transcribing or self._continuous_listening):
             self.overlay.tick()
 
     # ------------------------------------------------------------------
@@ -687,20 +687,20 @@ class VoiceSTTCore:
         self._pressed_keys.add(key)
 
         if key == keyboard.Key.esc:
-            # 토글 모드 중에는 ESC가 아무 일도 안 한다 — 게임/타이핑 중 ESC가
-            # 자주 눌려서 의도치 않게 토글이 꺼지는 문제를 막기 위함.
+            # 연속입력 모드 중에는 ESC가 아무 일도 안 한다 — 게임/타이핑 중 ESC가
+            # 자주 눌려서 의도치 않게 연속입력이 꺼지는 문제를 막기 위함.
             # push-to-talk 녹음 취소에만 ESC를 사용한다.
-            if not self._toggle_listening and (self.recording or self._transcribing):
+            if not self._continuous_listening and (self.recording or self._transcribing):
                 log.info("ESC — 녹음 취소")
                 self._cancel_recording()
             return
 
-        if self._cfg_toggle_combo and self._cfg_toggle_combo.issubset(self._pressed_keys):
-            if self._toggle_listening:
-                log.info("Toggle 단축키 — Toggle 리스닝 OFF")
+        if self._cfg_continuous_combo and self._cfg_continuous_combo.issubset(self._pressed_keys):
+            if self._continuous_listening:
+                log.info("연속입력 단축키 — 연속입력 리스닝 OFF")
                 self._stop_vad_listening()
             elif not self._transcribing:
-                log.info("Toggle 단축키 — Toggle 리스닝 ON")
+                log.info("연속입력 단축키 — 연속입력 리스닝 ON")
                 self._start_vad_listening()
             return
 
@@ -709,8 +709,8 @@ class VoiceSTTCore:
                 log.debug("트리거 키 눌림 — 이미 녹음중, 무시")
             elif self._transcribing:
                 log.debug("트리거 키 눌림 — 변환중, 무시")
-            elif self._toggle_listening:
-                log.debug("트리거 키 눌림 — Toggle 리스닝 중, 무시")
+            elif self._continuous_listening:
+                log.debug("트리거 키 눌림 — 연속입력 리스닝 중, 무시")
             else:
                 log.info("트리거 키 눌림 — 녹음 시작")
                 self._start_recording()
@@ -847,8 +847,8 @@ class VoiceSTTCore:
 
     def _send_before_and_paste(self, text: str):
         config = load_config()
-        before_key_str = config.get("toggle_before_key", "enter")
-        after_key_str = config.get("toggle_after_key", "enter")
+        before_key_str = config.get("continuous_before_key", "enter")
+        after_key_str = config.get("continuous_after_key", "enter")
 
         text, triggered_keys = self._process_key_triggers(text)
 
@@ -889,7 +889,7 @@ class VoiceSTTCore:
             time.sleep(0.05)
             log.info("custom_key_trigger 실행 — %r", kw)
 
-        log.info("toggle_before_and_paste 완료")
+        log.info("continuous_before_and_paste 완료")
 
     # ------------------------------------------------------------------
     # 텍스트 정제
@@ -1151,11 +1151,11 @@ class VoiceSTTCore:
                     self._ui(lambda: self.overlay.hide() if self.overlay else None)
 
     # ------------------------------------------------------------------
-    # Toggle 모드 (VAD 연속 리스닝)
+    # 연속입력 모드 (VAD 연속 리스닝)
     # ------------------------------------------------------------------
 
     def _start_vad_listening(self):
-        self._toggle_listening = True
+        self._continuous_listening = True
         # 이전 세션에 남은 구간 비우기
         while not self._vad_segment_queue.empty():
             try:
@@ -1169,30 +1169,30 @@ class VoiceSTTCore:
         log.info("VAD 리스닝 + 워커 시작")
         self._ui(lambda: (
             self._set_tray_title("👂"),
-            self._set_status("상태: 듣는중 (Toggle ON)"),
-            self._set_toggle_state(True),
+            self._set_status("상태: 듣는중 (연속입력 ON)"),
+            self._set_continuous_state(True),
             self.overlay.show("👂  듣는중...") if self.overlay else None,
         ))
 
     def _stop_vad_listening(self):
-        self._toggle_listening = False
+        self._continuous_listening = False
         log.info("VAD 리스닝 중지 요청")
         self._ui(lambda: (
             self._set_tray_title("🎙"),
             self._set_status("상태: 대기중"),
-            self._set_toggle_state(False),
+            self._set_continuous_state(False),
             self.overlay.hide() if self.overlay else None,
         ))
 
-    def _request_toggle_mode(self):
-        """메뉴 클릭 등 외부에서 토글 모드 전환을 요청한다."""
-        if self._toggle_listening:
-            log.info("메뉴 — Toggle 리스닝 OFF")
+    def _request_continuous_mode(self):
+        """메뉴 클릭 등 외부에서 연속입력 모드 전환을 요청한다."""
+        if self._continuous_listening:
+            log.info("메뉴 — 연속입력 리스닝 OFF")
             self._stop_vad_listening()
         elif self._transcribing:
-            log.debug("메뉴 — 변환중이라 토글 요청 무시")
+            log.debug("메뉴 — 변환중이라 연속입력 요청 무시")
         else:
-            log.info("메뉴 — Toggle 리스닝 ON")
+            log.info("메뉴 — 연속입력 리스닝 ON")
             self._start_vad_listening()
 
     def _vad_loop(self):
@@ -1227,7 +1227,7 @@ class VoiceSTTCore:
                 blocksize=chunk_samples,
                 callback=_vad_callback,
             ):
-                while self._toggle_listening:
+                while self._continuous_listening:
                     try:
                         chunk = chunk_q.get(timeout=0.1)
                     except queue.Empty:
@@ -1283,12 +1283,12 @@ class VoiceSTTCore:
                                          len(frames_to_send), self._vad_segment_queue.qsize())
         except Exception:
             log.exception("VAD 루프 오류 — 마이크 사용 불가")
-            # 토글 모드를 자동으로 OFF 시키고 사용자에게 알린다
-            self._toggle_listening = False
+            # 연속입력 모드를 자동으로 OFF 시키고 사용자에게 알린다
+            self._continuous_listening = False
             self._ui(lambda: (
                 self._set_tray_title("🎙"),
                 self._set_status("상태: 마이크 오류"),
-                self._set_toggle_state(False),
+                self._set_continuous_state(False),
                 self.overlay.show("❌  마이크 없음") if self.overlay else None,
             ))
             if self._reset_timer:
@@ -1308,7 +1308,7 @@ class VoiceSTTCore:
     def _vad_worker(self):
         """VAD 세그먼트 큐를 순서대로 처리하는 워커. VAD 루프와 독립적으로 동작."""
         log.info("VAD 워커 진입")
-        while self._toggle_listening:
+        while self._continuous_listening:
             try:
                 frames = self._vad_segment_queue.get(timeout=0.2)
             except queue.Empty:
@@ -1367,10 +1367,10 @@ class VoiceSTTCore:
                     pass
             self._transcribing = False
             # 큐에 다음 구간이 있으면 워커가 곧 다시 ⏳로 바꾸므로 잠깐 듣는중 표시
-            if self._toggle_listening:
+            if self._continuous_listening:
                 self._ui(lambda: (
                     self._set_tray_title("👂"),
-                    self._set_status("상태: 듣는중 (Toggle ON)"),
+                    self._set_status("상태: 듣는중 (연속입력 ON)"),
                     self.overlay.show("👂  듣는중...") if self.overlay else None,
                 ))
             else:
@@ -1392,7 +1392,7 @@ if PLATFORM == "darwin":
 
             self.status_item = rumps.MenuItem("상태: 대기중")
             self.last_item = rumps.MenuItem("마지막 변환: -")
-            self.toggle_mode_item = rumps.MenuItem("토글 모드", callback=self._on_toggle_mode)
+            self.continuous_mode_item = rumps.MenuItem("연속입력 모드", callback=self._on_continuous_mode)
             self.apikey_item = rumps.MenuItem("API Key 설정...", callback=self._on_set_api_key)
             self.config_item = rumps.MenuItem("설정...", callback=self._on_edit_config)
             self.restart_item = rumps.MenuItem("재실행", callback=self._restart)
@@ -1421,10 +1421,10 @@ if PLATFORM == "darwin":
                     callback=self._open_accessibility_prefs,
                 )
                 self.menu = [self.status_item, self.last_item, None, self._accessibility_item,
-                             None, self.toggle_mode_item, None,
+                             None, self.continuous_mode_item, None,
                              self.apikey_item, self.config_item, None, self.restart_item, None]
             else:
-                self.menu = [self.status_item, self.last_item, None, self.toggle_mode_item, None,
+                self.menu = [self.status_item, self.last_item, None, self.continuous_mode_item, None,
                              self.apikey_item, self.config_item, None, self.restart_item, None]
 
             self._core_init()
@@ -1441,11 +1441,11 @@ if PLATFORM == "darwin":
         def _set_last(self, text: str):
             self.last_item.title = text
 
-        def _set_toggle_state(self, on: bool):
-            self.toggle_mode_item.state = 1 if on else 0
+        def _set_continuous_state(self, on: bool):
+            self.continuous_mode_item.state = 1 if on else 0
 
-        def _on_toggle_mode(self, _):
-            self._request_toggle_mode()
+        def _on_continuous_mode(self, _):
+            self._request_continuous_mode()
 
         # ── rumps 타이머 ──
 
@@ -1603,9 +1603,9 @@ elif PLATFORM == "win32":
                     pystray.MenuItem(lambda item: self._last_text, None, enabled=False),
                     pystray.Menu.SEPARATOR,
                     pystray.MenuItem(
-                        "토글 모드",
-                        lambda icon, item: self._on_toggle_mode(),
-                        checked=lambda item: self._toggle_listening,
+                        "연속입력 모드",
+                        lambda icon, item: self._on_continuous_mode(),
+                        checked=lambda item: self._continuous_listening,
                     ),
                     pystray.Menu.SEPARATOR,
                     pystray.MenuItem("API Key 설정...", self._schedule_api_key_dialog),
@@ -1644,12 +1644,12 @@ elif PLATFORM == "win32":
             self._last_text = text
             self._tray.update_menu()
 
-        def _set_toggle_state(self, on: bool):
-            # pystray의 checked 람다가 _toggle_listening을 참조하므로 메뉴만 갱신
+        def _set_continuous_state(self, on: bool):
+            # pystray의 checked 람다가 _continuous_listening을 참조하므로 메뉴만 갱신
             self._tray.update_menu()
 
-        def _on_toggle_mode(self):
-            self._request_toggle_mode()
+        def _on_continuous_mode(self):
+            self._request_continuous_mode()
 
         # ── UI 큐 (tkinter after 루프) ──
 
