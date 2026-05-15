@@ -184,6 +184,46 @@ def _ensure_config_exists():
     except Exception:
         log.exception("config.toml.example 복사 실패")
 
+def _toml_format_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    elif isinstance(v, str):
+        return f'"{v}"'
+    elif isinstance(v, (int, float)):
+        return str(v)
+    elif isinstance(v, list):
+        return "[" + ", ".join(_toml_format_value(i) for i in v) + "]"
+    return repr(v)
+
+def _sync_missing_config_keys():
+    """config.toml.example에 있지만 config.toml에 없는 키를 config.toml 끝에 추가한다."""
+    if not CONFIG_EXAMPLE_PATH.exists() or not CONFIG_PATH.exists():
+        return
+    with open(CONFIG_EXAMPLE_PATH, "rb") as f:
+        defaults = tomllib.load(f)
+    with open(CONFIG_PATH, "rb") as f:
+        user_data = tomllib.load(f)
+
+    missing_scalars = [(k, v) for k, v in defaults.items() if k not in user_data and not isinstance(v, dict)]
+    missing_tables  = [(k, v) for k, v in defaults.items() if k not in user_data and isinstance(v, dict)]
+
+    if not missing_scalars and not missing_tables:
+        return
+
+    lines = [""]
+    for k, v in missing_scalars:
+        lines.append(f"{k} = {_toml_format_value(v)}")
+    for k, v in missing_tables:
+        lines.append(f"\n[{k}]")
+        for sk, sv in v.items():
+            lines.append(f"{sk} = {_toml_format_value(sv)}")
+
+    with open(CONFIG_PATH, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    added = [k for k, _ in missing_scalars] + [k for k, _ in missing_tables]
+    log.info("config.toml 누락 키 자동 추가: %s", added)
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """override를 base 위에 재귀적으로 덮어씌운다. base에만 있는 키는 기본값으로 유지."""
     result = dict(base)
@@ -1725,6 +1765,8 @@ elif PLATFORM == "win32":
 # 진입점
 # ================================================================== #
 if __name__ == "__main__":
+    _ensure_config_exists()
+    _sync_missing_config_keys()
     log.info("run() 호출")
     app = VoiceSTTApp()
     if PLATFORM == "darwin":
