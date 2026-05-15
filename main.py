@@ -902,12 +902,18 @@ class VoiceSTTCore:
         for kw, action in triggered_keys:
             if action[0] == "keys":
                 keys = action[1]
-                for k in keys[:-1]:
-                    kb.press(k)
-                kb.press(keys[-1])
-                kb.release(keys[-1])
-                for k in reversed(keys[:-1]):
-                    kb.release(k)
+                modifiers, final_key = keys[:-1], keys[-1]
+                if modifiers:
+                    from contextlib import ExitStack
+                    with ExitStack() as stack:
+                        for m in modifiers:
+                            stack.enter_context(kb.pressed(m))
+                        time.sleep(0.05)
+                        kb.press(final_key)
+                        kb.release(final_key)
+                else:
+                    kb.press(final_key)
+                    kb.release(final_key)
                 log.info("custom_key_trigger 키 실행 — %r", kw)
             elif action[0] == "type":
                 kb.type(action[1])
