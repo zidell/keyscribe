@@ -812,20 +812,37 @@ class VoiceSTTCore:
         kb.release(keyboard.Key.enter)
         log.info("붙여넣기 + Enter 완료")
 
+    @staticmethod
+    def _normalize_trigger(s: str) -> str:
+        """한글·알파벳만 남기고 소문자화 (공백·특수문자 제거)"""
+        return re.sub(r"[^가-힣a-z]", "", s.lower())
+
     def _process_key_triggers(self, text: str) -> tuple[str, list]:
-        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 트리거할 키 목록을 반환"""
+        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 트리거할 키 목록을 반환.
+        공백 기준으로 토큰 분리 후 연속 토큰 슬라이딩 윈도우로 매칭."""
         config = load_config()
         triggers = config.get("custom_key_trigger", {})
         triggered_keys = []
         for keyword, key_str in triggers.items():
-            pattern = r"\s*".join(re.escape(w) for w in keyword.split())
-            if re.search(pattern, text, flags=re.IGNORECASE):
-                text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-                text = " ".join(text.split())
-                key = self._key_from_str(key_str)
-                if key:
-                    triggered_keys.append((keyword, key))
-                    log.debug("custom_key_trigger 감지 — keyword=%r key=%r", keyword, key_str)
+            norm_kw = self._normalize_trigger(keyword)
+            if not norm_kw:
+                continue
+            tokens = text.split()
+            matched = None
+            for size in range(1, len(tokens) + 1):
+                for start in range(len(tokens) - size + 1):
+                    if self._normalize_trigger("".join(tokens[start:start + size])) == norm_kw:
+                        matched = (start, start + size)
+                        break
+                if matched:
+                    break
+            if matched:
+                text = " ".join(tokens[:matched[0]] + tokens[matched[1]:])
+                parts = [self._key_from_str(p.strip()) for p in key_str.split("+")]
+                keys = [k for k in parts if k is not None]
+                if keys:
+                    triggered_keys.append((keyword, keys))
+                    log.debug("custom_key_trigger 감지 — keyword=%r keys=%r", keyword, key_str)
         return text, triggered_keys
 
     def _send_before_and_paste(self, text: str):
@@ -862,9 +879,13 @@ class VoiceSTTCore:
             kb.release(after_key)
             time.sleep(0.05)
 
-        for kw, key in triggered_keys:
-            kb.press(key)
-            kb.release(key)
+        for kw, keys in triggered_keys:
+            for k in keys[:-1]:
+                kb.press(k)
+            kb.press(keys[-1])
+            kb.release(keys[-1])
+            for k in reversed(keys[:-1]):
+                kb.release(k)
             time.sleep(0.05)
             log.info("custom_key_trigger 실행 — %r", kw)
 
