@@ -11,7 +11,7 @@ py2app.util._dosign = _simple_dosign
 from setuptools import setup
 
 APP = ["main.py"]
-DATA_FILES = ["config.json"]
+DATA_FILES = []
 OPTIONS = {
     "argv_emulation": False,
     "plist": {

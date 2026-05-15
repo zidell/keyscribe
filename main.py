@@ -184,11 +184,26 @@ def _ensure_config_exists():
     except Exception:
         log.exception("config.toml.example 복사 실패")
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """override를 base 위에 재귀적으로 덮어씌운다. base에만 있는 키는 기본값으로 유지."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
 def load_config() -> dict:
     _ensure_config_exists()
+    defaults = {}
+    if CONFIG_EXAMPLE_PATH.exists():
+        with open(CONFIG_EXAMPLE_PATH, "rb") as f:
+            defaults = tomllib.load(f)
     log.debug("config.toml 로드: %s", CONFIG_PATH)
     with open(CONFIG_PATH, "rb") as f:
-        data = tomllib.load(f)
+        user_data = tomllib.load(f)
+    data = _deep_merge(defaults, user_data)
     log.debug("config.toml 로드 완료 — 키: %s", list(data.keys()))
     return data
 
@@ -757,25 +772,61 @@ class VoiceSTTCore:
         kb.release(keyboard.Key.enter)
         log.info("붙여넣기 + Enter 완료")
 
+    def _process_key_triggers(self, text: str) -> tuple[str, list]:
+        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 트리거할 키 목록을 반환"""
+        config = load_config()
+        triggers = config.get("custom_key_trigger", {})
+        triggered_keys = []
+        for keyword, key_str in triggers.items():
+            if keyword in text:
+                text = text.replace(keyword, "")
+                text = " ".join(text.split())
+                key = self._key_from_str(key_str)
+                if key:
+                    triggered_keys.append((keyword, key))
+                    log.debug("custom_key_trigger 감지 — keyword=%r key=%r", keyword, key_str)
+        return text, triggered_keys
+
     def _send_before_and_paste(self, text: str):
         config = load_config()
-        before_key = self._key_from_str(config.get("toggle_before_key", "enter"))
-        log.debug("_send_before_and_paste — before_key=%r, %d자", before_key, len(text))
+        before_key_str = config.get("toggle_before_key", "enter")
+        after_key_str = config.get("toggle_after_key", "enter")
+
+        text, triggered_keys = self._process_key_triggers(text)
+
+        before_key = self._key_from_str(before_key_str) if before_key_str else None
+        after_key = self._key_from_str(after_key_str) if after_key_str else None
+        log.debug("_send_before_and_paste — before=%r, after=%r, triggers=%d, %d자",
+                  before_key, after_key, len(triggered_keys), len(text))
         kb = keyboard.Controller()
-        kb.press(before_key)
-        kb.release(before_key)
-        time.sleep(0.15)
-        if PLATFORM == "win32":
-            kb.type(text)
-            log.info("타이핑 입력 완료 (%d자)", len(text))
-        else:
-            pyperclip.copy(text)
-            with kb.pressed(keyboard.Key.cmd):
-                kb.press("v")
-                kb.release("v")
-        time.sleep(0.1)
-        kb.press(keyboard.Key.enter)
-        kb.release(keyboard.Key.enter)
+
+        if before_key:
+            kb.press(before_key)
+            kb.release(before_key)
+            time.sleep(0.15)
+
+        if text:
+            if PLATFORM == "win32":
+                kb.type(text)
+                log.info("타이핑 입력 완료 (%d자)", len(text))
+            else:
+                pyperclip.copy(text)
+                with kb.pressed(keyboard.Key.cmd):
+                    kb.press("v")
+                    kb.release("v")
+            time.sleep(0.1)
+
+        if after_key:
+            kb.press(after_key)
+            kb.release(after_key)
+            time.sleep(0.05)
+
+        for kw, key in triggered_keys:
+            kb.press(key)
+            kb.release(key)
+            time.sleep(0.05)
+            log.info("custom_key_trigger 실행 — %r", kw)
+
         log.info("toggle_before_and_paste 완료")
 
     # ------------------------------------------------------------------
@@ -1237,17 +1288,10 @@ class VoiceSTTCore:
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
                 log.info("VAD 변환 결과: %d자 — %r", len(text), text[:40])
-                before_key = config.get("toggle_before_key", "enter")
-                if before_key:
-                    self._ui(lambda t=text, p=preview: (
-                        self._send_before_and_paste(t),
-                        self._set_last(f"마지막 변환: {p}"),
-                    ))
-                else:
-                    self._ui(lambda t=text, p=preview: (
-                        self._paste_text(t),
-                        self._set_last(f"마지막 변환: {p}"),
-                    ))
+                self._ui(lambda t=text, p=preview: (
+                    self._send_before_and_paste(t),
+                    self._set_last(f"마지막 변환: {p}"),
+                ))
             else:
                 log.warning("VAD STT: 텍스트 없음")
 
