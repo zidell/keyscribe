@@ -559,6 +559,26 @@ class VoiceSTTCore:
     """
     SAMPLE_RATE = 16000
 
+    # 콤보 체크 전용 수식어 키 정규화 테이블.
+    # right/left 구분 없이, 그리고 Mac Option ↔ Windows Alt 를 모두 generic 키로 통일.
+    _MODIFIER_ALIAS: dict = {}
+    for _generic, _variants in [
+        (keyboard.Key.alt,   ["alt_l", "alt_r"]),
+        (keyboard.Key.ctrl,  ["ctrl_l", "ctrl_r"]),
+        (keyboard.Key.shift, ["shift_l", "shift_r"]),
+        (keyboard.Key.cmd,   ["cmd_l", "cmd_r"]),
+    ]:
+        for _attr in _variants:
+            _v = getattr(keyboard.Key, _attr, None)
+            if _v is not None:
+                _MODIFIER_ALIAS[_v] = _generic
+    del _generic, _variants, _attr, _v
+
+    @staticmethod
+    def _norm_key(key):
+        """콤보 비교용: 수식어 키의 left/right 변형을 generic 으로 정규화."""
+        return VoiceSTTCore._MODIFIER_ALIAS.get(key, key)
+
     def _core_init(self):
         self.recording = False
         self._transcribing = False
@@ -695,9 +715,11 @@ class VoiceSTTCore:
                 self._cancel_recording()
             return
 
+        _nk = self._norm_key(key)
         if (self._cfg_continuous_combo
-                and key in self._cfg_continuous_combo
-                and self._cfg_continuous_combo.issubset(self._pressed_keys)):
+                and _nk in self._cfg_continuous_combo
+                and self._cfg_continuous_combo.issubset(
+                    {self._norm_key(k) for k in self._pressed_keys})):
             if self._continuous_listening:
                 log.info("연속입력 단축키 — 연속입력 리스닝 OFF")
                 self._stop_vad_listening()
