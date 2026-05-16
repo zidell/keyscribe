@@ -143,6 +143,20 @@ except Exception:
     ElevenLabs = None
 
 try:
+    import httpx
+    log.info("httpx 로드 OK — version=%s", httpx.__version__)
+except Exception:
+    log.exception("httpx 로드 실패")
+    httpx = None
+
+
+class _STTResult:
+    """STT 결과의 최소 컨테이너 — 기존 result.text 접근과 호환."""
+    __slots__ = ("text",)
+    def __init__(self, text: str):
+        self.text = text
+
+try:
     from pynput import keyboard
     log.info("pynput 로드 OK")
 except Exception:
@@ -1060,6 +1074,13 @@ class VoiceSTTCore:
     # STT
     # ------------------------------------------------------------------
 
+    def _call_stt(self, config: dict, api_key: str, tmp_path: str,
+                  hard_timeout: float, sdk_timeout: float) -> object:
+        """API 키 prefix로 STT 제공자 라우팅. sk- → OpenAI Whisper, 그 외 → ElevenLabs."""
+        if api_key.startswith("sk-"):
+            return self._call_openai(config, api_key, tmp_path, hard_timeout, sdk_timeout)
+        return self._call_elevenlabs(config, api_key, tmp_path, hard_timeout, sdk_timeout)
+
     def _call_elevenlabs(self, config: dict, api_key: str, tmp_path: str,
                          hard_timeout: float, sdk_timeout: float) -> object:
         last_exc = None
@@ -1113,6 +1134,74 @@ class VoiceSTTCore:
             raise last_exc
         return result
 
+    def _call_openai(self, config: dict, api_key: str, tmp_path: str,
+                     hard_timeout: float, sdk_timeout: float) -> object:
+        if httpx is None:
+            raise RuntimeError("httpx 모듈이 로드되지 않아 OpenAI 호출 불가")
+
+        model = config.get("openai_model", "whisper-1")
+        language = config.get("language", "ko")
+        keyterms = config.get("keyterms", []) or []
+        # Whisper는 단순 나열보다 자연어 문장이 인식률이 더 높다 (공식 권장).
+        prompt = f"이 녹음에는 다음 용어가 포함됩니다: {', '.join(keyterms)}." if keyterms else None
+
+        last_exc = None
+        result = None
+        for attempt in range(1, 3):
+            if self._cancelled:
+                return None
+            try:
+                log.info("OpenAI Whisper API 호출 (시도 %d/2) — model=%s", attempt, model)
+                _holder: dict = {}
+
+                def _call(_holder=_holder):
+                    try:
+                        with open(tmp_path, "rb") as f:
+                            files = {"file": (os.path.basename(tmp_path), f, "audio/flac")}
+                            data = {"model": model, "language": language}
+                            if prompt:
+                                data["prompt"] = prompt
+                            headers = {"Authorization": f"Bearer {api_key}"}
+                            resp = httpx.post(
+                                "https://api.openai.com/v1/audio/transcriptions",
+                                headers=headers,
+                                files=files,
+                                data=data,
+                                timeout=sdk_timeout,
+                            )
+                            resp.raise_for_status()
+                            _holder["result"] = _STTResult(resp.json().get("text", ""))
+                    except BaseException as exc:
+                        _holder["error"] = exc
+
+                _t = threading.Thread(target=_call, daemon=True)
+                _t.start()
+                _t.join(timeout=hard_timeout)
+
+                if _t.is_alive():
+                    raise TimeoutError(f"OpenAI API 응답 없음 ({hard_timeout:.0f}초 초과)")
+                if "error" in _holder:
+                    raise _holder["error"]
+
+                result = _holder["result"]
+                last_exc = None
+                log.info("API 응답 수신 완료 (시도 %d)", attempt)
+                break
+
+            except Exception as e:
+                last_exc = e
+                log.warning("API 오류 (시도 %d): [%s] %s", attempt, type(e).__name__, e)
+                if attempt == 1 and not self._cancelled:
+                    self._ui(lambda: (
+                        self._set_status("상태: 재시도중..."),
+                        self.overlay.show("🔄  재시도중...") if self.overlay else None,
+                    ))
+                    time.sleep(1.0)
+
+        if last_exc is not None:
+            raise last_exc
+        return result
+
     def _transcribe(self):
         thread_id = threading.current_thread().ident
         log.debug("_transcribe 진입 — thread_id=%d", thread_id)
@@ -1142,7 +1231,7 @@ class VoiceSTTCore:
             hard_timeout = max(5.0, duration_sec + 10.0)
             sdk_timeout = hard_timeout - 2.0
 
-            result = self._call_elevenlabs(config, api_key, tmp_path, hard_timeout, sdk_timeout)
+            result = self._call_stt(config, api_key, tmp_path, hard_timeout, sdk_timeout)
 
             if self._cancelled:
                 return
@@ -1390,7 +1479,7 @@ class VoiceSTTCore:
             hard_timeout = max(5.0, duration_sec + 10.0)
             sdk_timeout = hard_timeout - 2.0
 
-            result = self._call_elevenlabs(config, api_key, tmp_path, hard_timeout, sdk_timeout)
+            result = self._call_stt(config, api_key, tmp_path, hard_timeout, sdk_timeout)
 
             text = self._clean_text(result.text or "")
             if text:
@@ -1537,8 +1626,10 @@ if PLATFORM == "darwin":
         def _on_set_api_key(self, _):
             log.info("API Key 설정 창 열기")
             window = rumps.Window(
-                title="ElevenLabs API Key 설정",
-                message="ElevenLabs API Key를 입력하세요.\n(elevenlabs.io → Profile → API Keys)",
+                title="STT API Key 설정",
+                message="API Key를 입력하세요.\n"
+                        "  • sk_…  → ElevenLabs Scribe v2 (elevenlabs.io → Profile → API Keys)\n"
+                        "  • sk-…  → OpenAI Whisper (platform.openai.com → API keys)",
                 default_text=self._api_key,
                 ok="저장",
                 cancel="취소",
@@ -1715,7 +1806,9 @@ elif PLATFORM == "win32":
             log.info("API Key 설정 창 열기")
             new_key = tkdialog.askstring(
                 "API Key 설정",
-                "ElevenLabs API Key를 입력하세요:\n(elevenlabs.io → Profile → API Keys)",
+                "API Key를 입력하세요:\n"
+                "  • sk_…  → ElevenLabs Scribe v2\n"
+                "  • sk-…  → OpenAI Whisper",
                 initialvalue=self._api_key,
                 parent=self._root,
             )
