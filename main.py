@@ -10,6 +10,7 @@ import shutil
 import logging
 import threading
 import tempfile
+import collections
 import ctypes
 import ctypes.util
 import subprocess
@@ -1349,6 +1350,11 @@ class VoiceSTTCore:
         speech_frames: list[np.ndarray] = []
         silence_count = 0
         speaking = False
+        # pre-roll: 말 시작 클리핑 방지 — 임계값 초과 직전 250ms를 보존
+        pre_roll_chunks = int(0.25 / chunk_sec)
+        ring_buf: collections.deque = collections.deque(maxlen=pre_roll_chunks)
+        # post-roll: 말 끝 클리핑 방지 — trailing silence에서 150ms를 남겨둠
+        post_roll_chunks = int(0.15 / chunk_sec)
 
         log.info("VAD 루프 진입 — threshold=%d, silence_sec=%.1f", threshold, silence_sec)
         diag_rms: list[float] = []
@@ -1392,7 +1398,8 @@ class VoiceSTTCore:
                         if not speaking:
                             speaking = True
                             silence_count = 0
-                            log.info("VAD: 음성 감지 시작")
+                            speech_frames = list(ring_buf)  # pre-roll 삽입
+                            log.info("VAD: 음성 감지 시작 (pre-roll %d 청크)", len(speech_frames))
                             self._ui(lambda: (
                                 self._set_tray_title("🔴"),
                                 self._set_status("상태: 녹음중 (VAD)"),
@@ -1406,16 +1413,20 @@ class VoiceSTTCore:
                         speech_frames.append(chunk)
 
                         if silence_count >= silence_chunks_needed:
-                            frames_to_send = (speech_frames[:-silence_count]
-                                              if silence_count < len(speech_frames) else speech_frames)
+                            # post-roll: silence 중 마지막 150ms는 유지
+                            trim = max(0, silence_count - post_roll_chunks)
+                            frames_to_send = speech_frames[:-trim] if trim > 0 else speech_frames
                             speech_frames = []
                             silence_count = 0
                             speaking = False
+                            ring_buf.clear()
 
                             if frames_to_send:
                                 self._vad_segment_queue.put(frames_to_send)
                                 log.info("VAD: 음성 구간 → 대기열 (%d 청크, 대기 %d개)",
                                          len(frames_to_send), self._vad_segment_queue.qsize())
+                    else:
+                        ring_buf.append(chunk)  # 침묵 구간: pre-roll 버퍼에 누적
         except Exception:
             log.exception("VAD 루프 오류 — 마이크 사용 불가")
             # 연속입력 모드를 자동으로 OFF 시키고 사용자에게 알린다
