@@ -771,11 +771,18 @@ class VoiceSTTCore:
 
     def _create_input_stream(self, **kwargs) -> "sd.InputStream":
         """
-        sd.InputStream 생성. PortAudioError 발생 시 PortAudio를 재초기화하고
-        디바이스 목록을 새로 읽은 뒤 한 번 재시도한다.
-        앱 시작 시점에 마이크가 enumerate 되어 있지 않아 디폴트 디바이스 캐시가
-        비어있는 상태에서 회복하기 위함.
+        sd.InputStream 생성. macOS CoreAudio는 PortAudio 초기화 시점에
+        디바이스 목록/기본 입력장치를 캐시해두고, 앱 실행 중 시스템 설정에서
+        입력장치를 바꿔도 이 캐시를 자동으로 갱신하지 않는다 — 그대로 두면
+        에러 없이 예전(또는 사라진) 장치로 스트림이 열려 무음만 녹음된다.
+        매번 스트림을 열기 전 PortAudio를 재초기화해 최신 장치 상태를 강제로
+        다시 읽는다 (재초기화 자체는 수 ms 수준이라 지연은 무시할 만하다).
         """
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            log.exception("PortAudio 사전 재초기화 실패 — 기존 상태로 계속 진행")
         try:
             return sd.InputStream(**kwargs)
         except sd.PortAudioError as e:
