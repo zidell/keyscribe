@@ -3,17 +3,16 @@ import re
 import sys
 import json
 import math
-import wave
 import time
 import queue
 import shutil
 import logging
 import threading
 import tempfile
-import collections
 import ctypes
 import ctypes.util
 import subprocess
+from i18n import set_ui_language, tr
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -25,6 +24,9 @@ except ImportError:
 import soundfile as sf
 
 PLATFORM = sys.platform  # 'darwin' | 'win32'
+APP_NAME = "KeyScribe"
+APP_SLUG = "keyscribe"
+LEGACY_APP_SLUG = "voice-stt"
 
 # ------------------------------------------------------------------ #
 # 플랫폼별 imports
@@ -45,9 +47,8 @@ elif PLATFORM == "win32":
         PILDraw = None
     try:
         import tkinter as tk
-        from tkinter import scrolledtext
-        import tkinter.simpledialog as tkdialog
         import tkinter.messagebox as tkmsgbox
+        from tkinter import ttk
     except ImportError:
         tk = None
 
@@ -56,18 +57,18 @@ elif PLATFORM == "win32":
 # ------------------------------------------------------------------ #
 def _get_log_dir() -> Path:
     if PLATFORM == "darwin":
-        return Path.home() / "Library" / "Logs" / "voice-stt"
+        return Path.home() / "Library" / "Logs" / APP_SLUG
     elif PLATFORM == "win32":
         appdata = os.environ.get("APPDATA", str(Path.home()))
-        return Path(appdata) / "voice-stt" / "Logs"
+        return Path(appdata) / APP_SLUG / "Logs"
     else:
-        return Path.home() / ".local" / "share" / "voice-stt" / "logs"
+        return Path.home() / ".local" / "share" / APP_SLUG / "logs"
 
 _LOG_DIR = _get_log_dir()
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _log_handler = TimedRotatingFileHandler(
-    _LOG_DIR / "voice-stt.log",
+    _LOG_DIR / f"{APP_SLUG}.log",
     when="midnight",
     backupCount=1,
     encoding="utf-8",
@@ -76,9 +77,24 @@ _log_handler.setFormatter(logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 ))
-log = logging.getLogger("voice-stt")
+log = logging.getLogger(APP_SLUG)
 log.setLevel(logging.DEBUG)
 log.addHandler(_log_handler)
+
+def _log_uncaught_exception(exc_type, exc_value, exc_traceback):
+    """메인 스레드의 예외가 조용히 사라지지 않도록 항상 파일에 남긴다."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    log.critical("처리되지 않은 메인 스레드 예외", exc_info=(exc_type, exc_value, exc_traceback))
+
+def _log_thread_exception(args):
+    """녹음·전사 등 백그라운드 스레드의 예외를 파일 로그에 기록한다."""
+    log.critical("처리되지 않은 스레드 예외 — thread=%s", args.thread.name,
+                 exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+sys.excepthook = _log_uncaught_exception
+threading.excepthook = _log_thread_exception
 
 log.info("=" * 60)
 log.info("앱 시작 — Python %s | platform=%s | frozen=%s | pid=%d",
@@ -167,19 +183,32 @@ except Exception:
 # ------------------------------------------------------------------ #
 # 경로
 # ------------------------------------------------------------------ #
-CONFIG_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / "config.toml"
-CONFIG_EXAMPLE_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / "config.toml.example"
+RESOURCE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_EXAMPLE_PATH = RESOURCE_DIR / "config.toml.example"
+MENU_ICON_PATH = RESOURCE_DIR / "assets" / "keyscribe-menu.png"
 
 def _get_user_config_path() -> Path:
     if PLATFORM == "darwin":
-        return Path.home() / "Library" / "Application Support" / "voice-stt" / "user_config.json"
+        return Path.home() / "Library" / "Application Support" / APP_SLUG / "user_config.json"
     elif PLATFORM == "win32":
         appdata = os.environ.get("APPDATA", str(Path.home()))
-        return Path(appdata) / "voice-stt" / "user_config.json"
+        return Path(appdata) / APP_SLUG / "user_config.json"
     else:
-        return Path.home() / ".config" / "voice-stt" / "user_config.json"
+        return Path.home() / ".config" / APP_SLUG / "user_config.json"
+
+def _get_legacy_user_config_path() -> Path:
+    if PLATFORM == "darwin":
+        return Path.home() / "Library" / "Application Support" / LEGACY_APP_SLUG / "user_config.json"
+    elif PLATFORM == "win32":
+        appdata = os.environ.get("APPDATA", str(Path.home()))
+        return Path(appdata) / LEGACY_APP_SLUG / "user_config.json"
+    return Path.home() / ".config" / LEGACY_APP_SLUG / "user_config.json"
 
 USER_CONFIG_PATH = _get_user_config_path()
+LEGACY_USER_CONFIG_PATH = _get_legacy_user_config_path()
+# 개발 실행은 프로젝트 설정을 사용하고, .app은 서명된 번들 밖의 사용자별 설정을 사용한다.
+CONFIG_PATH = (USER_CONFIG_PATH.parent / "config.toml"
+               if getattr(sys, "frozen", False) else RESOURCE_DIR / "config.toml")
 log.info("CONFIG_PATH: %s", CONFIG_PATH)
 log.debug("USER_CONFIG_PATH: %s", USER_CONFIG_PATH)
 
@@ -203,7 +232,7 @@ def _toml_format_value(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     elif isinstance(v, str):
-        return f'"{v}"'
+        return json.dumps(v, ensure_ascii=False)
     elif isinstance(v, (int, float)):
         return str(v)
     elif isinstance(v, list):
@@ -225,16 +254,24 @@ def _sync_missing_config_keys():
     if not missing_scalars and not missing_tables:
         return
 
-    lines = [""]
-    for k, v in missing_scalars:
-        lines.append(f"{k} = {_toml_format_value(v)}")
+    scalar_lines = [f"{k} = {_toml_format_value(v)}" for k, v in missing_scalars]
+    table_lines = []
     for k, v in missing_tables:
-        lines.append(f"\n[{k}]")
-        for sk, sv in v.items():
-            lines.append(f"{sk} = {_toml_format_value(sv)}")
+        table_lines.append(f"\n[{k}]")
+        table_lines.extend(f"{sk} = {_toml_format_value(sv)}" for sk, sv in v.items())
 
-    with open(CONFIG_PATH, "a", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    # TOML의 키는 가장 최근 [table] 헤더에 속한다. 파일 끝에 scalar를 붙이면
+    # 마지막 table의 키가 되어 다음 시작에서 다시 추가되는 문제가 생긴다.
+    content = CONFIG_PATH.read_text(encoding="utf-8")
+    first_table = re.search(r"(?m)^\s*\[[^\]]+\]\s*$", content)
+    scalar_block = ("\n" + "\n".join(scalar_lines) + "\n") if scalar_lines else ""
+    if first_table and scalar_block:
+        content = content[:first_table.start()] + scalar_block + "\n" + content[first_table.start():]
+    elif scalar_block:
+        content += scalar_block
+    if table_lines:
+        content += "\n" + "\n".join(table_lines) + "\n"
+    CONFIG_PATH.write_text(content, encoding="utf-8")
 
     added = [k for k, _ in missing_scalars] + [k for k, _ in missing_tables]
     log.info("config.toml 누락 키 자동 추가: %s", added)
@@ -262,12 +299,31 @@ def load_config() -> dict:
     log.debug("config.toml 로드 완료 — 키: %s", list(data.keys()))
     return data
 
+_CONFIG_KEYS = (
+    "shortcut", "auto_send", "language", "keyterms",
+    "no_verbatim", "mute_during_recording", "openai_model", "elevenlabs_model",
+)
+
+def save_config(data: dict):
+    """지원하는 설정만 TOML로 저장해 폐기된 설정을 함께 정리한다."""
+    values = {key: data[key] for key in _CONFIG_KEYS if key in data}
+    lines = [f"{key} = {_toml_format_value(value)}" for key, value in values.items()]
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    log.info("config.toml 저장됨 — 키: %s", list(values))
+
 def load_user_config() -> dict:
     if USER_CONFIG_PATH.exists():
         log.debug("user_config.json 로드: %s", USER_CONFIG_PATH)
         with open(USER_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         log.debug("user_config.json 로드 완료 — 키: %s", list(data.keys()))
+        return data
+    if LEGACY_USER_CONFIG_PATH.exists():
+        log.info("기존 %s 설정을 %s로 이전합니다.", LEGACY_APP_SLUG, APP_SLUG)
+        with open(LEGACY_USER_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        save_user_config(data)
         return data
     log.debug("user_config.json 없음 — 빈 dict 반환")
     return {}
@@ -279,19 +335,132 @@ def save_user_config(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
     log.debug("user_config.json 저장 완료")
 
+def abbreviate_api_key(api_key: str) -> str:
+    """설정 창에서만 API Key의 가운데를 감춰 표시한다."""
+    if len(api_key) <= 30:
+        return api_key
+    return f"{api_key[:15]}....{api_key[-15:]}"
+
+def provider_for_api_key(api_key: str) -> str | None:
+    if api_key.startswith("sk-"):
+        return "openai"
+    if api_key.startswith("sk_"):
+        return "elevenlabs"
+    return None
+
+def fetch_transcription_models(api_key: str) -> list[str]:
+    """현재 API Key가 접근 가능한 파일 전사 모델만 반환한다."""
+    provider = provider_for_api_key(api_key)
+    if httpx is None or provider is None:
+        return []
+    if provider == "openai":
+        response = httpx.get("https://api.openai.com/v1/models",
+                             headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        response.raise_for_status()
+        return sorted(item["id"] for item in response.json().get("data", [])
+                      if ("transcribe" in item.get("id", "") or item.get("id") == "whisper-1")
+                      and not re.search(r"-\d{4}-\d{2}-\d{2}$", item.get("id", "")))
+    response = httpx.get("https://api.elevenlabs.io/v1/models",
+                         headers={"xi-api-key": api_key}, timeout=10)
+    response.raise_for_status()
+    return sorted(item["model_id"] for item in response.json()
+                  if item.get("model_id", "").startswith("scribe")
+                  and not re.search(r"-\d{4}-\d{2}-\d{2}$", item.get("model_id", "")))
+
+def settings_values(api_key: str) -> dict:
+    config = load_config()
+    return {
+        "api_key": api_key,
+        "shortcut": str(config.get("shortcut", "right_option")),
+        # ptt_after_key를 쓰던 기존 설정은 Enter일 때만 자동 전송으로 이어받는다.
+        "auto_send": bool(config.get("auto_send", config.get("ptt_after_key", "enter") == "enter")),
+        "language": str(config.get("language", "ko")),
+        "keyterms": "\n".join(str(term) for term in config.get("keyterms", [])),
+        "no_verbatim": bool(config.get("no_verbatim", True)),
+        "mute_during_recording": bool(config.get("mute_during_recording", True)),
+        "openai_model": str(config.get("openai_model", "gpt-transcribe")),
+        "elevenlabs_model": str(config.get("elevenlabs_model", "scribe_v2")),
+        "model": str(config.get("openai_model" if provider_for_api_key(api_key) == "openai" else "elevenlabs_model", "gpt-transcribe" if provider_for_api_key(api_key) == "openai" else "scribe_v2")),
+    }
+
+def save_settings(values: dict):
+    """설정 폼 값을 저장하고 API Key는 사용자별 파일에 분리 보관한다."""
+    keyterms = [line.strip() for line in values["keyterms"].splitlines() if line.strip()]
+    save_config({
+        "shortcut": values["shortcut"].strip(),
+        "auto_send": values["auto_send"],
+        "language": values["language"].strip(),
+        "keyterms": keyterms,
+        "no_verbatim": values["no_verbatim"],
+        "mute_during_recording": values["mute_during_recording"],
+        "openai_model": values.get("openai_model", "gpt-transcribe"),
+        "elevenlabs_model": values.get("elevenlabs_model", "scribe_v2"),
+    })
+    user_config = load_user_config()
+    user_config["api_key"] = values["api_key"].strip()
+    save_user_config(user_config)
+
+
+def shortcut_options() -> list[tuple[str, str]]:
+    """현재 OS에서 안정적으로 감지할 수 있는 push-to-talk 키 목록."""
+    if PLATFORM == "darwin":
+        return [
+            ("right_option", "오른쪽 Option (⌥)"), ("left_option", "왼쪽 Option (⌥)"),
+            ("right_cmd", "오른쪽 Command (⌘)"), ("left_cmd", "왼쪽 Command (⌘)"),
+            ("right_ctrl", "오른쪽 Control (⌃)"), ("left_ctrl", "왼쪽 Control (⌃)"),
+            ("right_shift", "오른쪽 Shift (⇧)"), ("left_shift", "왼쪽 Shift (⇧)"),
+        ]
+    return [
+        ("right_alt", "오른쪽 Alt"), ("left_alt", "왼쪽 Alt"),
+        ("right_ctrl", "오른쪽 Ctrl"), ("left_ctrl", "왼쪽 Ctrl"),
+        ("right_shift", "오른쪽 Shift"), ("left_shift", "왼쪽 Shift"),
+    ]
+
+
+UI_LANGUAGE_BY_SPEECH = {
+    "ko": "ko", "en": "en", "ja": "ja", "zh": "zh-Hans", "es": "es",
+}
+
+
+def sync_ui_language(language: str | None = None) -> None:
+    """전사 언어의 지역 변형까지 UI 언어로 정규화하고, 미지원 언어는 영어로 쓴다."""
+    if language is None:
+        language = str(load_config().get("language", "ko"))
+    language_base = language.replace("_", "-").lower().split("-", 1)[0]
+    set_ui_language(UI_LANGUAGE_BY_SPEECH.get(language_base, "en"))
+
+
+def speech_language_options() -> list[tuple[str, str]]:
+    """OpenAI/ElevenLabs 공통으로 전달할 수 있는 ISO 639-1 전사 언어 목록."""
+    return [
+        ("af", "Afrikaans"), ("ar", "Arabic"), ("hy", "Armenian"), ("az", "Azerbaijani"), ("be", "Belarusian"),
+        ("bs", "Bosnian"), ("bg", "Bulgarian"), ("ca", "Catalan"), ("zh", "Chinese"), ("hr", "Croatian"),
+        ("cs", "Czech"), ("da", "Danish"), ("nl", "Dutch"), ("en", "English"), ("et", "Estonian"),
+        ("fi", "Finnish"), ("fr", "French"), ("gl", "Galician"), ("de", "German"), ("el", "Greek"),
+        ("he", "Hebrew"), ("hi", "Hindi"), ("hu", "Hungarian"), ("id", "Indonesian"), ("it", "Italian"),
+        ("ja", "Japanese"), ("kn", "Kannada"), ("kk", "Kazakh"), ("ko", "Korean"), ("lv", "Latvian"),
+        ("lt", "Lithuanian"), ("mk", "Macedonian"), ("ms", "Malay"), ("mr", "Marathi"), ("mi", "Maori"),
+        ("ne", "Nepali"), ("no", "Norwegian"), ("fa", "Persian"), ("pl", "Polish"), ("pt", "Portuguese"),
+        ("ro", "Romanian"), ("ru", "Russian"), ("sr", "Serbian"), ("sk", "Slovak"), ("sl", "Slovenian"),
+        ("es", "Spanish"), ("sw", "Swahili"), ("sv", "Swedish"), ("tl", "Tagalog"), ("ta", "Tamil"),
+        ("th", "Thai"), ("tr", "Turkish"), ("uk", "Ukrainian"), ("ur", "Urdu"), ("vi", "Vietnamese"), ("cy", "Welsh"),
+    ]
+
+
+def supports_no_verbatim(model_id: str) -> bool:
+    """현재 파일 전사 경로에서 no_verbatim을 받는 ElevenLabs 모델만 허용한다."""
+    return model_id in {"scribe_v2", "scribe_v2_medical"}
+
 # ------------------------------------------------------------------ #
 # 접근성 권한 (macOS 전용)
 # ------------------------------------------------------------------ #
 def is_accessibility_granted() -> bool:
     if PLATFORM != "darwin":
         return True
-    log.debug("접근성 권한 확인 중...")
     try:
         lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("ApplicationServices"))
         lib.AXIsProcessTrusted.restype = ctypes.c_bool
-        result = lib.AXIsProcessTrusted()
-        log.debug("접근성 권한: %s", result)
-        return result
+        return bool(lib.AXIsProcessTrusted())
     except Exception:
         log.exception("접근성 권한 확인 실패")
         return True
@@ -432,7 +601,7 @@ if PLATFORM == "darwin":
             except Exception:
                 log.exception("오버레이 tick 오류")
 
-        def show(self, text: str = "🔴  녹음중"):
+        def show(self, text: str = "🔴  Recording"):
             if self._available:
                 from AppKit import NSScreen, NSMakeRect
                 screen = NSScreen.mainScreen()
@@ -546,7 +715,7 @@ else:
             except Exception:
                 log.exception("오버레이 tick 오류")
 
-        def show(self, text: str = "🔴  녹음중"):
+        def show(self, text: str = "🔴  Recording"):
             if self._available:
                 log.debug("오버레이 표시: '%s'", text)
                 self._canvas.itemconfigure(self._text_id, text=text)
@@ -562,47 +731,16 @@ else:
 # ================================================================== #
 # 공통 로직 Mixin
 # ================================================================== #
-class _VADSession:
-    """한 번의 연속입력 세션이 소유하는 종료 신호와 세그먼트 큐."""
-
-    _END = object()
-
-    def __init__(self):
-        self.stop_requested = threading.Event()
-        self.segments: queue.Queue = queue.Queue()
-
-
 class VoiceSTTCore:
     """
-    플랫폼 독립적인 녹음·STT·VAD·키보드 로직.
+    플랫폼 독립적인 녹음·STT·키보드 로직.
 
     서브클래스가 구현해야 하는 메서드:
       _set_tray_title(title)  — 트레이 아이콘/타이틀 변경
       _set_status(status)     — 메뉴의 상태 텍스트 변경
       _set_last(text)         — 마지막 변환 결과 텍스트 변경
-      _set_continuous_state(on)   — 메뉴의 "연속입력 모드" 체크 상태 갱신
     """
     SAMPLE_RATE = 16000
-
-    # 콤보 체크 전용 수식어 키 정규화 테이블.
-    # right/left 구분 없이, 그리고 Mac Option ↔ Windows Alt 를 모두 generic 키로 통일.
-    _MODIFIER_ALIAS: dict = {}
-    for _generic, _variants in [
-        (keyboard.Key.alt,   ["alt_l", "alt_r"]),
-        (keyboard.Key.ctrl,  ["ctrl_l", "ctrl_r"]),
-        (keyboard.Key.shift, ["shift_l", "shift_r"]),
-        (keyboard.Key.cmd,   ["cmd_l", "cmd_r"]),
-    ]:
-        for _attr in _variants:
-            _v = getattr(keyboard.Key, _attr, None)
-            if _v is not None:
-                _MODIFIER_ALIAS[_v] = _generic
-    del _generic, _variants, _attr, _v
-
-    @staticmethod
-    def _norm_key(key):
-        """콤보 비교용: 수식어 키의 left/right 변형을 generic 으로 정규화."""
-        return VoiceSTTCore._MODIFIER_ALIAS.get(key, key)
 
     def _core_init(self):
         self.recording = False
@@ -612,14 +750,7 @@ class VoiceSTTCore:
         self.audio_frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
         self._prev_muted: bool | None = None
-        self._continuous_listening = False
-        self._continuous_paste_count = 0
-        self._vad_thread: threading.Thread | None = None
-        self._vad_worker_thread: threading.Thread | None = None
-        self._vad_session: _VADSession | None = None
         self._cfg_trigger_key = keyboard.Key.alt_r
-        self._cfg_continuous_combo: frozenset | None = None
-        self._pressed_keys: set = set()
         self.overlay = None
         self._ui_queue: queue.Queue = queue.Queue()
         log.debug("코어 상태 변수 초기화 완료")
@@ -627,9 +758,21 @@ class VoiceSTTCore:
         self._reload_shortcut_cache()
 
         log.info("키보드 리스너 시작 중...")
+        listener_options = {}
+        on_press, on_release = self._on_press, self._on_release
+        if PLATFORM == "darwin":
+            # 수동 감시 탭은 입력 모니터링 권한이 필요하다. 이벤트를 그대로
+            # 통과시키는 활성 탭은 이미 요청하는 손쉬운 사용 권한을 사용한다.
+            # 활성 탭 콜백은 빨리 반환해야 하므로 녹음 처리는 별도 스레드로 보낸다.
+            self._key_events = queue.SimpleQueue()
+            threading.Thread(target=self._process_key_events, daemon=True,
+                             name="keyscribe-key-events").start()
+            on_press, on_release = self._queue_key_press, self._queue_key_release
+            listener_options["darwin_intercept"] = lambda _event_type, event: event
         listener = keyboard.Listener(
-            on_press=self._on_press,
-            on_release=self._on_release,
+            on_press=on_press,
+            on_release=on_release,
+            **listener_options,
         )
         listener.daemon = True
         threading.Thread(target=listener.start, daemon=True).start()
@@ -675,28 +818,13 @@ class VoiceSTTCore:
         log.warning("알 수 없는 키 문자열 '%s'", key_str)
         return None
 
-    @staticmethod
-    def _parse_combo(combo_str: str) -> frozenset | None:
-        if not combo_str:
-            return None
-        keys = []
-        for part in combo_str.lower().split("+"):
-            k = VoiceSTTCore._key_from_str(part.strip())
-            if k is None:
-                log.warning("combo 파싱 실패 — 알 수 없는 키: '%s'", part.strip())
-                return None
-            keys.append(k)
-        return frozenset(keys) if keys else None
-
     def _reload_shortcut_cache(self):
         try:
             config = load_config()
             shortcut = config.get("shortcut", "")
             k = self._key_from_str(shortcut) if shortcut else None
             self._cfg_trigger_key = k if k else keyboard.Key.alt_r
-            self._cfg_continuous_combo = self._parse_combo(config.get("continuous_shortcut", ""))
-            log.debug("단축키 캐시 갱신 — trigger=%r, toggle_combo=%r",
-                      self._cfg_trigger_key, self._cfg_continuous_combo)
+            log.debug("단축키 캐시 갱신 — trigger=%r", self._cfg_trigger_key)
         except Exception:
             log.exception("단축키 캐시 갱신 실패 — 기존 값 유지")
 
@@ -721,37 +849,38 @@ class VoiceSTTCore:
                 log.exception("UI 큐 콜백 오류")
         if processed > 0:
             log.debug("UI 큐 처리 완료 — %d개", processed)
-        if self.overlay and (self.recording or self._transcribing or self._continuous_listening):
+        if self.overlay and (self.recording or self._transcribing):
             self.overlay.tick()
 
     # ------------------------------------------------------------------
     # 키 이벤트
     # ------------------------------------------------------------------
 
+    def _queue_key_press(self, key):
+        if key == self._cfg_trigger_key or key == keyboard.Key.esc:
+            self._key_events.put(("press", key))
+
+    def _queue_key_release(self, key):
+        if key == self._cfg_trigger_key:
+            self._key_events.put(("release", key))
+
+    def _process_key_events(self):
+        while True:
+            event_type, key = self._key_events.get()
+            try:
+                if event_type == "press":
+                    self._on_press(key)
+                else:
+                    self._on_release(key)
+            except Exception:
+                log.exception("키 이벤트 처리 실패 — type=%s, key=%r", event_type, key)
+
     def _on_press(self, key):
         log.debug("키 눌림: %r", key)
-        self._pressed_keys.add(key)
-
         if key == keyboard.Key.esc:
-            # 연속입력 모드 중에는 ESC가 아무 일도 안 한다 — 게임/타이핑 중 ESC가
-            # 자주 눌려서 의도치 않게 연속입력이 꺼지는 문제를 막기 위함.
-            # push-to-talk 녹음 취소에만 ESC를 사용한다.
-            if not self._continuous_listening and (self.recording or self._transcribing):
+            if self.recording or self._transcribing:
                 log.info("ESC — 녹음 취소")
                 self._cancel_recording()
-            return
-
-        _nk = self._norm_key(key)
-        if (self._cfg_continuous_combo
-                and _nk in self._cfg_continuous_combo
-                and self._cfg_continuous_combo.issubset(
-                    {self._norm_key(k) for k in self._pressed_keys})):
-            if self._continuous_listening:
-                log.info("연속입력 단축키 — 연속입력 리스닝 OFF")
-                self._stop_vad_listening()
-            elif not self._transcribing:
-                log.info("연속입력 단축키 — 연속입력 리스닝 ON")
-                self._start_vad_listening()
             return
 
         if key == self._cfg_trigger_key:
@@ -759,15 +888,12 @@ class VoiceSTTCore:
                 log.debug("트리거 키 눌림 — 이미 녹음중, 무시")
             elif self._transcribing:
                 log.debug("트리거 키 눌림 — 변환중, 무시")
-            elif self._continuous_listening:
-                log.debug("트리거 키 눌림 — 연속입력 리스닝 중, 무시")
             else:
                 log.info("트리거 키 눌림 — 녹음 시작")
                 self._start_recording()
 
     def _on_release(self, key):
         log.debug("키 뗌: %r", key)
-        self._pressed_keys.discard(key)
         if key == self._cfg_trigger_key:
             if self.recording:
                 log.info("트리거 키 뗌 — STT 변환 시작")
@@ -851,69 +977,13 @@ class VoiceSTTCore:
     # 붙여넣기
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _normalize_trigger(s: str) -> str:
-        """한글·알파벳만 남기고 소문자화 (공백·특수문자 제거)"""
-        return re.sub(r"[^가-힣a-z]", "", s.lower())
-
-    def _parse_trigger_action(self, value: str) -> tuple | None:
-        """트리거 값을 액션 튜플로 파싱.
-        ("keys", [Key, ...]) | ("type", str) | ("clear",)
-        """
-        if value.lower() == "clear":
-            return ("clear",)
-        parts = [self._key_from_str(p.strip()) for p in value.split("+")]
-        if all(k is not None for k in parts) and parts:
-            return ("keys", parts)
-        return ("type", value)
-
-    def _process_key_triggers(self, text: str) -> tuple[str, list]:
-        """텍스트에서 custom_key_trigger 키워드를 찾아 제거하고 액션 목록을 반환.
-        공백 기준으로 토큰 분리 후 연속 토큰 슬라이딩 윈도우로 매칭."""
+    def _paste_text(self, text: str):
         config = load_config()
-        triggers = config.get("custom_key_trigger", {})
-        triggered = []
-        for keyword, value in triggers.items():
-            norm_kw = self._normalize_trigger(keyword)
-            if not norm_kw:
-                continue
-            tokens = text.split()
-            matched = None
-            for size in range(1, len(tokens) + 1):
-                for start in range(len(tokens) - size + 1):
-                    if self._normalize_trigger("".join(tokens[start:start + size])) == norm_kw:
-                        matched = (start, start + size)
-                        break
-                if matched:
-                    break
-            if matched:
-                text = " ".join(tokens[:matched[0]] + tokens[matched[1]:])
-                action = self._parse_trigger_action(value)
-                triggered.append((keyword, action))
-                log.debug("custom_key_trigger 감지 — keyword=%r action=%r", keyword, action)
-        return text, triggered
-
-    def _send_before_and_paste(self, text: str, mode: str = "continuous"):
-        config = load_config()
-        if mode == "ptt":
-            before_key_str = ""
-            after_key_str = config.get("ptt_after_key", "enter")
-        else:
-            before_key_str = config.get("continuous_before_key", "")
-            after_key_str = config.get("continuous_after_key", "")
-
-        text, triggered_keys = self._process_key_triggers(text)
-
-        before_key = self._key_from_str(before_key_str) if before_key_str else None
-        after_key = self._key_from_str(after_key_str) if after_key_str else None
-        log.debug("_send_before_and_paste — before=%r, after=%r, triggers=%d, %d자",
-                  before_key, after_key, len(triggered_keys), len(text))
+        # auto_send이 없던 기존 설정은 ptt_after_key=enter만 자동 전송으로 해석한다.
+        auto_send = bool(config.get("auto_send", config.get("ptt_after_key", "enter") == "enter"))
+        after_key = keyboard.Key.enter if auto_send else None
+        log.debug("_paste_text — after=%r, %d자", after_key, len(text))
         kb = keyboard.Controller()
-
-        if before_key:
-            kb.press(before_key)
-            kb.release(before_key)
-            time.sleep(0.15)
 
         if text:
             if PLATFORM == "win32":
@@ -926,47 +996,11 @@ class VoiceSTTCore:
                     kb.release("v")
             time.sleep(0.1)
 
-        if not triggered_keys and after_key:
+        if after_key:
             kb.press(after_key)
             kb.release(after_key)
             time.sleep(0.05)
-
-        for kw, action in triggered_keys:
-            if action[0] == "keys":
-                keys = action[1]
-                modifiers, final_key = keys[:-1], keys[-1]
-                if modifiers:
-                    from contextlib import ExitStack
-                    with ExitStack() as stack:
-                        for m in modifiers:
-                            stack.enter_context(kb.pressed(m))
-                        time.sleep(0.05)
-                        kb.press(final_key)
-                        kb.release(final_key)
-                else:
-                    kb.press(final_key)
-                    kb.release(final_key)
-                log.info("custom_key_trigger 키 실행 — %r", kw)
-            elif action[0] == "type":
-                kb.type(action[1])
-                log.info("custom_key_trigger 타이핑 — %r → %r", kw, action[1])
-                if after_key:
-                    time.sleep(0.05)
-                    kb.press(after_key)
-                    kb.release(after_key)
-                    log.info("after_key 실행 (type 트리거 후) — %r", after_key)
-            elif action[0] == "clear":
-                select_all = keyboard.Key.cmd if PLATFORM == "darwin" else keyboard.Key.ctrl
-                with kb.pressed(select_all):
-                    kb.press("a")
-                    kb.release("a")
-                time.sleep(0.05)
-                kb.press(keyboard.Key.delete)
-                kb.release(keyboard.Key.delete)
-                log.info("custom_key_trigger clear 실행 — %r", kw)
-            time.sleep(0.05)
-
-        log.info("continuous_before_and_paste 완료")
+        log.info("텍스트 붙여넣기 완료")
 
     # ------------------------------------------------------------------
     # 텍스트 정제
@@ -996,14 +1030,14 @@ class VoiceSTTCore:
         log.info("녹음 취소됨")
         self._ui(lambda: (
             self._set_tray_title("🎙"),
-            self._set_status("상태: 취소됨"),
+            self._set_status(tr("status_cancelled")),
             self.overlay.hide() if self.overlay else None,
         ))
         if self._reset_timer:
             self._reset_timer.cancel()
 
         def _on_cancel():
-            self._ui(lambda: self._set_status("상태: 대기중"))
+            self._ui(lambda: self._set_status(tr("status_idle")))
 
         self._reset_timer = threading.Timer(2.5, _on_cancel)
         self._reset_timer.start()
@@ -1019,8 +1053,8 @@ class VoiceSTTCore:
         self._mute_system_audio()
         self._ui(lambda: (
             self._set_tray_title("🔴"),
-            self._set_status("상태: 녹음중..."),
-            self.overlay.show("🔴  녹음중") if self.overlay else None,
+            self._set_status(tr("status_recording")),
+            self.overlay.show(tr("overlay_recording")) if self.overlay else None,
         ))
         try:
             log.debug("마이크 스트림 생성 — samplerate=%d", self.SAMPLE_RATE)
@@ -1043,15 +1077,15 @@ class VoiceSTTCore:
             self.recording = False
             self._ui(lambda: (
                 self._set_tray_title("🎙"),
-                self._set_status("상태: 마이크 오류"),
-                self.overlay.show("❌  마이크 없음") if self.overlay else None,
+                self._set_status(tr("status_mic_error")),
+                self.overlay.show(tr("overlay_no_mic")) if self.overlay else None,
             ))
             if self._reset_timer:
                 self._reset_timer.cancel()
 
             def _on_mic_error_reset():
                 self._ui(lambda: (
-                    self._set_status("상태: 대기중"),
+                    self._set_status(tr("status_idle")),
                     self.overlay.hide() if self.overlay else None,
                 ))
 
@@ -1072,8 +1106,8 @@ class VoiceSTTCore:
         self._restore_system_audio()
         self._ui(lambda: (
             self._set_tray_title("⏳"),
-            self._set_status("상태: 변환중..."),
-            self.overlay.show("⏳  변환중...") if self.overlay else None,
+            self._set_status(tr("status_transcribing")),
+            self.overlay.show(tr("overlay_transcribing")) if self.overlay else None,
         ))
         if self.stream:
             try:
@@ -1114,13 +1148,16 @@ class VoiceSTTCore:
                 def _call(_holder=_holder):
                     try:
                         with open(tmp_path, "rb") as f:
-                            _holder["result"] = client.speech_to_text.convert(
-                                file=f,
-                                model_id="scribe_v2",
-                                language_code=config.get("language", "ko"),
-                                keyterms=config.get("keyterms", []) or None,
-                                no_verbatim=config.get("no_verbatim", True),
-                            )
+                            model_id = config.get("elevenlabs_model", "scribe_v2")
+                            request = {
+                                "file": f,
+                                "model_id": model_id,
+                                "language_code": config.get("language", "ko"),
+                                "keyterms": config.get("keyterms", []) or None,
+                            }
+                            if supports_no_verbatim(model_id):
+                                request["no_verbatim"] = config.get("no_verbatim", True)
+                            _holder["result"] = client.speech_to_text.convert(**request)
                     except BaseException as exc:
                         _holder["error"] = exc
 
@@ -1143,8 +1180,8 @@ class VoiceSTTCore:
                 log.warning("API 오류 (시도 %d): [%s] %s", attempt, type(e).__name__, e)
                 if attempt == 1 and not self._cancelled:
                     self._ui(lambda: (
-                        self._set_status("상태: 재시도중..."),
-                        self.overlay.show("🔄  재시도중...") if self.overlay else None,
+                        self._set_status(tr("status_retrying")),
+                        self.overlay.show(tr("overlay_retrying")) if self.overlay else None,
                     ))
                     time.sleep(1.0)
 
@@ -1211,8 +1248,8 @@ class VoiceSTTCore:
                 log.warning("API 오류 (시도 %d): [%s] %s", attempt, type(e).__name__, e)
                 if attempt == 1 and not self._cancelled:
                     self._ui(lambda: (
-                        self._set_status("상태: 재시도중..."),
-                        self.overlay.show("🔄  재시도중...") if self.overlay else None,
+                        self._set_status(tr("status_retrying")),
+                        self.overlay.show(tr("overlay_retrying")) if self.overlay else None,
                     ))
                     time.sleep(1.0)
 
@@ -1260,28 +1297,28 @@ class VoiceSTTCore:
             if text:
                 preview = text[:40] + ("..." if len(text) > 40 else "")
                 self._ui(lambda t=text, p=preview: (
-                    self._send_before_and_paste(t, mode="ptt"),
-                    self._set_last(f"마지막 변환: {p}"),
-                    self._set_status("상태: 대기중"),
+                    self._paste_text(t),
+                    self._set_last(tr("last", text=p)),
+                    self._set_status(tr("status_idle")),
                 ))
             else:
                 log.warning("변환 결과 텍스트 없음")
-                self._ui(lambda: self._set_status("상태: 텍스트 없음"))
+                self._ui(lambda: self._set_status(tr("status_no_text")))
 
         except Exception as e:
             error_occurred = True
             log.exception("STT 오류: [%s] %s", type(e).__name__, e)
             if not self._cancelled:
                 self._ui(lambda: (
-                    self._set_status("상태: 실패"),
-                    self.overlay.show("❌  실패했습니다") if self.overlay else None,
+                    self._set_status(tr("status_failed")),
+                    self.overlay.show(tr("overlay_failed")) if self.overlay else None,
                 ))
                 if self._reset_timer:
                     self._reset_timer.cancel()
 
                 def _on_error():
                     self._ui(lambda: (
-                        self._set_status("상태: 대기중"),
+                        self._set_status(tr("status_idle")),
                         self.overlay.hide() if self.overlay else None,
                     ))
 
@@ -1303,329 +1340,42 @@ class VoiceSTTCore:
                     self._ui(lambda: self.overlay.hide() if self.overlay else None)
 
     # ------------------------------------------------------------------
-    # 연속입력 모드 (VAD 연속 리스닝)
-    # ------------------------------------------------------------------
-
-    def _start_vad_listening(self):
-        # 이전 세션이 마지막 발화를 변환 중이면 새 스트림을 열지 않는다. 두 세션이
-        # 같은 마이크를 동시에 열거나, 이전 세션의 UI/입력 결과가 새 세션을 덮는
-        # 경쟁 상태를 막는다.
-        if self._vad_session is not None:
-            log.warning("VAD 시작 요청 무시 — 이전 세션 마무리 중")
-            self._ui(lambda: self._set_status("상태: 마지막 발화 마무리 중..."))
-            return
-
-        session = _VADSession()
-        self._vad_session = session
-        self._continuous_listening = True
-        self._continuous_paste_count = 0
-        self._vad_thread = threading.Thread(target=self._vad_loop, args=(session,), daemon=True)
-        self._vad_thread.start()
-        self._vad_worker_thread = threading.Thread(target=self._vad_worker, args=(session,), daemon=True)
-        self._vad_worker_thread.start()
-        log.info("VAD 리스닝 + 워커 시작")
-        self._ui(lambda: (
-            self._set_tray_title("👂"),
-            self._set_status("상태: 듣는중 (연속입력 ON)"),
-            self._set_continuous_state(True),
-            self.overlay.show("👂  듣는중...") if self.overlay else None,
-        ))
-
-    def _stop_vad_listening(self):
-        session = self._vad_session
-        self._continuous_listening = False
-        if session:
-            # 루프와 워커는 여기서 즉시 버려지지 않는다. VAD 루프가 현재 버퍼를
-            # 세그먼트로 확정하고 종료 표식을 넣으면, 워커가 그 표식 전까지의 모든
-            # 세그먼트를 순서대로 변환한다.
-            session.stop_requested.set()
-        log.info("VAD 리스닝 중지 요청")
-        self._ui(lambda: (
-            self._set_tray_title("🎙"),
-            self._set_status("상태: 마지막 발화 마무리 중..." if session else "상태: 대기중"),
-            self._set_continuous_state(False),
-        ))
-
-    def _request_continuous_mode(self):
-        """메뉴 클릭 등 외부에서 연속입력 모드 전환을 요청한다."""
-        if self._continuous_listening:
-            log.info("메뉴 — 연속입력 리스닝 OFF")
-            self._stop_vad_listening()
-        elif self._transcribing:
-            log.debug("메뉴 — 변환중이라 연속입력 요청 무시")
-        else:
-            log.info("메뉴 — 연속입력 리스닝 ON")
-            self._start_vad_listening()
-
-    def _vad_loop(self, session: _VADSession):
-        config = load_config()
-        threshold = config.get("vad_threshold", 500)
-        # 시작은 배경 소음을 피하기 위해 높은 임계값을 쓰되, 한번 말하기 시작한
-        # 뒤에는 더 낮은 임계값으로 유지한다. 끝 음절은 보통 첫 음절보다 작아서
-        # 한 임계값만 쓰면 '침묵'으로 잘못 분류된다.
-        continue_threshold = config.get(
-            "vad_continue_threshold", max(100, int(threshold * 0.35)),
-        )
-        continue_threshold = max(1, min(int(continue_threshold), int(threshold)))
-        silence_sec = config.get("vad_silence_sec", 1.0)
-        chunk_sec = 0.05
-        chunk_samples = int(self.SAMPLE_RATE * chunk_sec)
-        silence_chunks_needed = max(1, math.ceil(silence_sec / chunk_sec))
-        chunk_q: queue.Queue = queue.Queue()
-
-        def _vad_callback(indata, frames, time_info, status):
-            # 종료 요청 뒤에 새 오디오를 넣지 않아, 종료 시 큐를 확정적으로 비울 수
-            # 있게 한다. 이미 넣어진 청크는 아래 루프가 모두 처리한다.
-            if session.stop_requested.is_set():
-                return
-            chunk_q.put(indata.copy())
-            rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
-            if self.overlay:
-                # threshold를 0점으로 재정규화 — 실제로 STT에 들어가는 소리만 시각화
-                self.overlay.set_volume(min(1.0, max(0.0, rms - threshold) / 4000.0))
-
-        speech_frames: list[np.ndarray] = []
-        silence_count = 0
-        speaking = False
-        # pre-roll: 말 시작 클리핑 방지 — 임계값 초과 직전 250ms를 보존
-        pre_roll_chunks = int(0.25 / chunk_sec)
-        ring_buf: collections.deque = collections.deque(maxlen=pre_roll_chunks)
-
-        log.info(
-            "VAD 루프 진입 — start_threshold=%d, continue_threshold=%d, silence_sec=%.1f",
-            threshold, continue_threshold, silence_sec,
-        )
-        diag_rms: list[float] = []
-        diag_chunks_target = int(1.0 / chunk_sec)  # 처음 1초만 수집
-        diag_logged = False
-        try:
-            with self._create_input_stream(
-                samplerate=self.SAMPLE_RATE,
-                channels=1,
-                dtype="int16",
-                blocksize=chunk_samples,
-                callback=_vad_callback,
-            ):
-                # 종료 요청을 받은 뒤에도, 콜백이 이미 넣은 청크는 비울 때까지
-                # 처리한다. 이 과정이 없으면 토글 시 마지막 50~100ms가 사라진다.
-                while True:
-                    try:
-                        chunk = chunk_q.get(timeout=0.1)
-                    except queue.Empty:
-                        if session.stop_requested.is_set():
-                            break
-                        continue
-
-                    rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
-
-                    if not diag_logged:
-                        diag_rms.append(rms)
-                        if len(diag_rms) >= diag_chunks_target:
-                            avg = sum(diag_rms) / len(diag_rms)
-                            mx = max(diag_rms)
-                            mn = min(diag_rms)
-                            log.info(
-                                "VAD 진단 — 첫 1초 RMS: avg=%.0f, min=%.0f, max=%.0f, threshold=%d",
-                                avg, mn, mx, threshold,
-                            )
-                            if mn >= threshold:
-                                log.warning(
-                                    "VAD 진단: 최저 RMS(%.0f)도 임계값(%d) 이상 — "
-                                    "침묵 감지 불가. config.toml의 vad_threshold를 %d 이상으로 올리세요.",
-                                    mn, threshold, int(mn * 1.5),
-                                )
-                            diag_logged = True
-
-                    if not speaking:
-                        if rms < threshold:
-                            ring_buf.append(chunk)  # 침묵 구간: pre-roll 버퍼에 누적
-                            continue
-                        speaking = True
-                        silence_count = 0
-                        speech_frames = list(ring_buf)  # pre-roll 삽입
-                        log.info("VAD: 음성 감지 시작 (pre-roll %d 청크)", len(speech_frames))
-                        self._ui(lambda: (
-                            self._set_tray_title("🔴"),
-                            self._set_status("상태: 녹음중 (VAD)"),
-                            self.overlay.show("🔴  녹음중") if self.overlay else None,
-                        ))
-
-                    speech_frames.append(chunk)
-                    if rms >= continue_threshold:
-                        silence_count = 0
-                    else:
-                        silence_count += 1
-                        if silence_count >= silence_chunks_needed:
-                            # 절대 잘라내지 않는다. 이전 구현은 이 시점에서 마지막
-                            # 1초 중 150ms만 남겨, 임계값 아래로 떨어진 끝 단어를
-                            # '침묵'으로 오인한 채 삭제했다. STT에는 1초의 무음보다
-                            # 완전한 발화가 훨씬 중요하다.
-                            frames_to_send = speech_frames
-                            speech_frames = []
-                            silence_count = 0
-                            speaking = False
-                            ring_buf.clear()
-
-                            if frames_to_send:
-                                session.segments.put(frames_to_send)
-                                log.info("VAD: 음성 구간 → 대기열 (%d 청크, 대기 %d개)",
-                                         len(frames_to_send), session.segments.qsize())
-        except Exception:
-            log.exception("VAD 루프 오류 — 마이크 사용 불가")
-            # 연속입력 모드를 자동으로 OFF 시키고 사용자에게 알린다
-            self._continuous_listening = False
-            self._ui(lambda: (
-                self._set_tray_title("🎙"),
-                self._set_status("상태: 마이크 오류"),
-                self._set_continuous_state(False),
-                self.overlay.show("❌  마이크 없음") if self.overlay else None,
-            ))
-            if self._reset_timer:
-                self._reset_timer.cancel()
-
-            def _on_vad_mic_error_reset():
-                self._ui(lambda: (
-                    self._set_status("상태: 대기중"),
-                    self.overlay.hide() if self.overlay else None,
-                ))
-
-            self._reset_timer = threading.Timer(3.0, _on_vad_mic_error_reset)
-            self._reset_timer.start()
-        finally:
-            # 모드를 끄는 순간에도 아직 silence timeout에 닿지 않은 마지막 발화는
-            # 반드시 하나의 세그먼트로 확정한다.
-            if speaking and speech_frames:
-                session.segments.put(speech_frames)
-                log.info("VAD 종료: 진행 중 마지막 음성 구간 확정 (%d 청크, 대기 %d개)",
-                         len(speech_frames), session.segments.qsize())
-            session.segments.put(_VADSession._END)
-            log.info("VAD 루프 종료")
-
-    def _vad_worker(self, session: _VADSession):
-        """VAD 세그먼트 큐를 순서대로 처리하는 워커. VAD 루프와 독립적으로 동작."""
-        log.info("VAD 워커 진입")
-        while True:
-            frames = session.segments.get()
-            if frames is _VADSession._END:
-                break
-            log.info("VAD 워커: 세그먼트 처리 시작 (%d 청크, 남은 대기 %d개)",
-                     len(frames), session.segments.qsize())
-            self._transcribing = True
-            self._ui(lambda: (
-                self._set_tray_title("⏳"),
-                self._set_status("상태: 변환중..."),
-                self.overlay.show("⏳  변환중...") if self.overlay else None,
-            ))
-            self._transcribe_vad(frames, session)  # 동기 호출 — 완료될 때까지 대기
-        if self._vad_session is session:
-            self._vad_session = None
-        log.info("VAD 워커 종료")
-
-    def _transcribe_vad(self, frames: list[np.ndarray], session: _VADSession):
-        t_start = time.time()
-        tmp_path = None
-        try:
-            config = load_config()
-            api_key = self._api_key
-            if not api_key:
-                raise ValueError("API Key가 설정되지 않았습니다.")
-
-            audio_data = np.concatenate(frames, axis=0)
-            duration_sec = len(audio_data) / self.SAMPLE_RATE
-            log.info("VAD STT 시작 — %.1f초", duration_sec)
-
-            with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
-                tmp_path = f.name
-            sf.write(tmp_path, audio_data, self.SAMPLE_RATE, format="FLAC", subtype="PCM_16")
-
-            hard_timeout = max(5.0, duration_sec + 10.0)
-            sdk_timeout = hard_timeout - 2.0
-
-            result = self._call_stt(config, api_key, tmp_path, hard_timeout, sdk_timeout)
-
-            text = self._clean_text(result.text or "")
-            if text:
-                if self._continuous_paste_count > 0:
-                    text = " " + text
-                self._continuous_paste_count += 1
-                preview = text.lstrip()[:40] + ("..." if len(text.lstrip()) > 40 else "")
-                log.info("VAD 변환 결과: %d자 — %r", len(text), text[:40])
-                self._ui(lambda t=text, p=preview: (
-                    self._send_before_and_paste(t),
-                    self._set_last(f"마지막 변환: {p}"),
-                ))
-            else:
-                log.warning("VAD STT: 텍스트 없음")
-
-        except Exception:
-            log.exception("VAD STT 오류 — 소요=%.2f초", time.time() - t_start)
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-            self._transcribing = False
-            # 큐에 다음 구간이 있으면 워커가 곧 다시 ⏳로 바꾸므로 잠깐 듣는중 표시
-            if self._continuous_listening and self._vad_session is session:
-                self._ui(lambda: (
-                    self._set_tray_title("👂"),
-                    self._set_status("상태: 듣는중 (연속입력 ON)"),
-                    self.overlay.show("👂  듣는중...") if self.overlay else None,
-                ))
-            else:
-                self._ui(lambda: (
-                    self._set_tray_title("🎙"),
-                    self._set_status("상태: 대기중"),
-                    self.overlay.hide() if self.overlay else None,
-                ))
-
-
-# ================================================================== #
 # macOS 앱
 # ================================================================== #
 if PLATFORM == "darwin":
     class VoiceSTTApp(rumps.App, VoiceSTTCore):
         def __init__(self):
             log.info("VoiceSTTApp (macOS) __init__ 시작")
-            rumps.App.__init__(self, "🎙", quit_button="종료")
+            sync_ui_language()
+            rumps.App.__init__(self, APP_NAME, title=None, icon=str(MENU_ICON_PATH),
+                               template=True, quit_button=tr("quit"))
 
-            self.status_item = rumps.MenuItem("상태: 대기중")
-            self.last_item = rumps.MenuItem("마지막 변환: -")
-            self.continuous_mode_item = rumps.MenuItem("연속입력 모드", callback=self._on_continuous_mode)
-            self.apikey_item = rumps.MenuItem("API Key 설정...", callback=self._on_set_api_key)
-            self.config_item = rumps.MenuItem("설정...", callback=self._on_edit_config)
-            self.restart_item = rumps.MenuItem("재실행", callback=self._restart)
+            self.status_item = rumps.MenuItem(tr("status_idle"))
+            self.last_item = rumps.MenuItem(tr("last", text="-"))
+            self.config_item = rumps.MenuItem(tr("settings"), callback=self._on_edit_config)
+            self.restart_item = rumps.MenuItem(tr("restart"), callback=self._restart)
             log.debug("메뉴 아이템 생성 완료")
 
             user_cfg = load_user_config()
             api_key_source = (
                 "user_config" if user_cfg.get("api_key")
                 else "환경변수" if os.environ.get("ELEVENLABS_API_KEY")
-                else "config.toml" if load_config().get("api_key")
                 else "없음"
             )
             self._api_key: str = (
                 user_cfg.get("api_key")
                 or os.environ.get("ELEVENLABS_API_KEY")
-                or load_config().get("api_key")
                 or ""
             )
             log.info("API 키: %s (소스: %s)", "설정됨" if self._api_key else "미설정", api_key_source)
 
-            accessibility = is_accessibility_granted()
-            log.info("접근성 권한: %s", accessibility)
-            if not accessibility:
-                self._accessibility_item = rumps.MenuItem(
-                    "⚠️ 접근성 권한 필요 — 클릭하여 설정 열기",
-                    callback=self._open_accessibility_prefs,
-                )
-                self.menu = [self.status_item, self.last_item, None, self._accessibility_item,
-                             None, self.continuous_mode_item, None,
-                             self.apikey_item, self.config_item, None, self.restart_item, None]
-            else:
-                self.menu = [self.status_item, self.last_item, None, self.continuous_mode_item, None,
-                             self.apikey_item, self.config_item, None, self.restart_item, None]
+            self._accessibility_item = rumps.MenuItem(
+                tr("accessibility_required"), callback=self._open_accessibility_prefs,
+            )
+            self.menu = [self.status_item, self.last_item, None, self._accessibility_item,
+                         self.config_item, None, self.restart_item, None]
+            self._accessibility_granted = None
+            self._sync_accessibility_warning()
 
             self._core_init()
             log.info("VoiceSTTApp (macOS) __init__ 완료")
@@ -1633,19 +1383,14 @@ if PLATFORM == "darwin":
         # ── 추상 메서드 구현 ──
 
         def _set_tray_title(self, title: str):
-            self.title = title
+            # 메뉴바는 이모지 대신 앱 아이콘과 같은 벡터 마이크를 항상 표시한다.
+            self.title = None
 
         def _set_status(self, status: str):
             self.status_item.title = status
 
         def _set_last(self, text: str):
             self.last_item.title = text
-
-        def _set_continuous_state(self, on: bool):
-            self.continuous_mode_item.state = 1 if on else 0
-
-        def _on_continuous_mode(self, _):
-            self._request_continuous_mode()
 
         # ── rumps 타이머 ──
 
@@ -1660,6 +1405,36 @@ if PLATFORM == "darwin":
         def _flush_ui_queue(self, _):
             self._flush_ui_queue_impl()
 
+        @rumps.timer(2)
+        def _check_accessibility(self, _):
+            self._sync_accessibility_warning()
+
+        @rumps.timer(0.7)
+        def _prompt_for_accessibility_once(self, sender):
+            sender.stop()
+            if self._accessibility_granted:
+                return
+            try:
+                from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+                from Foundation import NSDictionary
+                options = NSDictionary.dictionaryWithObject_forKey_(True, kAXTrustedCheckOptionPrompt)
+                AXIsProcessTrustedWithOptions(options)
+                log.info("접근성 권한 요청 대화상자 표시")
+            except Exception:
+                log.exception("접근성 권한 요청 대화상자 표시 실패")
+
+        def _sync_accessibility_warning(self):
+            granted = is_accessibility_granted()
+            if granted == self._accessibility_granted:
+                return
+            previous = self._accessibility_granted
+            log.info("접근성 권한 변경: %s → %s", previous, granted)
+            self._accessibility_granted = granted
+            self._accessibility_item._menuitem.setHidden_(granted)
+            if granted and previous is False:
+                log.info("권한 허용됨 — 키보드 리스너 재초기화를 위해 앱 재시작")
+                self._restart(None)
+
         # ── 접근성 권한 ──
 
         def _open_accessibility_prefs(self, _):
@@ -1668,7 +1443,7 @@ if PLATFORM == "darwin":
                 "open",
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             ])
-            rumps.notification("voice-stt", "", "권한 허용 후 앱을 재시작해 주세요.")
+            rumps.notification(APP_NAME, "", tr("permission_restart"))
 
         # ── 재실행 ──
 
@@ -1679,86 +1454,224 @@ if PLATFORM == "darwin":
                 bundle = exe[:exe.index(".app/Contents") + 4]
                 subprocess.Popen(["open", bundle])
             else:
-                subprocess.Popen([sys.executable] + sys.argv)
+                command = [sys.executable] + sys.argv
+                log.info("재실행 명령: %r (cwd=%s)", command, CONFIG_PATH.parent)
+                subprocess.Popen(command, cwd=CONFIG_PATH.parent,
+                                 stdout=_log_handler.stream, stderr=_log_handler.stream)
             log.info("재실행 프로세스 시작 — 현재 앱 종료")
             rumps.quit_application()
 
-        # ── API Key 설정 ──
-
-        def _on_set_api_key(self, _):
-            log.info("API Key 설정 창 열기")
-            window = rumps.Window(
-                title="STT API Key 설정",
-                message="API Key를 입력하세요.\n"
-                        "  • sk_…  → ElevenLabs Scribe v2 (elevenlabs.io → Profile → API Keys)\n"
-                        "  • sk-…  → OpenAI gpt-transcribe (platform.openai.com → API keys)",
-                default_text=self._api_key,
-                ok="저장",
-                cancel="취소",
-                dimensions=(420, 24),
-            )
-            response = window.run()
-            if response.clicked:
-                new_key = response.text.strip()
-                if new_key:
-                    self._api_key = new_key
-                    save_user_config({"api_key": new_key})
-                    log.info("API 키 저장됨")
-                    rumps.notification("voice-stt", "", "API Key가 저장되었습니다.")
-                else:
-                    log.warning("API Key 입력 없음")
-                    rumps.alert(title="voice-stt", message="API Key를 입력해 주세요.")
-
-        # ── 설정 편집 ──
-
         def _on_edit_config(self, _):
-            log.info("설정 편집 창 열기")
-            try:
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    current = f.read()
-            except Exception:
-                log.exception("config.toml 로드 실패")
-                current = ""
-
             from AppKit import (
-                NSAlert, NSScrollView, NSTextView, NSMakeRect, NSFont, NSBezelBorder,
+                NSAlert, NSButton, NSColor, NSFont, NSMakeRect, NSPasteboard, NSPopUpButton, NSScrollView, NSTextField, NSTextView,
             )
-            W, H = 600, 440
-            scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
+            values = settings_values(self._api_key)
+            displayed_api_key = abbreviate_api_key(self._api_key)
+            W, H, row_h = 520, 410, 46
+            view = __import__("AppKit").NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
+            fields = {}
+            labels = [("api_key", tr("api_key"))]
+            model_picker = None
+            y = H - 40
+            for key, label in labels:
+                title = NSTextField.labelWithString_(label)
+                title.setFrame_(NSMakeRect(0, y + 1, 130, 24))
+                field = NSTextField.alloc().initWithFrame_(NSMakeRect(135, y, 375, 24))
+                field.setStringValue_(displayed_api_key if key == "api_key" else values[key])
+                if key == "api_key":
+                    field.setPlaceholderString_("sk_… (ElevenLabs) 또는 sk-… (OpenAI)")
+                    field.setDelegate_(self)
+                view.addSubview_(title)
+                view.addSubview_(field)
+                fields[key] = field
+                if key == "api_key":
+                    hint = NSTextField.labelWithString_("(ElevenLabs / OpenAI)")
+                    hint.setFrame_(NSMakeRect(135, y - 14, 220, 16))
+                    hint.setFont_(NSFont.systemFontOfSize_(10))
+                    hint.setTextColor_(NSColor.secondaryLabelColor())
+                    view.addSubview_(hint)
+                    model_title = NSTextField.labelWithString_(tr("model"))
+                    model_title.setFrame_(NSMakeRect(0, y - row_h + 1, 130, 24))
+                    model_picker = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+                        NSMakeRect(135, y - row_h, 280, 26), False)
+                    refresh_button = NSButton.alloc().initWithFrame_(
+                        NSMakeRect(422, y - row_h, 88, 26))
+                    refresh_button.setTitle_(tr("refresh"))
+                    refresh_button.setTarget_(self)
+                    refresh_button.setAction_("refreshModels:")
+                    model_picker.setTarget_(self)
+                    model_picker.setAction_("modelSelectionChanged:")
+                    try:
+                        models = fetch_transcription_models(self._api_key)
+                    except Exception:
+                        log.exception("모델 목록 로드 실패")
+                        models = []
+                    models = models or [values["model"]]
+                    if values["model"] not in models:
+                        models.insert(0, values["model"])
+                    model_picker.addItemsWithTitles_(models)
+                    model_picker.selectItemWithTitle_(values["model"])
+                    self._model_api_key_field = field
+                    self._model_picker = model_picker
+                    self._api_pasteboard_change_count = NSPasteboard.generalPasteboard().changeCount()
+                    view.addSubview_(model_title)
+                    view.addSubview_(refresh_button)
+                    view.addSubview_(model_picker)
+                    y -= row_h
+                y -= row_h
+
+            def add_picker(title_text, items, value):
+                nonlocal y
+                items = list(items)
+                if value not in [code for code, _ in items]:
+                    items.insert(0, (value, value))
+                title = NSTextField.labelWithString_(title_text)
+                title.setFrame_(NSMakeRect(0, y + 1, 130, 24))
+                picker = NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(135, y, 375, 26), False)
+                codes = [code for code, _ in items]
+                picker.addItemsWithTitles_([name for _, name in items])
+                picker.selectItemAtIndex_(codes.index(value) if value in codes else 0)
+                view.addSubview_(title)
+                view.addSubview_(picker)
+                y -= row_h
+                return picker, codes
+
+            speech_picker, speech_codes = add_picker(tr("speech_language"), speech_language_options(), values["language"])
+            shortcut_title = NSTextField.labelWithString_(tr("shortcut"))
+            shortcut_title.setFrame_(NSMakeRect(0, y + 1, 130, 24))
+            shortcut_picker = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+                NSMakeRect(135, y, 375, 26), False)
+            shortcut_items = shortcut_options()
+            shortcut_values = [value for value, _ in shortcut_items]
+            shortcut_picker.addItemsWithTitles_([label for _, label in shortcut_items])
+            shortcut_picker.selectItemAtIndex_(shortcut_values.index(values["shortcut"])
+                                               if values["shortcut"] in shortcut_values else 0)
+            view.addSubview_(shortcut_title)
+            view.addSubview_(shortcut_picker)
+            y -= row_h
+
+            y -= row_h
+            title = NSTextField.labelWithString_(tr("keywords"))
+            title.setFrame_(NSMakeRect(0, y + 18, 130, 42))
+            view.addSubview_(title)
+            scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(135, y, 375, 84))
             scroll.setHasVerticalScroller_(True)
-            scroll.setHasHorizontalScroller_(False)
-            scroll.setAutohidesScrollers_(False)
-            scroll.setBorderType_(NSBezelBorder)
-            tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
-            tv.setString_(current)
-            tv.setFont_(NSFont.fontWithName_size_("Menlo", 12))
-            tv.setAutomaticQuoteSubstitutionEnabled_(False)
-            tv.setAutomaticDashSubstitutionEnabled_(False)
-            tv.setRichText_(False)
-            scroll.setDocumentView_(tv)
+            keyterms = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, 375, 84))
+            keyterms.setString_(values["keyterms"])
+            scroll.setDocumentView_(keyterms)
+            view.addSubview_(scroll)
+            # 키워드 입력칸과 첫 체크박스 사이에 12pt만 둔다.
+            y -= 36
+            no_verbatim = NSButton.alloc().initWithFrame_(NSMakeRect(135, y, 250, 24))
+            no_verbatim.setButtonType_(3)
+            no_verbatim.setTitle_(tr("remove_fillers"))
+            no_verbatim.setState_(1 if values["no_verbatim"] else 0)
+            no_verbatim.setEnabled_(provider_for_api_key(self._api_key) == "elevenlabs"
+                                   and supports_no_verbatim(values["elevenlabs_model"]))
+            view.addSubview_(no_verbatim)
+            self._no_verbatim_button = no_verbatim
+            filler_hint = NSTextField.labelWithString_(tr("filler_hint"))
+            filler_hint.setFrame_(NSMakeRect(135, y - 15, 200, 16))
+            filler_hint.setFont_(NSFont.systemFontOfSize_(10))
+            filler_hint.setTextColor_(NSColor.secondaryLabelColor() if no_verbatim.isEnabled()
+                                     else NSColor.disabledControlTextColor())
+            view.addSubview_(filler_hint)
+            self._no_verbatim_hint = filler_hint
+            y -= 42
+            mute = NSButton.alloc().initWithFrame_(NSMakeRect(135, y, 300, 24))
+            mute.setButtonType_(3)
+            mute.setTitle_(tr("mute_audio"))
+            mute.setState_(1 if values["mute_during_recording"] else 0)
+            view.addSubview_(mute)
+            y -= 34
+            auto_send = NSButton.alloc().initWithFrame_(NSMakeRect(135, y, 300, 24))
+            auto_send.setButtonType_(3)
+            auto_send.setTitle_(tr("auto_send"))
+            auto_send.setState_(1 if values["auto_send"] else 0)
+            view.addSubview_(auto_send)
             alert = NSAlert.alloc().init()
-            alert.setMessageText_("설정 (config.toml)")
-            alert.setInformativeText_("TOML을 수정한 후 저장하세요.")
-            alert.addButtonWithTitle_("저장")
-            alert.addButtonWithTitle_("취소")
-            alert.setAccessoryView_(scroll)
-            alert.window().setInitialFirstResponder_(tv)
+            alert.setMessageText_(tr("settings_title", app=APP_NAME))
+            alert.setInformativeText_(tr("api_key_help"))
+            alert.addButtonWithTitle_(tr("save"))
+            alert.addButtonWithTitle_(tr("cancel"))
+            alert.setAccessoryView_(view)
+            alert.window().setInitialFirstResponder_(fields["api_key"])
             response = alert.runModal()
             if response == 1000:
-                text = tv.string().strip()
-                try:
-                    tomllib.loads(text)
-                except tomllib.TOMLDecodeError as e:
-                    log.warning("TOML 파싱 오류: %s", e)
-                    rumps.alert(title="voice-stt", message=f"TOML 오류:\n{e}")
-                    return
-                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                    f.write(text)
-                log.info("config.toml 저장됨")
+                values.update({key: field.stringValue() for key, field in fields.items()})
+                if values["api_key"].strip() == displayed_api_key:
+                    values["api_key"] = self._api_key
+                values["keyterms"] = keyterms.string()
+                values["shortcut"] = shortcut_values[shortcut_picker.indexOfSelectedItem()]
+                values["language"] = speech_codes[speech_picker.indexOfSelectedItem()]
+                provider = provider_for_api_key(values["api_key"])
+                values[f"{provider}_model"] = model_picker.titleOfSelectedItem() if provider else values["model"]
+                values["auto_send"] = bool(auto_send.state())
+                values["no_verbatim"] = bool(no_verbatim.state())
+                values["mute_during_recording"] = bool(mute.state())
+                save_settings(values)
+                sync_ui_language(values["language"])
+                self._api_key = values["api_key"].strip()
                 self._reload_shortcut_cache()
-                rumps.notification("voice-stt", "", "설정이 저장되었습니다.")
-            else:
-                log.debug("설정 편집 취소됨")
+                rumps.notification(APP_NAME, "", tr("saved"))
+
+        def refreshModels_(self, _):
+            """설정 창의 API Key로 전사 모델 목록을 다시 읽는다."""
+            from AppKit import NSColor
+            field = getattr(self, "_model_api_key_field", None)
+            picker = getattr(self, "_model_picker", None)
+            if not field or not picker:
+                return
+            api_key = field.stringValue().strip()
+            if api_key == abbreviate_api_key(self._api_key):
+                api_key = self._api_key
+            try:
+                models = fetch_transcription_models(api_key)
+                if not models:
+                    raise RuntimeError(tr("no_models"))
+                picker.removeAllItems()
+                picker.addItemsWithTitles_(models)
+                picker.selectItemAtIndex_(0)
+                field.setTextColor_(NSColor.labelColor())
+                self.modelSelectionChanged_(picker)
+            except Exception as exc:
+                log.exception("모델 목록 새로고침 실패")
+                field.setTextColor_(NSColor.systemRedColor())
+                rumps.alert(title=tr("api_key_error_title"), message=tr("api_key_error_detail", error=exc))
+
+        def modelSelectionChanged_(self, _):
+            field = getattr(self, "_model_api_key_field", None)
+            picker = getattr(self, "_model_picker", None)
+            checkbox = getattr(self, "_no_verbatim_button", None)
+            hint = getattr(self, "_no_verbatim_hint", None)
+            if not field or not picker or not checkbox:
+                return
+            api_key = field.stringValue().strip()
+            if api_key == abbreviate_api_key(self._api_key):
+                api_key = self._api_key
+            enabled = (provider_for_api_key(api_key) == "elevenlabs"
+                       and supports_no_verbatim(picker.titleOfSelectedItem() or ""))
+            checkbox.setEnabled_(enabled)
+            if hint:
+                from AppKit import NSColor
+                hint.setTextColor_(NSColor.secondaryLabelColor() if enabled else NSColor.disabledControlTextColor())
+
+        def controlTextDidEndEditing_(self, notification):
+            """API Key 입력을 확정하거나 다른 곳으로 이동하면 모델을 자동 갱신한다."""
+            field = getattr(self, "_model_api_key_field", None)
+            if field and notification.object() == field:
+                self.refreshModels_(None)
+
+        def controlTextDidChange_(self, notification):
+            """API Key를 붙여넣으면 포커스를 옮기지 않아도 모델을 갱신한다."""
+            field = getattr(self, "_model_api_key_field", None)
+            if not field or notification.object() != field:
+                return
+            from AppKit import NSPasteboard
+            pasteboard_count = NSPasteboard.generalPasteboard().changeCount()
+            if pasteboard_count != getattr(self, "_api_pasteboard_change_count", pasteboard_count):
+                self._api_pasteboard_change_count = pasteboard_count
+                self.refreshModels_(None)
 
 
 # ================================================================== #
@@ -1770,51 +1683,42 @@ elif PLATFORM == "win32":
             "🎙": (80, 80, 80),    # 대기중 — 회색
             "🔴": (220, 50, 50),   # 녹음중 — 빨강
             "⏳": (200, 150, 50),  # 변환중 — 주황
-            "👂": (50, 120, 220),  # 듣는중 — 파랑
         }
 
         def __init__(self):
             log.info("VoiceSTTApp (Windows) __init__ 시작")
+            sync_ui_language()
             self._root = tk.Tk()
             self._root.withdraw()
 
-            self._status_text = "상태: 대기중"
-            self._last_text = "마지막 변환: -"
+            self._status_text = tr("status_idle")
+            self._last_text = tr("last", text="-")
 
             user_cfg = load_user_config()
             api_key_source = (
                 "user_config" if user_cfg.get("api_key")
                 else "환경변수" if os.environ.get("ELEVENLABS_API_KEY")
-                else "config.toml" if load_config().get("api_key")
                 else "없음"
             )
             self._api_key: str = (
                 user_cfg.get("api_key")
                 or os.environ.get("ELEVENLABS_API_KEY")
-                or load_config().get("api_key")
                 or ""
             )
             log.info("API 키: %s (소스: %s)", "설정됨" if self._api_key else "미설정", api_key_source)
 
             self._tray = pystray.Icon(
-                "voice-stt",
+                APP_SLUG,
                 self._make_icon_image((80, 80, 80)),
-                "voice-stt",
+                APP_NAME,
                 menu=pystray.Menu(
                     pystray.MenuItem(lambda item: self._status_text, None, enabled=False),
                     pystray.MenuItem(lambda item: self._last_text, None, enabled=False),
                     pystray.Menu.SEPARATOR,
-                    pystray.MenuItem(
-                        "연속입력 모드",
-                        lambda icon, item: self._on_continuous_mode(),
-                        checked=lambda item: self._continuous_listening,
-                    ),
+                    pystray.MenuItem(tr("settings"), self._schedule_config_dialog),
+                    pystray.MenuItem(tr("restart"), lambda icon, item: self._restart()),
                     pystray.Menu.SEPARATOR,
-                    pystray.MenuItem("API Key 설정...", self._schedule_api_key_dialog),
-                    pystray.MenuItem("설정...", self._schedule_config_dialog),
-                    pystray.MenuItem("재실행", lambda icon, item: self._restart()),
-                    pystray.Menu.SEPARATOR,
-                    pystray.MenuItem("종료", lambda icon, item: self._quit()),
+                    pystray.MenuItem(tr("quit"), lambda icon, item: self._quit()),
                 ),
             )
             log.debug("pystray 트레이 아이콘 생성 완료")
@@ -1836,7 +1740,7 @@ elif PLATFORM == "win32":
         def _set_tray_title(self, title: str):
             color = self._ICON_COLORS.get(title, (80, 80, 80))
             self._tray.icon = self._make_icon_image(color)
-            self._tray.title = f"voice-stt {title}"
+            self._tray.title = f"{APP_NAME} {title}"
 
         def _set_status(self, status: str):
             self._status_text = status
@@ -1846,124 +1750,146 @@ elif PLATFORM == "win32":
             self._last_text = text
             self._tray.update_menu()
 
-        def _set_continuous_state(self, on: bool):
-            # pystray의 checked 람다가 _continuous_listening을 참조하므로 메뉴만 갱신
-            self._tray.update_menu()
-
-        def _on_continuous_mode(self):
-            self._request_continuous_mode()
-
         # ── UI 큐 (tkinter after 루프) ──
 
         def _flush_ui_queue_tk(self):
             self._flush_ui_queue_impl()
             self._root.after(50, self._flush_ui_queue_tk)
 
-        # ── API Key 설정 ──
-
-        def _schedule_api_key_dialog(self, icon=None, item=None):
-            self._root.after(0, self._show_api_key_dialog)
-
-        def _show_api_key_dialog(self):
-            log.info("API Key 설정 창 열기")
-            new_key = tkdialog.askstring(
-                "API Key 설정",
-                "API Key를 입력하세요:\n"
-                "  • sk_…  → ElevenLabs Scribe v2\n"
-                "  • sk-…  → OpenAI gpt-transcribe",
-                initialvalue=self._api_key,
-                parent=self._root,
-            )
-            if new_key is not None:
-                new_key = new_key.strip()
-                if new_key:
-                    self._api_key = new_key
-                    save_user_config({"api_key": new_key})
-                    log.info("API 키 저장됨")
-                    tkmsgbox.showinfo("voice-stt", "API Key가 저장되었습니다.", parent=self._root)
-                else:
-                    log.warning("API Key 입력 없음")
-                    tkmsgbox.showwarning("voice-stt", "API Key를 입력해 주세요.", parent=self._root)
-
-        # ── 설정 편집 ──
-
         def _schedule_config_dialog(self, icon=None, item=None):
             self._root.after(0, self._show_config_dialog)
 
         def _show_config_dialog(self):
-            log.info("설정 편집 창 열기")
-            try:
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    current = f.read()
-            except Exception:
-                log.exception("config.toml 로드 실패")
-                current = ""
-
             win = tk.Toplevel(self._root)
-            win.title("설정 (config.toml) — Ctrl+S 저장")
-            win.geometry("760x560")
-            win.minsize(600, 400)
-            win.resizable(True, True)
-            # 부모(_root)가 withdraw 상태이므로 transient는 쓰지 않는다 — 일부 환경에서 자식 창이 같이 숨겨진다
-            try:
-                win.deiconify()
-                win.lift()
-                win.attributes('-topmost', True)
-                win.after(500, lambda: win.attributes('-topmost', False))
-                win.focus_force()
-            except Exception:
-                log.exception("설정 창 표시 속성 설정 실패")
+            win.title(tr("settings_title", app=APP_NAME))
+            win.geometry("520x540")
+            win.resizable(False, False)
+            values = settings_values(self._api_key)
+            displayed_api_key = abbreviate_api_key(self._api_key)
+            form = tk.Frame(win, padx=16, pady=14)
+            form.pack(fill="both", expand=True)
+            entries = {}
+            fields = [("api_key", tr("api_key"), 0)]
+            for key, label, row in fields:
+                tk.Label(form, text=label, anchor="e").grid(
+                    row=row, column=0, sticky="e", padx=(0, 12), pady=10)
+                entry = tk.Entry(form, width=48)
+                entry.insert(0, displayed_api_key if key == "api_key" else values[key])
+                entry.grid(row=row, column=1, sticky="ew", pady=10)
+                entries[key] = entry
+            api_hint = tk.StringVar(value=tr("api_hint"))
+            api_hint_label = tk.Label(form, textvariable=api_hint, anchor="w", fg="#777777",
+                                      font=("Segoe UI", 8))
+            api_hint_label.grid(row=1, column=1, sticky="w", pady=(0, 3))
+            tk.Label(form, text=tr("model"), anchor="e").grid(
+                row=2, column=0, sticky="e", padx=(0, 12), pady=10)
+            model_var = tk.StringVar(value=values["model"])
+            model_box = ttk.Combobox(form, textvariable=model_var, width=38, state="readonly")
+            model_box["values"] = (values["model"],)
+            model_box.grid(row=2, column=1, sticky="w", pady=10)
 
-            # 버튼을 먼저 pack해서 창이 좁아져도 항상 보이게 한다
-            btn_frame = tk.Frame(win)
-            btn_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+            def _refresh_models():
+                raw_key = entries["api_key"].get().strip()
+                api_key = self._api_key if raw_key == displayed_api_key else raw_key
+                model_box.set(tr("loading"))
+                def _load():
+                    try:
+                        models = fetch_transcription_models(api_key)
+                        if not models:
+                            raise RuntimeError(tr("no_models"))
+                    except Exception as exc:
+                        def _show_error():
+                            entries["api_key"].configure(bg="#ffe4e6")
+                            api_hint.set(tr("api_key_error"))
+                            api_hint_label.configure(fg="#c62828")
+                            log.warning("API Key 모델 조회 실패: %s", exc)
+                        win.after(0, _show_error)
+                        return
+                    def _apply():
+                        model_box["values"] = models
+                        model_box.set(models[0] if model_var.get() not in models else model_var.get())
+                        _update_no_verbatim_state()
+                        entries["api_key"].configure(bg="white")
+                        api_hint.set(tr("api_hint"))
+                        api_hint_label.configure(fg="#777777")
+                    win.after(0, _apply)
+                threading.Thread(target=_load, daemon=True).start()
 
-            text_widget = scrolledtext.ScrolledText(win, width=90, height=28, font=("Consolas", 11))
-            text_widget.pack(side='top', fill='both', expand=True, padx=10, pady=(10, 0))
-            text_widget.insert('1.0', current)
+            tk.Button(form, text=tr("refresh"), command=_refresh_models).grid(
+                row=2, column=2, sticky="w", padx=(8, 0))
+            # 포커스 이동, Enter, 붙여넣기 어느 경우에도 API Key 확정 후 목록을 갱신한다.
+            entries["api_key"].bind("<FocusOut>", lambda _event: _refresh_models())
+            entries["api_key"].bind("<Return>", lambda _event: _refresh_models())
+            entries["api_key"].bind("<<Paste>>", lambda _event: win.after_idle(_refresh_models), add="+")
+            tk.Label(form, text=tr("shortcut"), anchor="e").grid(
+                row=3, column=0, sticky="e", padx=(0, 12), pady=10)
+            shortcut_items = shortcut_options()
+            shortcut_values = [value for value, _ in shortcut_items]
+            shortcut_box = ttk.Combobox(form, values=[label for _, label in shortcut_items],
+                                       width=38, state="readonly")
+            shortcut_box.current(shortcut_values.index(values["shortcut"])
+                                 if values["shortcut"] in shortcut_values else 0)
+            shortcut_box.grid(row=3, column=1, sticky="w", pady=10)
+            tk.Label(form, text=tr("speech_language"), anchor="e").grid(
+                row=4, column=0, sticky="e", padx=(0, 12), pady=10)
+            speech_items = speech_language_options()
+            if values["language"] not in [code for code, _ in speech_items]:
+                speech_items.insert(0, (values["language"], values["language"]))
+            speech_codes = [code for code, _ in speech_items]
+            speech_box = ttk.Combobox(form, values=[name for _, name in speech_items], width=38, state="readonly")
+            speech_box.current(speech_codes.index(values["language"]))
+            speech_box.grid(row=4, column=1, sticky="w", pady=10)
+            tk.Label(form, text=tr("keywords"), anchor="nw").grid(
+                row=6, column=0, sticky="ne", padx=(0, 12), pady=10)
+            keyterms = tk.Text(form, width=48, height=8)
+            keyterms.insert("1.0", values["keyterms"])
+            keyterms.grid(row=6, column=1, sticky="ew", pady=10)
+            no_verbatim = tk.BooleanVar(value=values["no_verbatim"])
+            mute = tk.BooleanVar(value=values["mute_during_recording"])
+            no_verbatim_check = tk.Checkbutton(form, text=tr("remove_fillers"), variable=no_verbatim)
+            no_verbatim_check.grid(
+                row=7, column=1, sticky="w", pady=(8, 2))
+            def _update_no_verbatim_state(_event=None):
+                is_supported = (provider_for_api_key(entries["api_key"].get().strip()) == "elevenlabs"
+                                and supports_no_verbatim(model_var.get()))
+                no_verbatim_check.configure(state="normal" if is_supported else "disabled")
+                filler_hint.configure(fg="#777777" if is_supported else "#aaaaaa")
+            model_box.bind("<<ComboboxSelected>>", _update_no_verbatim_state)
+            filler_hint = tk.Label(form, text=tr("filler_hint"), anchor="w", fg="#777777",
+                                   font=("Segoe UI", 8))
+            filler_hint.grid(row=8, column=1, sticky="w", pady=(0, 5))
+            _update_no_verbatim_state()
+            tk.Checkbutton(form, text=tr("mute_audio"), variable=mute).grid(
+                row=9, column=1, sticky="w", pady=5)
+            auto_send = tk.BooleanVar(value=values["auto_send"])
+            tk.Checkbutton(form, text=tr("auto_send"), variable=auto_send).grid(
+                row=10, column=1, sticky="w", pady=5)
+            form.columnconfigure(1, weight=1)
 
             def _save():
-                log.info("설정 다이얼로그 — 저장 클릭")
-                text = text_widget.get('1.0', 'end').strip()
-                try:
-                    tomllib.loads(text)
-                except tomllib.TOMLDecodeError as e:
-                    log.warning("TOML 파싱 오류: %s", e)
-                    tkmsgbox.showerror("TOML 오류", str(e), parent=win)
-                    return
-                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                    f.write(text)
-                log.info("config.toml 저장됨")
+                values.update({key: entry.get() for key, entry in entries.items()})
+                if values["api_key"].strip() == displayed_api_key:
+                    values["api_key"] = self._api_key
+                values["keyterms"] = keyterms.get("1.0", "end-1c")
+                values["shortcut"] = shortcut_values[shortcut_box.current()]
+                values["language"] = speech_codes[speech_box.current()]
+                provider = provider_for_api_key(values["api_key"])
+                values[f"{provider}_model"] = model_var.get() if provider else values["model"]
+                values["auto_send"] = auto_send.get()
+                values["no_verbatim"] = no_verbatim.get()
+                values["mute_during_recording"] = mute.get()
+                save_settings(values)
+                sync_ui_language(values["language"])
+                self._api_key = values["api_key"].strip()
                 self._reload_shortcut_cache()
-                tkmsgbox.showinfo("voice-stt", "설정이 저장되었습니다.", parent=win)
+                tkmsgbox.showinfo(APP_NAME, tr("saved"), parent=win)
                 win.destroy()
 
-            def _close_with_check():
-                if text_widget.get('1.0', 'end').strip() != current.strip():
-                    if not tkmsgbox.askokcancel(
-                        "변경 사항 버리기",
-                        "저장하지 않은 변경 사항이 있습니다. 정말 닫을까요?",
-                        parent=win,
-                    ):
-                        return
-                win.destroy()
-
-            save_btn = tk.Button(
-                btn_frame, text="저장 (Ctrl+S)", command=_save,
-                width=14, height=2, bg='#2d7dd2', fg='white',
-                activebackground='#225fa3', activeforeground='white',
-                font=('Segoe UI', 10, 'bold'),
-            )
-            save_btn.pack(side='right', padx=4)
-            tk.Button(
-                btn_frame, text="취소", command=_close_with_check,
-                width=10, height=2, font=('Segoe UI', 10),
-            ).pack(side='right')
-
-            win.bind('<Control-s>', lambda e: _save())
-            win.bind('<Control-S>', lambda e: _save())
-            win.protocol("WM_DELETE_WINDOW", _close_with_check)
-            text_widget.focus_set()
+            buttons = tk.Frame(form)
+            buttons.grid(row=11, column=1, sticky="e", pady=(14, 0))
+            tk.Button(buttons, text=tr("cancel"), command=win.destroy, width=10).pack(side="right", padx=4)
+            tk.Button(buttons, text=tr("save"), command=_save, width=10).pack(side="right")
+            entries["api_key"].focus_set()
 
         # ── 재실행 / 종료 ──
 
