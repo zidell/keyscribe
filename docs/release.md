@@ -6,17 +6,17 @@
 
 ### 네이티브 macOS 시험 릴리스
 
-`native-rewrite` 브랜치의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포합니다. `macos-vMAJOR.MINOR.PATCH` 태그를 해당 브랜치의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **비공개 GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.
+`main`의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포할 수도 있습니다. `macos-vMAJOR.MINOR.PATCH` 태그를 `main`의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **비공개 GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.
 
 ```bash
-git switch native-rewrite
+git switch main
 git tag macos-v0.1.2
 git push origin macos-v0.1.2
 ```
 
-같은 태그의 실행이 실패했다면 GitHub **Actions → Native macOS release → Run workflow**에서 기존 태그를 입력해 다시 실행할 수 있습니다. GitHub Secret은 아래 표의 macOS 관련 여섯 개가 필요합니다. Windows 인증서나 Cloudflare 설정은 이 흐름에 필요하지 않습니다. 이미 생성된 릴리스의 파일을 자동으로 덮어쓰지 않으므로, 게시 뒤 변경하려면 새 버전 태그를 사용합니다. 네이티브 Windows 앱과 배포 검증이 끝날 때까지 이 릴리스는 랜딩 페이지를 갱신하지 않습니다.
+같은 태그의 실행이 실패했다면 GitHub **Actions → Native macOS release → Run workflow**에서 기존 태그를 입력해 다시 실행할 수 있습니다. GitHub Secret은 아래 표의 macOS 관련 여섯 개가 필요합니다. Windows 인증서나 Cloudflare 설정은 이 흐름에 필요하지 않습니다. 이미 생성된 릴리스의 파일을 자동으로 덮어쓰지 않으므로, 게시 뒤 변경하려면 새 버전 태그를 사용합니다. 이 사전 릴리스는 랜딩 페이지를 갱신하지 않습니다.
 
-### 기존 통합 릴리스
+### 통합 네이티브 릴리스
 
 `vMAJOR.MINOR.PATCH` 태그를 올리면 [Release 워크플로](../.github/workflows/release.yml)가 다음 순서로 동작합니다.
 
@@ -94,6 +94,6 @@ GitHub **Actions → Release**에서 모든 작업을 확인합니다. 실패한
 
 완료 후 `https://keyscribe.gitools.net`에서 네 다운로드를 시험하고, 실제 macOS·Windows에서 앱을 실행해 마이크, 단축키, 붙여넣기 동작을 확인합니다. CI는 패키징·서명·업로드만 검증하며 GUI 동작은 자동 검증하지 않습니다.
 
-## 개발 중 자동 빌드
+## 개발 중 실행과 빌드
 
-README의 네이티브 빌드 환경을 설치한 뒤 `python scripts/dev.py`를 실행합니다. macOS에서는 `native/macos`, Windows에서는 `native/windows` 소스와 에셋을 감시하며 변경 시 앱을 다시 빌드해 재시작합니다. 감시 도구가 시작한 프로세스만 종료합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.
+README의 네이티브 빌드 환경을 설치한 뒤 macOS에서는 `bash scripts/install_macos_login_app.sh`로 빌드된 앱의 로그인 실행을 등록합니다. 개발 중 소스를 수정한 뒤 `bash scripts/rebuild_macos_app.sh`를 실행하면 한 번 빌드하고 앱을 다시 시작합니다. Windows에서는 `native/windows/dev.ps1`이 소스와 에셋을 감시하며 변경 시 앱을 다시 빌드해 재시작합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.

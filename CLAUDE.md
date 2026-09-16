@@ -4,15 +4,14 @@ macOS 메뉴바 앱. 단축키를 누르는 동안 마이크로 녹음하고, �
 
 ## 실행 방법
 
-- **개발 중 직접 실행**: `python3 main.py`
-- **macOS 앱 빌드**: `python3 setup.py py2app` → `dist/KeyScribe.app` 생성
+- **개발 중 수정 후 재실행**: `bash scripts/rebuild_macos_app.sh`
+- **로그인 시 앱 실행**: `bash scripts/install_macos_login_app.sh`로 한 번 설치
+- **macOS 앱 빌드**: `bash native/macos/build.sh` → `dist-native/KeyScribe.app` 생성
 
 ## 로그
 
-- 위치: `~/Library/Logs/keyscribe/keyscribe.log`
-- 자정마다 롤오버, 하루치만 보관 (backupCount=1)
-- 앱 시작/종료, 모듈 로드, 녹음/STT 흐름, 오류 전체 기록됨
-- 문제 발생 시 이 파일 먼저 확인
+- 로그인 앱 로그: `dist-native/app.log`
+- 앱 상태와 오류: 메뉴바의 KeyScribe 메뉴에서 확인
 
 ## 주의사항
 

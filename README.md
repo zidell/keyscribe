@@ -28,18 +28,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\build.ps1
 .\dist-native\KeyScribe.exe
 ```
 
-기존 Python 버전을 소스에서 실행하려면 Python 3.11 이상을 설치하고 다음 명령을 실행합니다.
+macOS에서 빌드된 앱을 로그인할 때 자동 실행하려면 한 번 등록합니다. 평소에는 앱만 실행됩니다. 개발 중 소스를 수정한 뒤에는 두 번째 명령으로 빌드하고 재실행합니다.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python main.py
+bash scripts/install_macos_login_app.sh
+bash scripts/rebuild_macos_app.sh
 ```
 
-Windows PowerShell에서는 첫 줄부터 `python -m venv .venv`로 실행하고, 활성화 명령을 `.venv\Scripts\Activate.ps1`로 바꿉니다.
-
-소스를 수정할 때마다 앱을 다시 빌드해 실행하려면 macOS에서는 `python scripts/dev.py`, Windows에서는 아래 명령을 실행합니다. 감시 도구가 시작한 앱만 재시작합니다.
+Windows에서 소스 변경을 감시하며 앱을 자동으로 다시 빌드하려면 다음 명령을 실행합니다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\dev.ps1
@@ -55,6 +51,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\dev.ps1
 
 ## 문제 확인
 
-네이티브 앱의 현재 상태와 오류는 메뉴바 또는 트레이 메뉴에서 확인할 수 있습니다. 기존 Python 앱의 로그는 macOS의 `~/Library/Logs/keyscribe/keyscribe.log`, Windows의 `%APPDATA%\keyscribe\Logs\keyscribe.log`에 저장됩니다.
+네이티브 앱의 현재 상태와 오류는 메뉴바 또는 트레이 메뉴에서 확인할 수 있습니다. macOS 로그인 앱 로그는 `dist-native/app.log`에 저장됩니다.
 
 릴리스 빌드, 서명, 다운로드 페이지 설정은 [배포 문서](docs/release.md)를 참고하세요.
