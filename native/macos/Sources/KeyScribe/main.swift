@@ -281,73 +281,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
 
     @objc private func showSettings(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "KeyScribe 설정"
-        alert.informativeText = "API 키는 컴퓨터의 사용자 설정에 저장됩니다."
-        alert.addButton(withTitle: "저장")
-        alert.addButton(withTitle: "취소")
-        let width: CGFloat = 400
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 398))
-        func label(_ title: String, _ y: CGFloat) {
-            let field = NSTextField(labelWithString: title)
-            field.frame = NSRect(x: 0, y: y, width: 110, height: 24)
-            form.addSubview(field)
-        }
-        func field(_ value: String, _ y: CGFloat) -> NSTextField {
-            let input = NSTextField(frame: NSRect(x: 115, y: y, width: 280, height: 24))
-            input.stringValue = value
-            form.addSubview(input)
-            return input
-        }
-        label("API 키", 366)
-        let apiKey = NSSecureTextField(frame: NSRect(x: 115, y: 366, width: 280, height: 24))
-        apiKey.stringValue = settings.apiKey
-        form.addSubview(apiKey)
-        label("OpenAI 모델", 332)
-        let openAIModel = field(settings.openAIModel, 332)
-        label("ElevenLabs 모델", 298)
-        let elevenLabsModel = field(settings.elevenLabsModel, 298)
-        label("단축키", 264)
-        let shortcuts = ["right_option", "left_option", "right_ctrl", "left_ctrl", "right_shift", "left_shift", "right_cmd", "left_cmd", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"]
-        let shortcut = NSPopUpButton(frame: NSRect(x: 115, y: 264, width: 280, height: 26), pullsDown: false)
-        shortcut.addItems(withTitles: shortcuts)
-        shortcut.selectItem(withTitle: settings.shortcut)
-        form.addSubview(shortcut)
-        label("녹음 방식", 230)
-        let control = NSPopUpButton(frame: NSRect(x: 115, y: 230, width: 280, height: 26), pullsDown: false)
-        control.addItems(withTitles: ["hold", "toggle"])
-        control.selectItem(withTitle: settings.recordingControl)
-        form.addSubview(control)
-        label("언어", 196)
-        let language = field(settings.language, 196)
-        label("고유명사", 162)
-        let keyterms = field(settings.keyterms.joined(separator: ", "), 162)
-        let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거", target: nil, action: nil)
-        noVerbatim.frame = NSRect(x: 115, y: 126, width: 280, height: 25)
-        noVerbatim.state = settings.noVerbatim ? .on : .off
-        form.addSubview(noVerbatim)
-        let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
-        mute.frame = NSRect(x: 115, y: 94, width: 280, height: 25)
-        mute.state = settings.muteDuringRecording ? .on : .off
-        form.addSubview(mute)
-        let autoSend = NSButton(checkboxWithTitle: "붙여넣은 뒤 Enter 입력", target: nil, action: nil)
-        autoSend.frame = NSRect(x: 115, y: 62, width: 280, height: 25)
-        autoSend.state = settings.autoSend ? .on : .off
-        form.addSubview(autoSend)
-        alert.accessoryView = form
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        var updated = settings
-        updated.apiKey = apiKey.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.shortcut = shortcut.titleOfSelectedItem ?? "right_option"
-        updated.recordingControl = control.titleOfSelectedItem ?? "hold"
-        updated.language = language.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.openAIModel = openAIModel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.elevenLabsModel = elevenLabsModel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.keyterms = keyterms.stringValue.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        updated.noVerbatim = noVerbatim.state == .on
-        updated.muteDuringRecording = mute.state == .on
-        updated.autoSend = autoSend.state == .on
+        let dialog = SettingsDialog(settings: settings)
+        guard let updated = dialog.present() else { return }
         do {
             try updated.save()
             settings = updated
