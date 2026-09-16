@@ -28,7 +28,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\build.ps1
 .\dist-native\KeyScribe.exe
 ```
 
-macOS에서 빌드된 앱을 로그인할 때 자동 실행하려면 한 번 등록합니다. 평소에는 앱만 실행됩니다. 개발 중 소스를 수정한 뒤에는 두 번째 명령으로 빌드하고 재실행합니다.
+macOS에서 빌드된 앱을 로그인할 때 자동 실행하고, 소스 변경 시에만 빌드·재실행하려면 첫 번째 명령을 한 번 실행합니다. 두 번째 명령은 수동으로 다시 빌드할 때 사용합니다.
 
 ```bash
 bash scripts/install_macos_login_app.sh
@@ -51,6 +51,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\dev.ps1
 
 ## 문제 확인
 
-네이티브 앱의 현재 상태와 오류는 메뉴바 또는 트레이 메뉴에서 확인할 수 있습니다. macOS 로그인 앱 로그는 `dist-native/app.log`에 저장됩니다.
+네이티브 앱의 현재 상태와 오류는 메뉴바 또는 트레이 메뉴에서 확인할 수 있습니다. macOS 로그인 앱과 자동 빌드 로그는 각각 `dist-native/app.log`, `dist-native/watch.log`에 저장됩니다.
 
 릴리스 빌드, 서명, 다운로드 페이지 설정은 [배포 문서](docs/release.md)를 참고하세요.

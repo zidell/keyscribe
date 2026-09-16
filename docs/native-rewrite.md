@@ -10,7 +10,7 @@ macOS Swift/AppKit 실행 파일의 첫 릴리스 빌드는 `bash native/macos/b
 
 설정창은 API 키의 제공자에 맞는 전사 모델 선택과 새로고침, 전사 언어·단축키 선택, 여러 줄 고유명사 입력을 제공한다. `군더더기 말 제거`는 ElevenLabs의 `scribe_v2` 또는 `scribe_v2_medical` 선택 시에만 활성화된다. 실제 계정에서 모델 목록을 불러오는 동작은 아직 수동 확인이 필요하다.
 
-`KEYSCRIBE_CODESIGN_IDENTITY='Developer ID Application: heunghyun lee (AF68GKBM82)' bash native/macos/build.sh`로 로컬 앱을 같은 개발자 ID로 서명할 수 있다. `bash scripts/install_macos_login_app.sh`는 빌드된 앱을 로그인 시 직접 실행하도록 등록한다. 개발 중 수정한 뒤 `bash scripts/rebuild_macos_app.sh`를 실행하면 앱을 다시 빌드하고 재실행한다.
+`KEYSCRIBE_CODESIGN_IDENTITY='Developer ID Application: heunghyun lee (AF68GKBM82)' bash native/macos/build.sh`로 로컬 앱을 같은 개발자 ID로 서명할 수 있다. `bash scripts/install_macos_login_app.sh`는 빌드된 앱을 로그인 시 직접 실행하고 소스 변경 시 자동으로 빌드·재실행하도록 등록한다. `bash scripts/rebuild_macos_app.sh`로 수동 재빌드할 수도 있다.
 
 ## 완료 전 검증 항목
 

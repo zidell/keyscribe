@@ -96,4 +96,4 @@ GitHub **Actions → Release**에서 모든 작업을 확인합니다. 실패한
 
 ## 개발 중 실행과 빌드
 
-README의 네이티브 빌드 환경을 설치한 뒤 macOS에서는 `bash scripts/install_macos_login_app.sh`로 빌드된 앱의 로그인 실행을 등록합니다. 개발 중 소스를 수정한 뒤 `bash scripts/rebuild_macos_app.sh`를 실행하면 한 번 빌드하고 앱을 다시 시작합니다. Windows에서는 `native/windows/dev.ps1`이 소스와 에셋을 감시하며 변경 시 앱을 다시 빌드해 재시작합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.
+README의 네이티브 빌드 환경을 설치한 뒤 macOS에서는 `bash scripts/install_macos_login_app.sh`로 빌드된 앱의 로그인 실행과 소스 변경 자동 빌드를 등록합니다. 앱은 직접 실행되며, 별도의 `launchd` 작업이 소스 변경 시에만 빌드하고 재시작합니다. `bash scripts/rebuild_macos_app.sh`로 수동 재빌드할 수도 있습니다. Windows에서는 `native/windows/dev.ps1`이 소스와 에셋을 감시하며 변경 시 앱을 다시 빌드해 재시작합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.

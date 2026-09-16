@@ -4,13 +4,13 @@ macOS 메뉴바 앱. 단축키를 누르는 동안 마이크로 녹음하고, �
 
 ## 실행 방법
 
-- **개발 중 수정 후 재실행**: `bash scripts/rebuild_macos_app.sh`
-- **로그인 시 앱 실행**: `bash scripts/install_macos_login_app.sh`로 한 번 설치
+- **로그인 시 앱 실행과 소스 자동 빌드**: `bash scripts/install_macos_login_app.sh`로 한 번 설치
+- **수동 재빌드**: `bash scripts/rebuild_macos_app.sh`
 - **macOS 앱 빌드**: `bash native/macos/build.sh` → `dist-native/KeyScribe.app` 생성
 
 ## 로그
 
-- 로그인 앱 로그: `dist-native/app.log`
+- 로그인 앱 및 자동 빌드 로그: `dist-native/app.log`, `dist-native/watch.log`
 - 앱 상태와 오류: 메뉴바의 KeyScribe 메뉴에서 확인
 
 ## 주의사항

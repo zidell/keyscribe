@@ -49,6 +49,7 @@ launchctl bootout "$domain/$label" 2>/dev/null || true
 for ((attempt = 0; attempt < 5; attempt++)); do
     if launchctl bootstrap "$domain" "$agent" 2>/dev/null; then
         echo "로그인 시 네이티브 앱 실행을 설치했습니다: $agent"
+        bash "$project_root/scripts/install_macos_source_watch.sh"
         exit 0
     fi
     sleep 0.5

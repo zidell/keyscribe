@@ -7,6 +7,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
+source_before="$(bash "$project_root/scripts/macos_source_hash.sh")"
 identity='Developer ID Application: heunghyun lee (AF68GKBM82)'
 if [[ -z "${KEYSCRIBE_CODESIGN_IDENTITY:-}" ]] &&
     security find-identity -v -p codesigning | grep -Fq "$identity"; then
@@ -20,5 +21,8 @@ if launchctl print "$service" >/dev/null 2>&1; then
     launchctl kickstart -k "$service"
 else
     bash "$project_root/scripts/install_macos_login_app.sh"
+fi
+if [[ "$source_before" == "$(bash "$project_root/scripts/macos_source_hash.sh")" ]]; then
+    printf '%s\n' "$source_before" > "$project_root/dist-native/source.sha"
 fi
 echo '네이티브 앱을 빌드하고 다시 실행했습니다.'
