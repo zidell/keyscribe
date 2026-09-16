@@ -18,4 +18,11 @@ if [[ -n "${KEYSCRIBE_VERSION:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $KEYSCRIBE_VERSION" "$output/Contents/Info.plist"
 fi
 
+if [[ -n "${KEYSCRIBE_CODESIGN_IDENTITY:-}" ]]; then
+    codesign --force --options runtime \
+        --entitlements "$project_root/packaging/macos-entitlements.plist" \
+        --sign "$KEYSCRIBE_CODESIGN_IDENTITY" "$output"
+    codesign --verify --deep --strict "$output"
+fi
+
 echo "$output"

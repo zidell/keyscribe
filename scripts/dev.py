@@ -7,14 +7,21 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WATCH_FILES = ("main.py", "i18n.py", "setup.py", "requirements.txt", "config.toml.example")
-WATCH_DIRS = ("assets",)
+if sys.platform == "darwin":
+    WATCH_FILES = ("config.toml.example", "packaging/macos-entitlements.plist")
+    WATCH_DIRS = ("assets", "native/macos")
+else:
+    WATCH_FILES = ("main.py", "i18n.py", "setup.py", "requirements.txt", "config.toml.example")
+    WATCH_DIRS = ("assets",)
 
 
 def snapshot() -> dict[str, tuple[int, int]]:
     paths = [ROOT / name for name in WATCH_FILES]
     for directory in WATCH_DIRS:
-        paths.extend(path for path in (ROOT / directory).rglob("*") if path.is_file())
+        paths.extend(
+            path for path in (ROOT / directory).rglob("*")
+            if path.is_file() and ".build" not in path.parts
+        )
     return {
         str(path.relative_to(ROOT)): (path.stat().st_mtime_ns, path.stat().st_size)
         for path in paths if path.is_file()
@@ -23,8 +30,8 @@ def snapshot() -> dict[str, tuple[int, int]]:
 
 def build_command() -> tuple[list[str], Path]:
     if sys.platform == "darwin":
-        return ([sys.executable, "setup.py", "py2app", "--dist-dir", "dist-dev"],
-                ROOT / "dist-dev" / "KeyScribe.app" / "Contents" / "MacOS" / "KeyScribe")
+        return (["bash", "native/macos/build.sh"],
+                ROOT / "dist-native" / "KeyScribe.app" / "Contents" / "MacOS" / "KeyScribe")
     if sys.platform == "win32":
         return ([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                  "--windowed", "--name", "KeyScribe", "--distpath", "dist-dev",
