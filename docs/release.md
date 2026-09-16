@@ -4,6 +4,20 @@
 
 ## 배포 구조
 
+### 네이티브 macOS 시험 릴리스
+
+`native-rewrite` 브랜치의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포합니다. `macos-vMAJOR.MINOR.PATCH` 태그를 해당 브랜치의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **비공개 GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.
+
+```bash
+git switch native-rewrite
+git tag macos-v0.1.0
+git push origin macos-v0.1.0
+```
+
+같은 태그의 실행이 실패했다면 GitHub **Actions → Native macOS release → Run workflow**에서 기존 태그를 입력해 다시 실행할 수 있습니다. GitHub Secret은 아래 표의 macOS 관련 여섯 개가 필요합니다. Windows 인증서나 Cloudflare 설정은 이 흐름에 필요하지 않습니다. 이미 생성된 릴리스의 파일을 자동으로 덮어쓰지 않으므로, 게시 뒤 변경하려면 새 버전 태그를 사용합니다. 네이티브 Windows 앱과 배포 검증이 끝날 때까지 이 릴리스는 랜딩 페이지를 갱신하지 않습니다.
+
+### 기존 통합 릴리스
+
 `vMAJOR.MINOR.PATCH` 태그를 올리면 [Release 워크플로](../.github/workflows/release.yml)가 다음 순서로 동작합니다.
 
 1. macOS Apple Silicon·Intel 앱을 빌드하고 Developer ID로 서명·공증한 DMG 두 개를 만듭니다.

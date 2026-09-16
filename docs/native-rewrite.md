@@ -1,6 +1,6 @@
 # 네이티브 전환 작업
 
-작업 브랜치: `native-rewrite`. 기존 Python 릴리스는 `main`에 유지한다. 현재 코드는 배포 대상이 아니다.
+작업 브랜치: `native-rewrite`. 기존 Python 통합 릴리스는 `main`에 유지한다. macOS 네이티브 앱은 별도 사전 릴리스로 배포하며 랜딩 페이지에는 아직 연결하지 않는다.
 
 ## 목표와 현재 상태
 
@@ -19,4 +19,4 @@ macOS Swift/AppKit 실행 파일의 첫 릴리스 빌드는 `bash native/macos/b
 - Windows 네이티브 앱과 MSIX/EXE 빌드 및 서명 경로를 구현하고 실제 Windows에서 확인한다.
 - 두 플랫폼의 대기 중 RSS를 동일한 조건에서 측정한다. 기능을 검증한 뒤 릴리스 워크플로, 개발 모드, README를 네이티브 빌드로 전환한다.
 
-현재 `main`의 릴리스 워크플로는 Python 앱을 빌드한다. 이 문서의 Swift 빌드는 로컬 개발용이다.
+`macos-vMAJOR.MINOR.PATCH` 태그는 [네이티브 macOS 워크플로](../.github/workflows/native-macos-release.yml)를 실행해 공증된 Apple Silicon·Intel DMG를 비공개 GitHub 사전 릴리스에 올린다. 기존 `v*` 태그의 Python 통합 릴리스와 구분한다. 자세한 절차는 [배포 문서](release.md)에 있다.

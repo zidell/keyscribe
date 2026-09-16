@@ -81,6 +81,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "설정 폴더 열기", action: #selector(openSettingsFolder(_:)), keyEquivalent: ""))
         menu.addItem(.separator())
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 버전"
+        let versionItem = NSMenuItem(title: "버전 \(version)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
         menu.addItem(NSMenuItem(title: "종료", action: #selector(quit(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil { item.target = self }
         statusItem.menu = menu

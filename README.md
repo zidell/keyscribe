@@ -14,7 +14,14 @@ KeyScribe는 macOS 메뉴바와 Windows 트레이에서 실행되는 음성 받�
 
 Windows에서는 설치 없이 실행하는 서명된 `.exe`도 다운로드할 수 있습니다.
 
-소스에서 직접 실행하려면 Python 3.11 이상을 설치하고 다음 명령을 실행합니다.
+macOS 네이티브 개발 버전은 Swift가 설치된 Mac에서 아래처럼 빌드하고 실행할 수 있습니다.
+
+```bash
+bash native/macos/build.sh
+open dist-native/KeyScribe.app
+```
+
+기존 Python 버전을 소스에서 실행하려면 Python 3.11 이상을 설치하고 다음 명령을 실행합니다.
 
 ```bash
 python3 -m venv .venv
@@ -25,7 +32,7 @@ python main.py
 
 Windows PowerShell에서는 첫 줄부터 `python -m venv .venv`로 실행하고, 활성화 명령을 `.venv\Scripts\Activate.ps1`로 바꿉니다.
 
-소스를 수정할 때마다 앱을 다시 빌드해 실행하려면 macOS에서 `python -m pip install py2app`, Windows에서 `python -m pip install pyinstaller`를 추가로 실행한 뒤 `python scripts/dev.py`를 실행합니다. 빌드가 끝나면 감시 도구가 시작한 앱을 자동으로 재시작합니다.
+소스를 수정할 때마다 앱을 다시 빌드해 실행하려면 `python scripts/dev.py`를 실행합니다. macOS에서는 Swift 네이티브 앱을, Windows에서는 기존 Python 앱을 빌드하고 감시 도구가 시작한 앱을 자동으로 재시작합니다. Windows 개발 빌드에는 `pyinstaller`가 필요합니다.
 
 ## 처음 사용할 때
 
