@@ -10,8 +10,8 @@
 
 ```bash
 git switch native-rewrite
-git tag macos-v0.1.0
-git push origin macos-v0.1.0
+git tag macos-v0.1.2
+git push origin macos-v0.1.2
 ```
 
 같은 태그의 실행이 실패했다면 GitHub **Actions → Native macOS release → Run workflow**에서 기존 태그를 입력해 다시 실행할 수 있습니다. GitHub Secret은 아래 표의 macOS 관련 여섯 개가 필요합니다. Windows 인증서나 Cloudflare 설정은 이 흐름에 필요하지 않습니다. 이미 생성된 릴리스의 파일을 자동으로 덮어쓰지 않으므로, 게시 뒤 변경하려면 새 버전 태그를 사용합니다. 네이티브 Windows 앱과 배포 검증이 끝날 때까지 이 릴리스는 랜딩 페이지를 갱신하지 않습니다.
