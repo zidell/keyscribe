@@ -1,14 +1,21 @@
-use image::{ImageFormat, ImageReader};
+use image::{imageops, ImageFormat, ImageReader};
 use std::{env, path::PathBuf};
 
 fn main() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/keyscribe-menu.png");
     println!("cargo:rerun-if-changed={}", source.display());
-    let mut icon = ImageReader::open(&source)
+    let source_icon = ImageReader::open(&source)
         .expect("open KeyScribe icon")
         .decode()
         .expect("decode KeyScribe icon")
         .to_rgba8();
+    // The macOS menu asset has padding; fill the smaller Windows notification slot.
+    let mut icon = imageops::resize(
+        &imageops::crop_imm(&source_icon, 5, 5, 54, 54).to_image(),
+        64,
+        64,
+        imageops::FilterType::Lanczos3,
+    );
     for pixel in icon.pixels_mut() {
         pixel.0[0] = 14;
         pixel.0[1] = 165;
