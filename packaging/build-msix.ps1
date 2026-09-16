@@ -21,16 +21,13 @@ $appDirectory = Join-Path $stage 'App\KeyScribe'
 $assetsDirectory = Join-Path $stage 'Assets'
 $output = Join-Path $root "dist\KeyScribe-windows-x64-$Version.msix"
 
-if (-not (Test-Path 'dist\KeyScribe\KeyScribe.exe')) {
-    throw 'Build dist\KeyScribe with PyInstaller first.'
-}
 if (-not (Test-Path $ExecutablePath)) {
     throw "Portable executable not found: $ExecutablePath"
 }
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item $appDirectory -ItemType Directory -Force | Out-Null
 New-Item $assetsDirectory -ItemType Directory -Force | Out-Null
-Copy-Item 'dist\KeyScribe\*' $appDirectory -Recurse -Force
+Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $appDirectory 'KeyScribe.exe')
 python packaging/create-msix-assets.py $assetsDirectory
 
 $manifest = @"

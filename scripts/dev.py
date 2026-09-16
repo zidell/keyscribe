@@ -11,8 +11,8 @@ if sys.platform == "darwin":
     WATCH_FILES = ("config.toml.example", "packaging/macos-entitlements.plist")
     WATCH_DIRS = ("assets", "native/macos")
 else:
-    WATCH_FILES = ("main.py", "i18n.py", "setup.py", "requirements.txt", "config.toml.example")
-    WATCH_DIRS = ("assets",)
+    WATCH_FILES = ("config.toml.example",)
+    WATCH_DIRS = ("assets", "native/windows")
 
 
 def snapshot() -> dict[str, tuple[int, int]]:
@@ -20,7 +20,7 @@ def snapshot() -> dict[str, tuple[int, int]]:
     for directory in WATCH_DIRS:
         paths.extend(
             path for path in (ROOT / directory).rglob("*")
-            if path.is_file() and ".build" not in path.parts
+            if path.is_file() and not {".build", "target"}.intersection(path.parts)
         )
     return {
         str(path.relative_to(ROOT)): (path.stat().st_mtime_ns, path.stat().st_size)
@@ -33,14 +33,9 @@ def build_command() -> tuple[list[str], Path]:
         return (["bash", "native/macos/build.sh"],
                 ROOT / "dist-native" / "KeyScribe.app" / "Contents" / "MacOS" / "KeyScribe")
     if sys.platform == "win32":
-        return ([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-                 "--windowed", "--name", "KeyScribe", "--distpath", "dist-dev",
-                 "--workpath", "build/dev-pyinstaller", "--specpath", "build/dev-spec",
-                 "--add-data", "config.toml.example;.",
-                 "--collect-all", "sounddevice", "--collect-all", "_sounddevice_data",
-                 "--collect-all", "soundfile", "--collect-all", "_soundfile_data",
-                 "main.py"],
-                ROOT / "dist-dev" / "KeyScribe" / "KeyScribe.exe")
+        return (["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", "native/windows/build.ps1"],
+                ROOT / "dist-native" / "KeyScribe.exe")
     raise SystemExit("개발 빌드는 macOS와 Windows에서만 지원합니다.")
 
 

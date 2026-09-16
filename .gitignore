@@ -16,3 +16,4 @@ config.toml
 *.pfx
 *.keychain-db
 native/macos/.build/
+native/windows/target/

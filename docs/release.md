@@ -96,4 +96,4 @@ GitHub **Actions → Release**에서 모든 작업을 확인합니다. 실패한
 
 ## 개발 중 자동 빌드
 
-README의 개발 환경을 설치한 뒤 macOS에서는 `py2app`, Windows에서는 `pyinstaller`를 추가로 설치하고 `python scripts/dev.py`를 실행합니다. 이 도구는 `main.py`, `i18n.py`, `setup.py`, 설정 템플릿과 에셋을 감시하며 변경 시 개발용 앱을 다시 빌드해 재시작합니다. 감시 도구가 시작한 프로세스만 종료합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.
+README의 네이티브 빌드 환경을 설치한 뒤 `python scripts/dev.py`를 실행합니다. macOS에서는 `native/macos`, Windows에서는 `native/windows` 소스와 에셋을 감시하며 변경 시 앱을 다시 빌드해 재시작합니다. 감시 도구가 시작한 프로세스만 종료합니다. 개발 빌드와 배포용 서명·공증은 별개입니다.
