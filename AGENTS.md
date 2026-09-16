@@ -2,6 +2,8 @@
 
 - 이 소스 저장소 `zidell/keyscribe`는 비공개로 유지한다. 사용자의 명시적인 요청 없이 공개로 전환하지 않는다.
 - Homebrew 배포는 진행하지 않는다.
+- 추후 Homebrew 배포를 결정하면 현실적인 자체 배포 방식은 이 저장소를 공개해 tap으로 쓰거나, 소스 저장소는 비공개로 두고 별도 공개 tap을 만드는 것이다. 두 경우 모두 DMG의 공개 다운로드 URL이 필요하다. DMG를 정적 페이지에 올리는 것만으로 Homebrew에 등록되지는 않는다.
+- 공식 `homebrew/cask` 등록은 자체 tap과 다른 절차다. 공개 DMG URL과 cask 정의를 제출해 심사를 받아야 하며, 신생 앱은 공개적으로 확인할 수 있는 사용 실적이 실질적인 진입 조건이다. 저장소를 공개하는 것만으로 공식 등록을 보장하지 않는다.
 - 릴리스 태그(`vMAJOR.MINOR.PATCH`)에서 macOS Apple Silicon/Intel DMG와 Windows x64 MSIX 및 실행 파일을 자동 빌드한다.
 - 배포용 macOS 앱은 Developer ID Application 인증서로 서명하고 Apple 공증을 거친다. 로컬 키체인에는 `Developer ID Application: heunghyun lee (AF68GKBM82)`가 확인되었다. 개인키, 암호, API 키는 문서나 저장소에 넣지 않는다.
 - Windows 배포 파일은 신뢰할 수 있는 코드 서명 인증서로 서명한다. 자체 서명이나 임의 기본 인증서만으로 일반 사용자의 설치 경고를 없앨 수 있다고 안내하지 않는다.
