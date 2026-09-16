@@ -5,8 +5,9 @@ use crate::{
     transcriber,
 };
 use std::{
+    collections::HashMap,
     mem, ptr,
-    sync::atomic::{AtomicIsize, AtomicU16, AtomicU64, Ordering},
+    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -44,6 +45,40 @@ const SHORTCUTS: [(&str, &str, u16); 6] = [
 static ROOT: AtomicIsize = AtomicIsize::new(0);
 static TARGET_KEY: AtomicU16 = AtomicU16::new(VK_RMENU);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+
+unsafe fn tray_icon() -> (HICON, bool) {
+    let png = include_bytes!(concat!(env!("OUT_DIR"), "/keyscribe-tray.png"));
+    let custom = CreateIconFromResourceEx(
+        png.as_ptr(),
+        png.len() as u32,
+        1,
+        0x0003_0000,
+        32,
+        32,
+        LR_DEFAULTCOLOR,
+    );
+    if custom.is_null() {
+        (LoadIconW(ptr::null_mut(), IDI_APPLICATION), false)
+    } else {
+        (custom, true)
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn custom_icon_loads() {
+        unsafe {
+            let (icon, owned) = tray_icon();
+            assert!(!icon.is_null());
+            assert!(owned, "Windows did not decode the KeyScribe PNG icon");
+            DestroyIcon(icon);
+        }
+    }
+}
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -74,10 +109,12 @@ fn language_options(selected: &str) -> Vec<(String, String)> {
 
 struct App {
     tray: NOTIFYICONDATAW,
+    owned_icon: bool,
     hook: HHOOK,
     overlay: HWND,
     overlay_expires: Option<Instant>,
     settings: Settings,
+    model_cache: HashMap<String, Vec<String>>,
     dialog: HWND,
     recording: Option<Recording>,
     mute_before: Option<bool>,
@@ -98,6 +135,7 @@ struct Dialog {
     openai_model: String,
     elevenlabs_model: String,
     request_id: u64,
+    pending_key: Option<String>,
     language: HWND,
     language_codes: Vec<String>,
     shortcut: HWND,
@@ -128,7 +166,11 @@ pub fn run() -> Result<(), String> {
         }
         let root_class = wide("KeyScribeNativeRoot");
         let settings_class = wide("KeyScribeNativeSettings");
-        let icon = LoadIconW(ptr::null_mut(), IDI_APPLICATION);
+        let (icon, owned_icon) = tray_icon();
+        TASKBAR_CREATED.store(
+            RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
+            Ordering::Relaxed,
+        );
         let root_definition = WNDCLASSW {
             style: 0,
             lpfnWndProc: Some(root_proc),
@@ -183,10 +225,12 @@ pub fn run() -> Result<(), String> {
         let overlay = overlay::create(instance, hwnd);
         let state = Box::new(App {
             tray,
+            owned_icon,
             hook: ptr::null_mut(),
             overlay,
             overlay_expires: None,
             settings,
+            model_cache: HashMap::new(),
             dialog: ptr::null_mut(),
             recording: None,
             mute_before: None,
@@ -280,6 +324,10 @@ unsafe extern "system" fn root_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
+        event if event == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+            Shell_NotifyIconW(NIM_ADD, &app(hwnd).tray);
+            0
+        }
         TRAY_MESSAGE => {
             match lparam as u32 {
                 WM_RBUTTONUP | WM_CONTEXTMENU => tray_menu(hwnd),
@@ -319,54 +367,24 @@ unsafe extern "system" fn root_proc(
         }
         MODELS_MESSAGE => {
             let result = Box::from_raw(lparam as *mut ModelsMessage);
+            if let Ok(models) = &result.result {
+                if !models.is_empty() {
+                    app(hwnd)
+                        .model_cache
+                        .insert(result.key.clone(), models.clone());
+                }
+            }
             let dialog = app(hwnd).dialog;
             if !dialog.is_null() {
                 let controls = dialog_state(dialog);
                 if result.request_id == controls.request_id
                     && text(controls.api_key).trim() == result.key
                 {
+                    controls.pending_key = None;
                     EnableWindow(controls.refresh, 1);
                     match result.result {
                         Ok(models) if !models.is_empty() => {
-                            let previous = selected_model(controls.model);
-                            SendMessageW(controls.model, CB_RESETCONTENT, 0, 0);
-                            if result.preserve
-                                && !previous.is_empty()
-                                && !models.contains(&previous)
-                            {
-                                SendMessageW(
-                                    controls.model,
-                                    CB_ADDSTRING,
-                                    0,
-                                    wide(&previous).as_ptr() as isize,
-                                );
-                            }
-                            for name in &models {
-                                SendMessageW(
-                                    controls.model,
-                                    CB_ADDSTRING,
-                                    0,
-                                    wide(name).as_ptr() as isize,
-                                );
-                            }
-                            let selected = if !previous.is_empty()
-                                && (result.preserve || models.contains(&previous))
-                            {
-                                SendMessageW(
-                                    controls.model,
-                                    CB_FINDSTRINGEXACT,
-                                    usize::MAX,
-                                    wide(&previous).as_ptr() as isize,
-                                )
-                            } else {
-                                0
-                            };
-                            SendMessageW(controls.model, CB_SETCURSEL, selected.max(0) as usize, 0);
-                            SetWindowTextW(
-                                controls.model_hint,
-                                wide(&format!("전사 모델 {}개", models.len())).as_ptr(),
-                            );
-                            model_changed(dialog);
+                            display_models(dialog, &models, result.preserve)
                         }
                         Ok(_) => {
                             SetWindowTextW(
@@ -383,18 +401,7 @@ unsafe extern "system" fn root_proc(
             0
         }
         WM_COMMAND => {
-            match loword(wparam) {
-                ID_SETTINGS => show_settings(hwnd),
-                ID_FOLDER => {
-                    let _ = std::process::Command::new("explorer.exe")
-                        .arg(settings::directory())
-                        .spawn();
-                }
-                ID_EXIT => {
-                    DestroyWindow(hwnd);
-                }
-                _ => {}
-            }
+            tray_command(hwnd, loword(wparam));
             0
         }
         WM_TIMER => {
@@ -414,6 +421,9 @@ unsafe extern "system" fn root_proc(
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             ROOT.store(0, Ordering::SeqCst);
             Shell_NotifyIconW(NIM_DELETE, &owned.tray);
+            if owned.owned_icon {
+                DestroyIcon(owned.tray.hIcon);
+            }
             if !owned.hook.is_null() {
                 UnhookWindowsHookEx(owned.hook);
             }
@@ -465,9 +475,9 @@ unsafe fn tray_menu(hwnd: HWND) {
     let mut point: POINT = mem::zeroed();
     GetCursorPos(&mut point);
     SetForegroundWindow(hwnd);
-    TrackPopupMenu(
+    let selected = TrackPopupMenu(
         menu,
-        TPM_RIGHTBUTTON,
+        TPM_RIGHTBUTTON | TPM_RETURNCMD,
         point.x,
         point.y,
         0,
@@ -475,6 +485,25 @@ unsafe fn tray_menu(hwnd: HWND) {
         ptr::null(),
     );
     DestroyMenu(menu);
+    PostMessageW(hwnd, WM_NULL, 0, 0);
+    if selected != 0 {
+        tray_command(hwnd, selected as usize);
+    }
+}
+
+unsafe fn tray_command(hwnd: HWND, command: usize) {
+    match command {
+        ID_SETTINGS => show_settings(hwnd),
+        ID_FOLDER => {
+            let _ = std::process::Command::new("explorer.exe")
+                .arg(settings::directory())
+                .spawn();
+        }
+        ID_EXIT => {
+            DestroyWindow(hwnd);
+        }
+        _ => {}
+    }
 }
 
 unsafe fn write_wide<const N: usize>(buffer: &mut [u16; N], text: &str) {
@@ -957,6 +986,7 @@ unsafe fn show_settings(root: HWND) {
         openai_model: settings.openai_model,
         elevenlabs_model: settings.elevenlabs_model,
         request_id: 0,
+        pending_key: None,
         language,
         language_codes,
         shortcut,
@@ -969,7 +999,7 @@ unsafe fn show_settings(root: HWND) {
     SetWindowLongPtrW(dialog, GWLP_USERDATA, Box::into_raw(state) as isize);
     app(root).dialog = dialog;
     update_provider(dialog);
-    refresh_models(dialog, true);
+    cached_or_refresh_models(dialog);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
     SetForegroundWindow(dialog);
@@ -1047,6 +1077,65 @@ unsafe fn selected_model(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buffer[..length as usize])
 }
 
+unsafe fn display_models(hwnd: HWND, models: &[String], preserve: bool) {
+    let controls = dialog_state(hwnd);
+    let previous = selected_model(controls.model);
+    SendMessageW(controls.model, CB_RESETCONTENT, 0, 0);
+    if preserve && !previous.is_empty() && !models.contains(&previous) {
+        SendMessageW(
+            controls.model,
+            CB_ADDSTRING,
+            0,
+            wide(&previous).as_ptr() as isize,
+        );
+    }
+    for name in models {
+        SendMessageW(
+            controls.model,
+            CB_ADDSTRING,
+            0,
+            wide(name).as_ptr() as isize,
+        );
+    }
+    let selected = if !previous.is_empty() && (preserve || models.contains(&previous)) {
+        SendMessageW(
+            controls.model,
+            CB_FINDSTRINGEXACT,
+            usize::MAX,
+            wide(&previous).as_ptr() as isize,
+        )
+    } else {
+        0
+    };
+    SendMessageW(controls.model, CB_SETCURSEL, selected.max(0) as usize, 0);
+    SetWindowTextW(
+        controls.model_hint,
+        wide(&format!("전사 모델 {}개", models.len())).as_ptr(),
+    );
+    model_changed(hwnd);
+}
+
+unsafe fn cached_or_refresh_models(hwnd: HWND) {
+    update_provider(hwnd);
+    let controls = dialog_state(hwnd);
+    let key = text(controls.api_key).trim().to_owned();
+    if provider(&key).is_none() {
+        SetWindowTextW(
+            controls.model_hint,
+            wide("OpenAI(sk-) 또는 ElevenLabs(sk_) API 키를 입력해 주세요.").as_ptr(),
+        );
+        return;
+    }
+    let cached = app(controls.root).model_cache.get(&key).cloned();
+    if let Some(models) = cached {
+        controls.pending_key = None;
+        EnableWindow(controls.refresh, 1);
+        display_models(hwnd, &models, true);
+    } else if controls.pending_key.as_deref() != Some(key.as_str()) {
+        refresh_models(hwnd, true);
+    }
+}
+
 unsafe fn update_no_verbatim(dialog: HWND) {
     let state = dialog_state(dialog);
     let model = selected_model(state.model);
@@ -1120,6 +1209,7 @@ unsafe extern "system" fn dialog_proc(
                 ID_REFRESH => refresh_models(hwnd, false),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+                    dialog_state(hwnd).pending_key = None;
                     update_provider(hwnd);
                     SetWindowTextW(
                         dialog_state(hwnd).model_hint,
@@ -1128,7 +1218,9 @@ unsafe extern "system" fn dialog_proc(
                     KillTimer(hwnd, 2);
                     SetTimer(hwnd, 2, 500, None);
                 }
-                ID_API_KEY if (wparam >> 16) == EN_KILLFOCUS as usize => refresh_models(hwnd, true),
+                ID_API_KEY if (wparam >> 16) == EN_KILLFOCUS as usize => {
+                    cached_or_refresh_models(hwnd)
+                }
                 ID_MODEL if (wparam >> 16) == CBN_SELCHANGE as usize => model_changed(hwnd),
                 _ => {}
             }
@@ -1136,7 +1228,7 @@ unsafe extern "system" fn dialog_proc(
         }
         WM_TIMER if wparam == 2 => {
             KillTimer(hwnd, 2);
-            refresh_models(hwnd, true);
+            cached_or_refresh_models(hwnd);
             0
         }
         WM_CLOSE => {
@@ -1216,6 +1308,7 @@ unsafe fn refresh_models(hwnd: HWND, preserve: bool) {
     dialog.request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
     let request_id = dialog.request_id;
     let key = settings.api_key.clone();
+    dialog.pending_key = Some(key.clone());
     SetWindowTextW(
         dialog.model_hint,
         wide("사용 가능한 전사 모델을 불러오는 중…").as_ptr(),
