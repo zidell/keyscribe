@@ -1,0 +1,67 @@
+param([switch]$Once)
+
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$build = Join-Path $PSScriptRoot 'build.ps1'
+$built = Join-Path $PSScriptRoot 'target\release\KeyScribe.exe'
+$output = Join-Path $root 'dist-native\KeyScribe.exe'
+$app = $null
+
+function Get-SourceSnapshot {
+    $files = @(
+        Get-Item -LiteralPath (Join-Path $root 'config.toml.example')
+        Get-Item -LiteralPath (Join-Path $PSScriptRoot 'Cargo.toml')
+        Get-Item -LiteralPath (Join-Path $PSScriptRoot 'Cargo.lock')
+        Get-Item -LiteralPath (Join-Path $PSScriptRoot 'build.rs')
+        Get-Item -LiteralPath $build
+        Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Recurse -File
+        Get-ChildItem -LiteralPath (Join-Path $root 'assets') -Recurse -File
+    )
+    return (($files | Sort-Object FullName | ForEach-Object {
+        '{0}|{1}|{2}' -f $_.FullName, $_.LastWriteTimeUtc.Ticks, $_.Length
+    }) -join "`n")
+}
+
+function Stop-OwnedApp {
+    if ($null -ne $script:app) {
+        if (-not $script:app.HasExited) {
+            $script:app.Kill()
+            [void]$script:app.WaitForExit(5000)
+        }
+        $script:app.Dispose()
+        $script:app = $null
+    }
+}
+
+try {
+    while ($true) {
+        $before = Get-SourceSnapshot
+        Write-Output 'Building KeyScribe...'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $build -NoCopy
+        $succeeded = $LASTEXITCODE -eq 0
+        $after = Get-SourceSnapshot
+        if ($after -ne $before) {
+            Write-Output 'Source changed during build; rebuilding.'
+            continue
+        }
+        if ($succeeded -and (Test-Path -LiteralPath $built)) {
+            Stop-OwnedApp
+            New-Item -ItemType Directory -Path (Split-Path $output) -Force | Out-Null
+            Copy-Item -LiteralPath $built -Destination $output -Force
+            $app = Start-Process -FilePath $output -WorkingDirectory $root -WindowStyle Hidden -PassThru
+            Write-Output "KeyScribe running: PID $($app.Id)"
+        } else {
+            Write-Output 'Build failed; the last working app remains running.'
+        }
+        if ($Once) { break }
+
+        $observed = $after
+        do {
+            Start-Sleep -Milliseconds 500
+            $current = Get-SourceSnapshot
+        } while ($current -eq $observed)
+        Start-Sleep -Milliseconds 800
+    }
+} finally {
+    if (-not $Once) { Stop-OwnedApp }
+}

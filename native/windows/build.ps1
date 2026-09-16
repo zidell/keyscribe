@@ -1,4 +1,4 @@
-param([switch]$DebugBuild)
+param([switch]$DebugBuild, [switch]$NoCopy)
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -47,6 +47,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Rust build failed.' }
 
 $built = Join-Path $PSScriptRoot "target\$profile\KeyScribe.exe"
 if (-not (Test-Path -LiteralPath $built)) { throw "Build output missing: $built" }
+if ($NoCopy) {
+    # The watcher swaps the executable only after a successful build.
+    Write-Output $built
+    return
+}
 $outputDirectory = Join-Path $root 'dist-native'
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 $output = Join-Path $outputDirectory 'KeyScribe.exe'

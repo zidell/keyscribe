@@ -39,7 +39,11 @@ python main.py
 
 Windows PowerShell에서는 첫 줄부터 `python -m venv .venv`로 실행하고, 활성화 명령을 `.venv\Scripts\Activate.ps1`로 바꿉니다.
 
-소스를 수정할 때마다 앱을 다시 빌드해 실행하려면 `python scripts/dev.py`를 실행합니다. macOS에서는 Swift, Windows에서는 Rust 네이티브 앱을 빌드하고 감시 도구가 시작한 앱만 재시작합니다.
+소스를 수정할 때마다 앱을 다시 빌드해 실행하려면 macOS에서는 `python scripts/dev.py`, Windows에서는 아래 명령을 실행합니다. 감시 도구가 시작한 앱만 재시작합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\native\windows\dev.ps1
+```
 
 ## 처음 사용할 때
 
