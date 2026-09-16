@@ -704,7 +704,14 @@ unsafe fn start(hwnd: HWND) {
         }
         Err(error) => {
             set_status(hwnd, &format!("마이크 오류: {error}"));
-            transient_overlay(hwnd, overlay::State::MicrophoneError);
+            app(hwnd).overlay_expires = Some(Instant::now() + Duration::from_secs(5));
+            let message = if error == "마이크를 찾을 수 없습니다" {
+                "입력 마이크 없음"
+            } else {
+                "마이크 연결/설정 확인"
+            };
+            overlay::show_message(app(hwnd).overlay, message);
+            SetTimer(hwnd, 1, 50, None);
         }
     }
 }

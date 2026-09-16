@@ -24,7 +24,6 @@ pub enum State {
     Transcribing,
     Cancelled,
     Failed,
-    MicrophoneError,
 }
 
 impl State {
@@ -34,7 +33,6 @@ impl State {
             Self::Transcribing => "변환 중...",
             Self::Cancelled => "녹음 취소됨",
             Self::Failed => "변환 실패",
-            Self::MicrophoneError => "마이크 오류",
         }
     }
 }
@@ -94,11 +92,15 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
 }
 
 pub unsafe fn show(hwnd: HWND, state: State) {
+    show_message(hwnd, state.title());
+}
+
+pub unsafe fn show_message(hwnd: HWND, message: &str) {
     if hwnd.is_null() {
         return;
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
-    data.title = state.title().into();
+    data.title = message.into();
     data.level = 0.0;
     data.phase = 0.0;
     let mut pointer = mem::zeroed();
