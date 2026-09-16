@@ -1,0 +1,243 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check signing settings
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.KEYSCRIBE_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
+        run: |
+          for value in CERTIFICATE CERT_PASSWORD SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD TEAM_ID; do
+            if [ -z "${!value}" ]; then echo "Missing macOS release setting: $value" >&2; exit 1; fi
+          done
+          if [[ ! "${GITHUB_REF_NAME#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be vMAJOR.MINOR.PATCH" >&2; exit 1
+          fi
+        shell: bash
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/keyscribe.p12"
+          security create-keychain -p "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security unlock-keychain -p "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/keyscribe.keychain-db"
+          security import "$RUNNER_TEMP/keyscribe.p12" -k "$RUNNER_TEMP/keyscribe.keychain-db" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/keyscribe.keychain-db"
+        shell: bash
+      - name: Build signed app
+        env:
+          KEYSCRIBE_CODESIGN_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
+        run: |
+          export KEYSCRIBE_VERSION="${GITHUB_REF_NAME#v}"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt py2app
+          python setup.py py2app
+          codesign --verify --deep --strict --verbose=2 dist/KeyScribe.app
+        shell: bash
+      - name: Create and notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.KEYSCRIBE_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dmg="KeyScribe-macos-${{ matrix.arch }}-$version.dmg"
+          hdiutil create -volname KeyScribe -srcfolder dist/KeyScribe.app \
+            -format UDZO -ov "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: KeyScribe-macos-*.dmg
+          if-no-files-found: error
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/keyscribe.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/keyscribe.p12"
+
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check signing settings
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_WINDOWS_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not $env:CERTIFICATE -or -not $env:CERT_PASSWORD) {
+            throw 'Missing Windows MSIX signing certificate or password.'
+          }
+          if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Release tag must be vMAJOR.MINOR.PATCH.'
+          }
+      - name: Build executable
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+          python -m PyInstaller --noconfirm --clean --windowed --name KeyScribe `
+            --add-data 'config.toml.example;.' `
+            --collect-all sounddevice --collect-all _sounddevice_data `
+            --collect-all soundfile --collect-all _soundfile_data main.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
+          if (-not (Test-Path 'dist\KeyScribe\KeyScribe.exe')) { throw 'Executable is missing.' }
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KeyScribe `
+            --add-data 'config.toml.example;.' `
+            --collect-all sounddevice --collect-all _sounddevice_data `
+            --collect-all soundfile --collect-all _soundfile_data main.py
+          if ($LASTEXITCODE -ne 0) { throw 'Portable EXE build failed.' }
+          if (-not (Test-Path 'dist\KeyScribe.exe')) { throw 'Portable EXE is missing.' }
+      - name: Package and sign MSIX
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_WINDOWS_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_WINDOWS_PFX_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'keyscribe.pfx'
+          [System.IO.File]::WriteAllBytes($certificatePath,
+            [Convert]::FromBase64String($env:CERTIFICATE))
+          try {
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+            ./packaging/build-msix.ps1 -Version $env:GITHUB_REF_NAME.Substring(1) `
+              -CertificatePath $certificatePath -CertificatePassword $env:CERT_PASSWORD `
+              -ExecutablePath 'dist\KeyScribe.exe'
+            Move-Item 'dist\KeyScribe.exe' "dist\KeyScribe-windows-x64-$version.exe"
+          } finally {
+            Remove-Item $certificatePath -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            dist/KeyScribe-windows-x64-*.msix
+            dist/KeyScribe-windows-x64-*.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish release and landing page
+    needs: [macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: release-assets
+          merge-multiple: true
+      - name: Check distribution settings and assets
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.KEYSCRIBE_CLOUDFLARE_API_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.KEYSCRIBE_R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.KEYSCRIBE_R2_SECRET_ACCESS_KEY }}
+        run: |
+          for value in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+            if [ -z "${!value}" ]; then echo "Missing distribution setting: $value" >&2; exit 1; fi
+          done
+          version="${GITHUB_REF_NAME#v}"
+          for filename in \
+            "KeyScribe-macos-arm64-$version.dmg" \
+            "KeyScribe-macos-x64-$version.dmg" \
+            "KeyScribe-windows-x64-$version.msix" \
+            "KeyScribe-windows-x64-$version.exe"; do
+            test -s "release-assets/$filename" || { echo "Missing asset: $filename" >&2; exit 1; }
+          done
+        shell: bash
+      - name: Publish private GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "KeyScribe $GITHUB_REF_NAME" --generate-notes
+          fi
+      - name: Upload public downloads to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.KEYSCRIBE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.KEYSCRIBE_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.KEYSCRIBE_R2_BUCKET || 'keyscribe-downloads' }}
+        run: |
+          python -m pip install awscli
+          version="${GITHUB_REF_NAME#v}"
+          for file in release-assets/*; do
+            aws s3 cp "$file" "s3://$R2_BUCKET/releases/$version/$(basename "$file")" \
+              --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+              --only-show-errors
+          done
+        shell: bash
+      - name: Render and push static branch
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 scripts/render_site.py "$version" "$RUNNER_TEMP/static-site"
+          git worktree add --detach "$RUNNER_TEMP/static-branch"
+          git -C "$RUNNER_TEMP/static-branch" switch --orphan static
+          cp "$RUNNER_TEMP/static-site"/* "$RUNNER_TEMP/static-branch"/
+          git -C "$RUNNER_TEMP/static-branch" add --all
+          git -C "$RUNNER_TEMP/static-branch" -c user.name=github-actions[bot] \
+            -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -m "Publish KeyScribe $version"
+          git -C "$RUNNER_TEMP/static-branch" push --force origin HEAD:static
+        shell: bash
+      - name: Deploy Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.KEYSCRIBE_CLOUDFLARE_API_TOKEN }}
+          PAGES_PROJECT: ${{ vars.KEYSCRIBE_PAGES_PROJECT || 'keyscribe' }}
+        run: |
+          npx --yes wrangler@4 pages deploy "$RUNNER_TEMP/static-site" \
+            --project-name "$PAGES_PROJECT" --branch static
+        shell: bash

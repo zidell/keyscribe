@@ -300,7 +300,7 @@ def load_config() -> dict:
     return data
 
 _CONFIG_KEYS = (
-    "shortcut", "auto_send", "language", "keyterms",
+    "shortcut", "recording_control", "auto_send", "language", "keyterms",
     "no_verbatim", "mute_during_recording", "openai_model", "elevenlabs_model",
 )
 
@@ -372,6 +372,7 @@ def settings_values(api_key: str) -> dict:
     return {
         "api_key": api_key,
         "shortcut": str(config.get("shortcut", "right_option")),
+        "recording_control": str(config.get("recording_control", "hold")),
         # ptt_after_key를 쓰던 기존 설정은 Enter일 때만 자동 전송으로 이어받는다.
         "auto_send": bool(config.get("auto_send", config.get("ptt_after_key", "enter") == "enter")),
         "language": str(config.get("language", "ko")),
@@ -388,6 +389,7 @@ def save_settings(values: dict):
     keyterms = [line.strip() for line in values["keyterms"].splitlines() if line.strip()]
     save_config({
         "shortcut": values["shortcut"].strip(),
+        "recording_control": values["recording_control"],
         "auto_send": values["auto_send"],
         "language": values["language"].strip(),
         "keyterms": keyterms,
@@ -415,6 +417,11 @@ def shortcut_options() -> list[tuple[str, str]]:
         ("right_ctrl", "오른쪽 Ctrl"), ("left_ctrl", "왼쪽 Ctrl"),
         ("right_shift", "오른쪽 Shift"), ("left_shift", "왼쪽 Shift"),
     ]
+
+
+def recording_control_options() -> list[tuple[str, str]]:
+    return [("hold", tr("recording_control_hold")),
+            ("toggle", tr("recording_control_toggle"))]
 
 
 UI_LANGUAGE_BY_SPEECH = {
@@ -751,6 +758,8 @@ class VoiceSTTCore:
         self.stream: sd.InputStream | None = None
         self._prev_muted: bool | None = None
         self._cfg_trigger_key = keyboard.Key.alt_r
+        self._cfg_recording_control = "hold"
+        self._trigger_key_down = False
         self.overlay = None
         self._ui_queue: queue.Queue = queue.Queue()
         log.debug("코어 상태 변수 초기화 완료")
@@ -759,19 +768,18 @@ class VoiceSTTCore:
 
         log.info("키보드 리스너 시작 중...")
         listener_options = {}
-        on_press, on_release = self._on_press, self._on_release
+        # 후크 콜백에서 마이크를 열면 장치 초기화 중 키 입력 처리가 지연된다.
+        # 모든 플랫폼에서 이벤트만 큐에 넣고 녹음 처리는 별도 스레드에서 한다.
+        self._key_events = queue.SimpleQueue()
+        threading.Thread(target=self._process_key_events, daemon=True,
+                         name="keyscribe-key-events").start()
         if PLATFORM == "darwin":
             # 수동 감시 탭은 입력 모니터링 권한이 필요하다. 이벤트를 그대로
             # 통과시키는 활성 탭은 이미 요청하는 손쉬운 사용 권한을 사용한다.
-            # 활성 탭 콜백은 빨리 반환해야 하므로 녹음 처리는 별도 스레드로 보낸다.
-            self._key_events = queue.SimpleQueue()
-            threading.Thread(target=self._process_key_events, daemon=True,
-                             name="keyscribe-key-events").start()
-            on_press, on_release = self._queue_key_press, self._queue_key_release
             listener_options["darwin_intercept"] = lambda _event_type, event: event
         listener = keyboard.Listener(
-            on_press=on_press,
-            on_release=on_release,
+            on_press=self._queue_key_press,
+            on_release=self._queue_key_release,
             **listener_options,
         )
         listener.daemon = True
@@ -824,7 +832,11 @@ class VoiceSTTCore:
             shortcut = config.get("shortcut", "")
             k = self._key_from_str(shortcut) if shortcut else None
             self._cfg_trigger_key = k if k else keyboard.Key.alt_r
-            log.debug("단축키 캐시 갱신 — trigger=%r", self._cfg_trigger_key)
+            control = config.get("recording_control", "hold")
+            self._cfg_recording_control = control if control in ("hold", "toggle") else "hold"
+            self._trigger_key_down = False
+            log.debug("단축키 캐시 갱신 — trigger=%r, control=%s",
+                      self._cfg_trigger_key, self._cfg_recording_control)
         except Exception:
             log.exception("단축키 캐시 갱신 실패 — 기존 값 유지")
 
@@ -884,8 +896,16 @@ class VoiceSTTCore:
             return
 
         if key == self._cfg_trigger_key:
+            if self._trigger_key_down:
+                log.debug("트리거 키 반복 눌림 — 무시")
+                return
+            self._trigger_key_down = True
             if self.recording:
-                log.debug("트리거 키 눌림 — 이미 녹음중, 무시")
+                if self._cfg_recording_control == "toggle":
+                    log.info("트리거 키 다시 눌림 — STT 변환 시작")
+                    self._stop_and_transcribe()
+                else:
+                    log.debug("트리거 키 눌림 — 이미 녹음중, 무시")
             elif self._transcribing:
                 log.debug("트리거 키 눌림 — 변환중, 무시")
             else:
@@ -895,7 +915,8 @@ class VoiceSTTCore:
     def _on_release(self, key):
         log.debug("키 뗌: %r", key)
         if key == self._cfg_trigger_key:
-            if self.recording:
+            self._trigger_key_down = False
+            if self.recording and self._cfg_recording_control == "hold":
                 log.info("트리거 키 뗌 — STT 변환 시작")
                 self._stop_and_transcribe()
             else:
@@ -1080,6 +1101,8 @@ class VoiceSTTCore:
                 self._set_status(tr("status_mic_error")),
                 self.overlay.show(tr("overlay_no_mic")) if self.overlay else None,
             ))
+            if PLATFORM == "win32":
+                self._ui(self._show_microphone_help)
             if self._reset_timer:
                 self._reset_timer.cancel()
 
@@ -1467,7 +1490,7 @@ if PLATFORM == "darwin":
             )
             values = settings_values(self._api_key)
             displayed_api_key = abbreviate_api_key(self._api_key)
-            W, H, row_h = 520, 410, 46
+            W, H, row_h = 520, 456, 46
             view = __import__("AppKit").NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
             fields = {}
             labels = [("api_key", tr("api_key"))]
@@ -1550,6 +1573,9 @@ if PLATFORM == "darwin":
             view.addSubview_(shortcut_picker)
             y -= row_h
 
+            control_picker, control_values = add_picker(
+                tr("recording_control"), recording_control_options(), values["recording_control"])
+
             y -= row_h
             title = NSTextField.labelWithString_(tr("keywords"))
             title.setFrame_(NSMakeRect(0, y + 18, 130, 42))
@@ -1603,6 +1629,7 @@ if PLATFORM == "darwin":
                     values["api_key"] = self._api_key
                 values["keyterms"] = keyterms.string()
                 values["shortcut"] = shortcut_values[shortcut_picker.indexOfSelectedItem()]
+                values["recording_control"] = control_values[control_picker.indexOfSelectedItem()]
                 values["language"] = speech_codes[speech_picker.indexOfSelectedItem()]
                 provider = provider_for_api_key(values["api_key"])
                 values[f"{provider}_model"] = model_picker.titleOfSelectedItem() if provider else values["model"]
@@ -1750,6 +1777,13 @@ elif PLATFORM == "win32":
             self._last_text = text
             self._tray.update_menu()
 
+        def _show_microphone_help(self):
+            if tkmsgbox.askyesno(APP_NAME, tr("windows_mic_help"), parent=self._root):
+                try:
+                    os.startfile("ms-settings:privacy-microphone")
+                except OSError:
+                    log.exception("Windows 마이크 설정 열기 실패")
+
         # ── UI 큐 (tkinter after 루프) ──
 
         def _flush_ui_queue_tk(self):
@@ -1762,7 +1796,7 @@ elif PLATFORM == "win32":
         def _show_config_dialog(self):
             win = tk.Toplevel(self._root)
             win.title(tr("settings_title", app=APP_NAME))
-            win.geometry("520x540")
+            win.geometry("520x580")
             win.resizable(False, False)
             values = settings_values(self._api_key)
             displayed_api_key = abbreviate_api_key(self._api_key)
@@ -1830,25 +1864,34 @@ elif PLATFORM == "win32":
             shortcut_box.current(shortcut_values.index(values["shortcut"])
                                  if values["shortcut"] in shortcut_values else 0)
             shortcut_box.grid(row=3, column=1, sticky="w", pady=10)
-            tk.Label(form, text=tr("speech_language"), anchor="e").grid(
+            tk.Label(form, text=tr("recording_control"), anchor="e").grid(
                 row=4, column=0, sticky="e", padx=(0, 12), pady=10)
+            control_items = recording_control_options()
+            control_values = [value for value, _ in control_items]
+            control_box = ttk.Combobox(form, values=[label for _, label in control_items],
+                                       width=38, state="readonly")
+            control_box.current(control_values.index(values["recording_control"])
+                                if values["recording_control"] in control_values else 0)
+            control_box.grid(row=4, column=1, sticky="w", pady=10)
+            tk.Label(form, text=tr("speech_language"), anchor="e").grid(
+                row=5, column=0, sticky="e", padx=(0, 12), pady=10)
             speech_items = speech_language_options()
             if values["language"] not in [code for code, _ in speech_items]:
                 speech_items.insert(0, (values["language"], values["language"]))
             speech_codes = [code for code, _ in speech_items]
             speech_box = ttk.Combobox(form, values=[name for _, name in speech_items], width=38, state="readonly")
             speech_box.current(speech_codes.index(values["language"]))
-            speech_box.grid(row=4, column=1, sticky="w", pady=10)
+            speech_box.grid(row=5, column=1, sticky="w", pady=10)
             tk.Label(form, text=tr("keywords"), anchor="nw").grid(
-                row=6, column=0, sticky="ne", padx=(0, 12), pady=10)
+                row=7, column=0, sticky="ne", padx=(0, 12), pady=10)
             keyterms = tk.Text(form, width=48, height=8)
             keyterms.insert("1.0", values["keyterms"])
-            keyterms.grid(row=6, column=1, sticky="ew", pady=10)
+            keyterms.grid(row=7, column=1, sticky="ew", pady=10)
             no_verbatim = tk.BooleanVar(value=values["no_verbatim"])
             mute = tk.BooleanVar(value=values["mute_during_recording"])
             no_verbatim_check = tk.Checkbutton(form, text=tr("remove_fillers"), variable=no_verbatim)
             no_verbatim_check.grid(
-                row=7, column=1, sticky="w", pady=(8, 2))
+                row=8, column=1, sticky="w", pady=(8, 2))
             def _update_no_verbatim_state(_event=None):
                 is_supported = (provider_for_api_key(entries["api_key"].get().strip()) == "elevenlabs"
                                 and supports_no_verbatim(model_var.get()))
@@ -1857,13 +1900,13 @@ elif PLATFORM == "win32":
             model_box.bind("<<ComboboxSelected>>", _update_no_verbatim_state)
             filler_hint = tk.Label(form, text=tr("filler_hint"), anchor="w", fg="#777777",
                                    font=("Segoe UI", 8))
-            filler_hint.grid(row=8, column=1, sticky="w", pady=(0, 5))
+            filler_hint.grid(row=9, column=1, sticky="w", pady=(0, 5))
             _update_no_verbatim_state()
             tk.Checkbutton(form, text=tr("mute_audio"), variable=mute).grid(
-                row=9, column=1, sticky="w", pady=5)
+                row=10, column=1, sticky="w", pady=5)
             auto_send = tk.BooleanVar(value=values["auto_send"])
             tk.Checkbutton(form, text=tr("auto_send"), variable=auto_send).grid(
-                row=10, column=1, sticky="w", pady=5)
+                row=11, column=1, sticky="w", pady=5)
             form.columnconfigure(1, weight=1)
 
             def _save():
@@ -1872,6 +1915,7 @@ elif PLATFORM == "win32":
                     values["api_key"] = self._api_key
                 values["keyterms"] = keyterms.get("1.0", "end-1c")
                 values["shortcut"] = shortcut_values[shortcut_box.current()]
+                values["recording_control"] = control_values[control_box.current()]
                 values["language"] = speech_codes[speech_box.current()]
                 provider = provider_for_api_key(values["api_key"])
                 values[f"{provider}_model"] = model_var.get() if provider else values["model"]
@@ -1886,7 +1930,7 @@ elif PLATFORM == "win32":
                 win.destroy()
 
             buttons = tk.Frame(form)
-            buttons.grid(row=11, column=1, sticky="e", pady=(14, 0))
+            buttons.grid(row=12, column=1, sticky="e", pady=(14, 0))
             tk.Button(buttons, text=tr("cancel"), command=win.destroy, width=10).pack(side="right", padx=4)
             tk.Button(buttons, text=tr("save"), command=_save, width=10).pack(side="right")
             entries["api_key"].focus_set()

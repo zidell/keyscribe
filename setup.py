@@ -31,7 +31,11 @@ SIGNING_IDENTITY = _signing_identity()
 
 
 def _simple_dosign(*path):
-    subprocess.check_call(("codesign", "-s", SIGNING_IDENTITY, "-f") + path)
+    command = ["codesign", "-s", SIGNING_IDENTITY, "-f"]
+    if SIGNING_IDENTITY != "-":
+        command += ["--options", "runtime", "--timestamp",
+                    "--entitlements", "packaging/macos-entitlements.plist"]
+    subprocess.check_call(command + list(path))
 
 py2app.util._dosign = _simple_dosign
 
@@ -48,7 +52,8 @@ OPTIONS = {
         "CFBundleName": "KeyScribe",
         "CFBundleDisplayName": "KeyScribe",
         "CFBundleIdentifier": "com.videostew.keyscribe",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleVersion": os.environ.get("KEYSCRIBE_VERSION", "1.0.0"),
+        "CFBundleShortVersionString": os.environ.get("KEYSCRIBE_VERSION", "1.0.0"),
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": "음성 녹음을 위해 마이크 접근이 필요합니다.",
         "NSAccessibilityUsageDescription": "키보드 단축키 감지를 위해 접근성 권한이 필요합니다.",
@@ -58,6 +63,8 @@ OPTIONS = {
         "pynput",
         "sounddevice",
         "_sounddevice_data",  # libportaudio.dylib 포함 — zip 안에 넣으면 dlopen 불가
+        "soundfile",
+        "_soundfile_data",  # libsndfile.dylib 포함
         "numpy",
         "pyperclip",
         "elevenlabs",

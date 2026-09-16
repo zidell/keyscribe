@@ -1,5 +1,6 @@
 .env
 dist/
+dist-dev/
 build/
 .claude/settings.local.json
 .DS_Store
@@ -8,3 +9,8 @@ __pycache__/
 
 # 컴퓨터마다 다른 개인 설정 — config.toml.example 을 첫 실행 시 자동 복사한다.
 config.toml
+
+# 릴리스 서명 인증서와 개인키
+*.p12
+*.pfx
+*.keychain-db

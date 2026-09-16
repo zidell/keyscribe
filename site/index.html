@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="KeyScribe 음성 받아쓰기 앱 다운로드">
+  <title>KeyScribe 다운로드</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f6f7fb; color: #202330; }
+    main { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0 80px; }
+    .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 40px; font-size: 1.1rem; font-weight: 800; }
+    .brand img { width: 40px; height: 40px; }
+    h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.2; margin: 0 0 18px; letter-spacing: -.04em; }
+    h2 { font-size: 1.3rem; margin: 0 0 18px; }
+    p, li { line-height: 1.7; }
+    .intro { font-size: 1.13rem; max-width: 620px; }
+    section { margin-top: 52px; }
+    .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 12px; }
+    .download { display: block; border-radius: 12px; padding: 18px 20px; background: #3659e3; color: white; text-decoration: none; font-weight: 700; }
+    .download:hover { background: #2747ca; }
+    .download small { display: block; font-weight: 400; margin-top: 4px; opacity: .85; }
+    .note { font-size: .93rem; color: #62697b; }
+    .note a { color: inherit; }
+    ol { padding-left: 1.4rem; }
+    li + li { margin-top: 8px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171923; color: #f0f2fa; }
+      .note { color: #aab0c0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><img src="/logo.svg" alt="">KeyScribe</div>
+    <h1>말하고, 바로 입력하세요.</h1>
+    <p class="intro">KeyScribe는 단축키를 누르는 동안 말을 듣고, 키를 놓으면 받아쓴 내용을 현재 입력창에 붙여넣습니다. macOS 메뉴바와 Windows 트레이에서 조용히 실행됩니다.</p>
+
+    <section aria-labelledby="download-title">
+      <h2 id="download-title">다운로드</h2>
+      <div class="downloads">
+        <a class="download" href="/downloads/KeyScribe-macos-arm64-__VERSION__.dmg">macOS <small>Apple Silicon · DMG</small></a>
+        <a class="download" href="/downloads/KeyScribe-macos-x64-__VERSION__.dmg">macOS <small>Intel · DMG</small></a>
+        <a class="download" href="/downloads/KeyScribe-windows-x64-__VERSION__.exe">Windows <small>x64 · 바로 실행하는 EXE</small></a>
+      </div>
+      <p class="note">최신 버전 __VERSION__ · Windows 설치형 파일은 <a href="/downloads/KeyScribe-windows-x64-__VERSION__.msix">MSIX 다운로드</a></p>
+    </section>
+
+    <section aria-labelledby="how-title">
+      <h2 id="how-title">사용 방법</h2>
+      <ol>
+        <li>앱을 실행하고 메뉴바 또는 트레이의 <strong>설정...</strong>에서 ElevenLabs 또는 OpenAI API 키를 입력합니다.</li>
+        <li>마이크 접근을 허용합니다. macOS에서는 손쉬운 사용 권한도 허용합니다.</li>
+        <li>입력할 창에 커서를 놓고 오른쪽 Option(macOS) 또는 오른쪽 Alt(Windows)를 누른 채 말합니다. 키를 놓으면 글이 입력됩니다.</li>
+      </ol>
+      <p class="note">설정에서 단축키, 인식 언어, 녹음 종료 방식과 붙여넣기 후 자동 전송 여부를 바꿀 수 있습니다.</p>
+    </section>
+  </main>
+</body>
+</html>
