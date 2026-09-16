@@ -1,0 +1,100 @@
+import AppKit
+import QuartzCore
+
+final class RecordingOverlay {
+    enum State {
+        case recording
+        case transcribing
+        case cancelled
+        case failed
+        case microphoneError
+
+        var title: String {
+            switch self {
+            case .recording: return "🔴  녹음 중"
+            case .transcribing: return "⏳  변환 중…"
+            case .cancelled: return "녹음 취소됨"
+            case .failed: return "변환 실패"
+            case .microphoneError: return "마이크 오류"
+            }
+        }
+    }
+
+    private let width: CGFloat = 230
+    private let height: CGFloat = 52
+    private let window: NSPanel
+    private let label: NSTextField
+    private var bars: [CALayer] = []
+    private var phase: CGFloat = 0
+    private var volume: CGFloat = 0
+
+    init() {
+        window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 230, height: 52),
+                         styleMask: [.borderless, .nonactivatingPanel],
+                         backing: .buffered, defer: false)
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.ignoresMouseEvents = true
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 52))
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 0.9).cgColor
+        content.layer?.cornerRadius = 26
+        content.layer?.masksToBounds = true
+        window.contentView = content
+
+        label = NSTextField(labelWithString: "")
+        label.frame = NSRect(x: 20, y: 15, width: 130, height: 22)
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = .white
+        label.alignment = .left
+        content.addSubview(label)
+
+        for index in 0..<5 {
+            let bar = CALayer()
+            bar.frame = NSRect(x: 166 + CGFloat(index) * 7, y: 24, width: 3, height: 4)
+            bar.backgroundColor = NSColor(calibratedRed: 1, green: 0.28, blue: 0.28, alpha: 1).cgColor
+            bar.cornerRadius = 1.5
+            content.layer?.addSublayer(bar)
+            bars.append(bar)
+        }
+    }
+
+    func show(_ state: State) {
+        label.stringValue = state.title
+        let pointer = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
+        if let frame = screen?.visibleFrame {
+            window.setFrameOrigin(NSPoint(x: frame.maxX - width - 32, y: frame.minY + 40))
+        }
+        window.orderFrontRegardless()
+    }
+
+    func tick(level: CGFloat?) {
+        phase += 0.4
+        if let level {
+            volume = max(0, min(1, level))
+        } else {
+            volume *= 0.88
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in bars.enumerated() {
+            let wave = 0.5 + 0.5 * sin(phase + CGFloat(index) * 1.3)
+            let strength = volume * (0.5 + 0.5 * wave) + (1 - volume) * 0.12 * wave
+            let barHeight = 4 + strength * 24
+            bar.frame = NSRect(x: 166 + CGFloat(index) * 7,
+                               y: (height - barHeight) / 2,
+                               width: 3, height: barHeight)
+        }
+        CATransaction.commit()
+    }
+
+    func hide() {
+        volume = 0
+        window.orderOut(nil)
+    }
+}

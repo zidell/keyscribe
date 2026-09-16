@@ -47,6 +47,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var keyDown = false
     private var session = UUID()
     private var wasMuted: Bool?
+    private var overlay: RecordingOverlay?
+    private var overlayTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -156,12 +158,17 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                         if self.settings.recordingControl == "toggle" || self.keyDown { self.startRecording() }
                     } else {
                         self.setStatus("마이크 권한이 필요합니다")
+                        self.showTransientOverlay(.microphoneError)
                     }
                 }
             }
             return
         }
-        guard authorization == .authorized else { setStatus("마이크 권한이 필요합니다"); return }
+        guard authorization == .authorized else {
+            setStatus("마이크 권한이 필요합니다")
+            showTransientOverlay(.microphoneError)
+            return
+        }
         session = UUID()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("keyscribe-\(session.uuidString).wav")
         let format: [String: Any] = [
@@ -171,16 +178,19 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         ]
         do {
             recorder = try AVAudioRecorder(url: url, settings: format)
+            recorder?.isMeteringEnabled = true
             guard recorder?.record() == true else { throw NSError(domain: "KeyScribe", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
             recordingURL = url
             phase = .recording
             setStatus("녹음 중 · Esc 취소")
+            showActiveOverlay(.recording)
             if settings.muteDuringRecording { muteSystemAudio() }
         } catch {
             recorder = nil
             try? FileManager.default.removeItem(at: url)
             setStatus("녹음 오류: \(error.localizedDescription)")
+            showTransientOverlay(.microphoneError)
         }
     }
 
@@ -191,6 +201,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         restoreSystemAudio()
         phase = .transcribing
         setStatus("변환 중 · Esc 취소")
+        showActiveOverlay(.transcribing)
         let currentSession = session
         let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if settings.apiKey.hasPrefix("sk-") && byteCount > 24 * 1024 * 1024 {
@@ -211,12 +222,14 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         phase = .idle
         switch result {
         case .success(let text):
+            hideOverlay()
             guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
             lastLine.title = "최근 변환: \(String(text.prefix(60)))"
             paste(text)
             setStatus("완료")
         case .failure(let error):
             setStatus(error.localizedDescription)
+            showTransientOverlay(.failed)
         }
     }
 
@@ -230,6 +243,45 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         restoreSystemAudio()
         phase = .idle
         if statusLine != nil { setStatus("취소됨") }
+        showTransientOverlay(.cancelled)
+    }
+
+    private func showActiveOverlay(_ state: RecordingOverlay.State) {
+        if overlay == nil { overlay = RecordingOverlay() }
+        overlay?.show(state)
+        overlayTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let level: CGFloat?
+            if self.phase == .recording, let recorder = self.recorder {
+                recorder.updateMeters()
+                let power = Double(recorder.averagePower(forChannel: 0))
+                level = CGFloat(min(1, pow(10.0, power / 20.0) * 8.0))
+            } else {
+                level = nil
+            }
+            self.overlay?.tick(level: level)
+        }
+        overlayTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func showTransientOverlay(_ state: RecordingOverlay.State) {
+        overlayTimer?.invalidate()
+        overlayTimer = nil
+        if overlay == nil { overlay = RecordingOverlay() }
+        overlay?.show(state)
+        let currentSession = session
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.session == currentSession, self.phase == .idle else { return }
+            self.overlay?.hide()
+        }
+    }
+
+    private func hideOverlay() {
+        overlayTimer?.invalidate()
+        overlayTimer = nil
+        overlay?.hide()
     }
 
     private func paste(_ text: String) {
