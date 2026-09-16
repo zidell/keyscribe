@@ -1,0 +1,113 @@
+import Foundation
+
+struct Settings {
+    var apiKey = ""
+    var shortcut = "right_option"
+    var recordingControl = "hold"
+    var autoSend = true
+    var language = "ko"
+    var keyterms: [String] = []
+    var noVerbatim = true
+    var muteDuringRecording = true
+    var openAIModel = "gpt-transcribe"
+    var elevenLabsModel = "scribe_v2"
+
+    static let directory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/keyscribe", isDirectory: true)
+    static let configURL = directory.appendingPathComponent("config.toml")
+    static let userURL = directory.appendingPathComponent("user_config.json")
+    static let legacyUserURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/voice-stt/user_config.json")
+
+    static func load() -> Settings {
+        var result = Settings()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: configURL.path),
+           let example = Bundle.main.url(forResource: "config.toml", withExtension: "example") {
+            try? FileManager.default.copyItem(at: example, to: configURL)
+        }
+        if let contents = try? String(contentsOf: configURL, encoding: .utf8) {
+            let values = parseTOML(contents)
+            result.shortcut = values["shortcut"] as? String ?? result.shortcut
+            result.recordingControl = values["recording_control"] as? String ?? result.recordingControl
+            result.autoSend = values["auto_send"] as? Bool ?? result.autoSend
+            result.language = values["language"] as? String ?? result.language
+            result.keyterms = values["keyterms"] as? [String] ?? result.keyterms
+            result.noVerbatim = values["no_verbatim"] as? Bool ?? result.noVerbatim
+            result.muteDuringRecording = values["mute_during_recording"] as? Bool ?? result.muteDuringRecording
+            result.openAIModel = values["openai_model"] as? String ?? result.openAIModel
+            result.elevenLabsModel = values["elevenlabs_model"] as? String ?? result.elevenLabsModel
+        }
+        if !FileManager.default.fileExists(atPath: userURL.path),
+           FileManager.default.fileExists(atPath: legacyUserURL.path),
+           let legacy = try? Data(contentsOf: legacyUserURL) {
+            try? legacy.write(to: userURL, options: .atomic)
+        }
+        if let data = try? Data(contentsOf: userURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            result.apiKey = json["api_key"] as? String ?? ""
+        }
+        if result.apiKey.isEmpty {
+            result.apiKey = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"] ?? ""
+        }
+        return result
+    }
+
+    func save() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fields = [
+            "shortcut = \(jsonString(shortcut))",
+            "recording_control = \(jsonString(recordingControl))",
+            "auto_send = \(autoSend)",
+            "language = \(jsonString(language))",
+            "keyterms = [\(keyterms.map(jsonString).joined(separator: ", "))]",
+            "no_verbatim = \(noVerbatim)",
+            "mute_during_recording = \(muteDuringRecording)",
+            "openai_model = \(jsonString(openAIModel))",
+            "elevenlabs_model = \(jsonString(elevenLabsModel))",
+        ]
+        try (fields.joined(separator: "\n") + "\n").write(to: Self.configURL, atomically: true, encoding: .utf8)
+        var user = ((try? Data(contentsOf: Self.userURL))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
+        user["api_key"] = apiKey
+        let data = try JSONSerialization.data(withJSONObject: user, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: Self.userURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.userURL.path)
+    }
+}
+
+private func jsonString(_ value: String) -> String {
+    let data = try! JSONEncoder().encode(value)
+    return String(data: data, encoding: .utf8)!
+}
+
+private func parseTOML(_ source: String) -> [String: Any] {
+    var values: [String: Any] = [:]
+    for rawLine in source.components(separatedBy: .newlines) {
+        guard let equal = rawLine.firstIndex(of: "=") else { continue }
+        let key = rawLine[..<equal].trimmingCharacters(in: .whitespaces)
+        if key.isEmpty || key.hasPrefix("#") || key.hasPrefix("[") { continue }
+        let rawValue = String(rawLine[rawLine.index(after: equal)...])
+        var value = ""
+        var quoted = false
+        var escaped = false
+        for character in rawValue {
+            if character == "#" && !quoted { break }
+            value.append(character)
+            if character == "\\" && quoted && !escaped {
+                escaped = true
+                continue
+            }
+            if character == "\"" && !escaped { quoted.toggle() }
+            escaped = false
+        }
+        value = value.trimmingCharacters(in: .whitespaces)
+        if value == "true" { values[key] = true }
+        else if value == "false" { values[key] = false }
+        else if let data = value.data(using: .utf8),
+                let decoded = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) {
+            values[key] = decoded
+        }
+    }
+    return values
+}

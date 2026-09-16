@@ -1,0 +1,360 @@
+import AppKit
+import AVFoundation
+import ApplicationServices
+import CoreGraphics
+import Foundation
+
+private enum Phase {
+    case idle, recording, transcribing
+}
+
+private let keyCodes: [String: CGKeyCode] = [
+    "right_option": 61, "right_alt": 61,
+    "left_option": 58, "option": 58, "left_alt": 58, "alt": 58,
+    "right_ctrl": 62, "left_ctrl": 59, "ctrl": 59,
+    "right_shift": 60, "left_shift": 56, "shift": 56,
+    "right_cmd": 54, "left_cmd": 55, "cmd": 55,
+    "enter": 36, "esc": 53, "tab": 48, "space": 49,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118,
+    "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+    "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+]
+
+private func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
+                              event: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
+    guard let userInfo else { return Unmanaged.passUnretained(event) }
+    let app = Unmanaged<KeyScribeApp>.fromOpaque(userInfo).takeUnretainedValue()
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        DispatchQueue.main.async { app.enableEventTap() }
+    } else if type == .flagsChanged || type == .keyDown || type == .keyUp {
+        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = event.flags
+        DispatchQueue.main.async { app.handleKeyEvent(type: type, code: code, flags: flags) }
+    }
+    return Unmanaged.passUnretained(event)
+}
+
+final class KeyScribeApp: NSObject, NSApplicationDelegate {
+    private var settings = Settings.load()
+    private let transcriber = Transcriber()
+    private var phase: Phase = .idle
+    private var statusItem: NSStatusItem!
+    private var statusLine: NSMenuItem!
+    private var lastLine: NSMenuItem!
+    private var recorder: AVAudioRecorder?
+    private var recordingURL: URL?
+    private var eventTap: CFMachPort?
+    private var keyDown = false
+    private var session = UUID()
+    private var wasMuted: Bool?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        setupMenu()
+        installEventTap()
+        if settings.apiKey.isEmpty { showSettings(nil) }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        cancelRecording()
+    }
+
+    private func setupMenu() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "🎙"
+        let menu = NSMenu()
+        statusLine = NSMenuItem(title: "준비됨", action: nil, keyEquivalent: "")
+        statusLine.isEnabled = false
+        menu.addItem(statusLine)
+        lastLine = NSMenuItem(title: "최근 변환: 없음", action: nil, keyEquivalent: "")
+        lastLine.isEnabled = false
+        menu.addItem(lastLine)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "설정 폴더 열기", action: #selector(openSettingsFolder(_:)), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "종료", action: #selector(quit(_:)), keyEquivalent: "q"))
+        for item in menu.items where item.action != nil { item.target = self }
+        statusItem.menu = menu
+    }
+
+    private func setStatus(_ message: String, symbol: String = "🎙") {
+        statusLine.title = message
+        statusItem.button?.title = symbol
+    }
+
+    private func installEventTap() {
+        let mask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
+            | (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                          options: .defaultTap, eventsOfInterest: mask,
+                                          callback: eventTapCallback, userInfo: context) else {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            setStatus("손쉬운 사용 권한을 허용한 뒤 앱을 다시 실행해 주세요")
+            return
+        }
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    func enableEventTap() {
+        if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
+    }
+
+    func handleKeyEvent(type: CGEventType, code: CGKeyCode, flags: CGEventFlags) {
+        if type == .keyDown && code == 53 {
+            if phase != .idle { cancelRecording() }
+            return
+        }
+        guard code == triggerKeyCode() else { return }
+        let pressed: Bool
+        if type == .flagsChanged {
+            let mask: CGEventFlags
+            switch code {
+            case 58, 61: mask = .maskAlternate
+            case 59, 62: mask = .maskControl
+            case 55, 54: mask = .maskCommand
+            case 56, 60: mask = .maskShift
+            default: return
+            }
+            pressed = flags.contains(mask)
+        } else {
+            pressed = type == .keyDown
+        }
+        if pressed == keyDown { return }
+        keyDown = pressed
+        if pressed {
+            if phase == .idle { startRecording() }
+            else if phase == .recording && settings.recordingControl == "toggle" { stopRecording() }
+        } else if phase == .recording && settings.recordingControl == "hold" {
+            stopRecording()
+        }
+    }
+
+    private func triggerKeyCode() -> CGKeyCode {
+        keyCodes[settings.shortcut] ?? 61
+    }
+
+    private func startRecording() {
+        guard !settings.apiKey.isEmpty else { showSettings(nil); return }
+        let authorization = AVCaptureDevice.authorizationStatus(for: .audio)
+        if authorization == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if granted {
+                        if self.settings.recordingControl == "toggle" || self.keyDown { self.startRecording() }
+                    } else {
+                        self.setStatus("마이크 권한이 필요합니다")
+                    }
+                }
+            }
+            return
+        }
+        guard authorization == .authorized else { setStatus("마이크 권한이 필요합니다"); return }
+        session = UUID()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("keyscribe-\(session.uuidString).wav")
+        let format: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM), AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+        ]
+        do {
+            recorder = try AVAudioRecorder(url: url, settings: format)
+            guard recorder?.record() == true else { throw NSError(domain: "KeyScribe", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
+            recordingURL = url
+            phase = .recording
+            setStatus("녹음 중 · Esc 취소", symbol: "🔴")
+            if settings.muteDuringRecording { muteSystemAudio() }
+        } catch {
+            recorder = nil
+            try? FileManager.default.removeItem(at: url)
+            setStatus("녹음 오류: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopRecording() {
+        guard phase == .recording, let url = recordingURL else { return }
+        recorder?.stop()
+        recorder = nil
+        restoreSystemAudio()
+        phase = .transcribing
+        setStatus("변환 중 · Esc 취소", symbol: "⏳")
+        let currentSession = session
+        let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if settings.apiKey.hasPrefix("sk-") && byteCount > 24 * 1024 * 1024 {
+            finish(.failure(NSError(domain: "KeyScribe", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "OpenAI 녹음 크기 제한(24 MB)을 초과했습니다."])),
+                   url: url, session: currentSession)
+            return
+        }
+        transcriber.transcribe(audioURL: url, settings: settings) { [weak self] result in
+            DispatchQueue.main.async { self?.finish(result, url: url, session: currentSession) }
+        }
+    }
+
+    private func finish(_ result: Result<String, Error>, url: URL, session completedSession: UUID) {
+        try? FileManager.default.removeItem(at: url)
+        guard completedSession == session && phase == .transcribing else { return }
+        recordingURL = nil
+        phase = .idle
+        switch result {
+        case .success(let text):
+            guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
+            lastLine.title = "최근 변환: \(String(text.prefix(60)))"
+            paste(text)
+            setStatus("완료")
+        case .failure(let error):
+            setStatus(error.localizedDescription)
+        }
+    }
+
+    private func cancelRecording() {
+        session = UUID()
+        transcriber.cancel()
+        recorder?.stop()
+        recorder = nil
+        if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
+        recordingURL = nil
+        restoreSystemAudio()
+        phase = .idle
+        if statusLine != nil { setStatus("취소됨") }
+    }
+
+    private func paste(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        if settings.autoSend {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true)?.post(tap: .cghidEventTap)
+                CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false)?.post(tap: .cghidEventTap)
+            }
+        }
+    }
+
+    private func runAppleScript(_ script: String) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        guard (try? task.run()) != nil else { return nil }
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else { return nil }
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func muteSystemAudio() {
+        guard let state = runAppleScript("output muted of (get volume settings)") else { return }
+        wasMuted = state == "true"
+        if wasMuted == false { _ = runAppleScript("set volume output muted true") }
+    }
+
+    private func restoreSystemAudio() {
+        if wasMuted == false { _ = runAppleScript("set volume output muted false") }
+        wasMuted = nil
+    }
+
+    @objc private func openSettingsFolder(_ sender: Any?) {
+        NSWorkspace.shared.open(Settings.directory)
+    }
+
+    @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
+
+    @objc private func showSettings(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "KeyScribe 설정"
+        alert.informativeText = "API 키는 컴퓨터의 사용자 설정에 저장됩니다."
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        let width: CGFloat = 400
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 398))
+        func label(_ title: String, _ y: CGFloat) {
+            let field = NSTextField(labelWithString: title)
+            field.frame = NSRect(x: 0, y: y, width: 110, height: 24)
+            form.addSubview(field)
+        }
+        func field(_ value: String, _ y: CGFloat) -> NSTextField {
+            let input = NSTextField(frame: NSRect(x: 115, y: y, width: 280, height: 24))
+            input.stringValue = value
+            form.addSubview(input)
+            return input
+        }
+        label("API 키", 366)
+        let apiKey = NSSecureTextField(frame: NSRect(x: 115, y: 366, width: 280, height: 24))
+        apiKey.stringValue = settings.apiKey
+        form.addSubview(apiKey)
+        label("OpenAI 모델", 332)
+        let openAIModel = field(settings.openAIModel, 332)
+        label("ElevenLabs 모델", 298)
+        let elevenLabsModel = field(settings.elevenLabsModel, 298)
+        label("단축키", 264)
+        let shortcuts = ["right_option", "left_option", "right_ctrl", "left_ctrl", "right_shift", "left_shift", "right_cmd", "left_cmd", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"]
+        let shortcut = NSPopUpButton(frame: NSRect(x: 115, y: 264, width: 280, height: 26), pullsDown: false)
+        shortcut.addItems(withTitles: shortcuts)
+        shortcut.selectItem(withTitle: settings.shortcut)
+        form.addSubview(shortcut)
+        label("녹음 방식", 230)
+        let control = NSPopUpButton(frame: NSRect(x: 115, y: 230, width: 280, height: 26), pullsDown: false)
+        control.addItems(withTitles: ["hold", "toggle"])
+        control.selectItem(withTitle: settings.recordingControl)
+        form.addSubview(control)
+        label("언어", 196)
+        let language = field(settings.language, 196)
+        label("고유명사", 162)
+        let keyterms = field(settings.keyterms.joined(separator: ", "), 162)
+        let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거", target: nil, action: nil)
+        noVerbatim.frame = NSRect(x: 115, y: 126, width: 280, height: 25)
+        noVerbatim.state = settings.noVerbatim ? .on : .off
+        form.addSubview(noVerbatim)
+        let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
+        mute.frame = NSRect(x: 115, y: 94, width: 280, height: 25)
+        mute.state = settings.muteDuringRecording ? .on : .off
+        form.addSubview(mute)
+        let autoSend = NSButton(checkboxWithTitle: "붙여넣은 뒤 Enter 입력", target: nil, action: nil)
+        autoSend.frame = NSRect(x: 115, y: 62, width: 280, height: 25)
+        autoSend.state = settings.autoSend ? .on : .off
+        form.addSubview(autoSend)
+        alert.accessoryView = form
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        var updated = settings
+        updated.apiKey = apiKey.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.shortcut = shortcut.titleOfSelectedItem ?? "right_option"
+        updated.recordingControl = control.titleOfSelectedItem ?? "hold"
+        updated.language = language.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.openAIModel = openAIModel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.elevenLabsModel = elevenLabsModel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.keyterms = keyterms.stringValue.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        updated.noVerbatim = noVerbatim.state == .on
+        updated.muteDuringRecording = mute.state == .on
+        updated.autoSend = autoSend.state == .on
+        do {
+            try updated.save()
+            settings = updated
+            keyDown = false
+            setStatus("설정 저장됨")
+        } catch {
+            setStatus("설정 저장 실패: \(error.localizedDescription)")
+        }
+    }
+}
+
+let application = NSApplication.shared
+let delegate = KeyScribeApp()
+application.delegate = delegate
+application.run()

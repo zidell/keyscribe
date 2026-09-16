@@ -10,4 +10,5 @@
 - Cloudflare Pages는 릴리스 워크플로에서 `static` 브랜치의 페이지를 직접 배포한다. 도메인/DNS와 R2 버킷 연결은 외부 서비스 설정이 필요하다.
 - 개발 중에는 소스 변경을 감지해 앱을 다시 빌드하고 재실행하는 개발 모드를 제공한다. 감시 도구가 시작한 앱만 종료·재시작한다.
 - `README.md`는 실행·사용법 요약만 담고, 릴리스·서명·페이지 설정은 `docs/release.md`에 기록한다.
-- 현재 py2app macOS 앱의 대기 중 RSS는 이 Mac에서 약 76~91 MiB로 측정되었다. 20 MiB 안팎의 목표와 Python 제거는 논의 중이며, 재작성은 아직 결정되지 않았다.
+- 현재 py2app macOS 앱의 대기 중 RSS는 이 Mac에서 약 76~91 MiB로 측정되었다. 20 MiB 안팎을 목표로 `native-rewrite` 브랜치에서 Python 없는 macOS Swift/AppKit 앱을 개발 중이다. 실제 상주 메모리는 권한과 기능 검증을 마친 뒤 측정한다.
+- 네이티브 전환이 macOS와 Windows 양쪽에서 기능 검증을 마치기 전에는 기존 Python 릴리스 워크플로를 네이티브 빌드로 교체하지 않는다. 네이티브 진행 상태와 남은 검증 항목은 `docs/native-rewrite.md`에 기록한다.
