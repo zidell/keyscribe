@@ -89,6 +89,7 @@ jobs:
           APPLE_ID: ${{ secrets.KEYSCRIBE_APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
           TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
         run: |
           version="${RELEASE_TAG#macos-v}"
           dmg="KeyScribe-macos-${{ matrix.arch }}-$version.dmg"
@@ -97,6 +98,8 @@ jobs:
           ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
           hdiutil create -volname KeyScribe -srcfolder "$RUNNER_TEMP/dmg-root" \
             -format UDZO -ov "$dmg"
+          codesign --sign "$SIGNING_IDENTITY" --timestamp "$dmg"
+          codesign --verify --verbose=2 "$dmg"
           xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" --team-id "$TEAM_ID" --wait \
             --output-format json > "$RUNNER_TEMP/notary-result.json"
@@ -104,6 +107,8 @@ jobs:
           jq -e '.status == "Accepted"' "$RUNNER_TEMP/notary-result.json" >/dev/null
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
+          spctl --assess --verbose=2 --type open \
+            --context context:primary-signature "$dmg"
           hdiutil verify "$dmg"
         shell: bash
       - uses: actions/upload-artifact@v4
