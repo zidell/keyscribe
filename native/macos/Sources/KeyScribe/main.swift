@@ -61,7 +61,13 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func setupMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "🎙"
+        if let url = Bundle.main.url(forResource: "keyscribe-menu", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 18, height: 18)
+            icon.isTemplate = true
+            statusItem.button?.image = icon
+            statusItem.button?.imagePosition = .imageOnly
+        }
         let menu = NSMenu()
         statusLine = NSMenuItem(title: "준비됨", action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
@@ -78,9 +84,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func setStatus(_ message: String, symbol: String = "🎙") {
+    private func setStatus(_ message: String) {
         statusLine.title = message
-        statusItem.button?.title = symbol
     }
 
     private func installEventTap() {
@@ -170,7 +175,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
             recordingURL = url
             phase = .recording
-            setStatus("녹음 중 · Esc 취소", symbol: "🔴")
+            setStatus("녹음 중 · Esc 취소")
             if settings.muteDuringRecording { muteSystemAudio() }
         } catch {
             recorder = nil
@@ -185,7 +190,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         recorder = nil
         restoreSystemAudio()
         phase = .transcribing
-        setStatus("변환 중 · Esc 취소", symbol: "⏳")
+        setStatus("변환 중 · Esc 취소")
         let currentSession = session
         let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if settings.apiKey.hasPrefix("sk-") && byteCount > 24 * 1024 * 1024 {
