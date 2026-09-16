@@ -4,6 +4,12 @@
 
 ## 배포 구조
 
+### `main` 푸시 미리보기
+
+`main`에 커밋을 푸시할 때마다 [Main macOS preview 워크플로](../.github/workflows/main-macos-release.yml)가 해당 커밋을 빌드합니다. Apple Silicon·Intel 앱과 DMG를 Developer ID로 서명하고 공증한 뒤, 두 DMG가 모두 검증되면 [비공개 GitHub Releases](https://github.com/zidell/keyscribe/releases)에 사전 릴리스로 게시합니다. 태그는 `macos-main-실행번호-커밋해시12자리` 형식이며, DMG 파일명에도 같은 식별자를 사용합니다. 앱 내부 미리보기 버전은 `0.1.실행번호` 형식입니다. 저장소 접근 권한이 있어야 다운로드할 수 있습니다.
+
+이 미리보기는 R2, `static` 브랜치, 랜딩 페이지를 갱신하지 않습니다. 정식 macOS·Windows 통합 배포는 아래 `vMAJOR.MINOR.PATCH` 태그 경로를 사용합니다.
+
 ### 네이티브 macOS 시험 릴리스
 
 `main`의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포할 수도 있습니다. `macos-vMAJOR.MINOR.PATCH` 태그를 `main`의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **비공개 GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.

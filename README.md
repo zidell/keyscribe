@@ -6,6 +6,8 @@ KeyScribe는 macOS 메뉴바와 Windows 트레이에서 실행되는 음성 받�
 
 [다운로드 페이지](https://keyscribe.gitools.net)에서 운영체제에 맞는 파일을 받습니다.
 
+최신 `main`의 macOS 설치용 DMG는 [GitHub Releases](https://github.com/zidell/keyscribe/releases)의 사전 릴리스에서 받을 수 있습니다. 비공개 저장소 접근 권한이 필요합니다.
+
 | 운영체제 | 파일 | 실행 |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |

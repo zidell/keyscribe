@@ -28,7 +28,12 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item $appDirectory -ItemType Directory -Force | Out-Null
 New-Item $assetsDirectory -ItemType Directory -Force | Out-Null
 Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $appDirectory 'KeyScribe.exe')
-python packaging/create-msix-assets.py $assetsDirectory
+$sourceAssets = Join-Path $root 'packaging\msix-assets'
+foreach ($name in @('StoreLogo.png', 'Logo44.png', 'Logo150.png', 'Logo310.png', 'LogoWide.png')) {
+    $source = Join-Path $sourceAssets $name
+    if (-not (Test-Path $source)) { throw "MSIX asset not found: $source" }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $assetsDirectory $name)
+}
 
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>

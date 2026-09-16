@@ -31,7 +31,7 @@ if [[ -n "${KEYSCRIBE_VERSION:-}" ]]; then
 fi
 
 if [[ -n "${KEYSCRIBE_CODESIGN_IDENTITY:-}" ]]; then
-    codesign --force --options runtime \
+    codesign --force --options runtime --timestamp \
         --entitlements "$project_root/packaging/macos-entitlements.plist" \
         --sign "$KEYSCRIBE_CODESIGN_IDENTITY" "$staged_app"
     codesign --verify --deep --strict "$staged_app"

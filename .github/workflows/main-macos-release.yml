@@ -1,0 +1,148 @@
+name: Main macOS preview
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-macos-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            binary_arch: arm64
+            runner: macos-15
+          - arch: x64
+            binary_arch: x86_64
+            runner: macos-15-intel
+    env:
+      PREVIEW_VERSION: 0.1.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Check source and signing settings
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.KEYSCRIBE_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Expected main push' >&2; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || {
+            echo 'Checkout does not match push commit' >&2; exit 1;
+          }
+          for value in CERTIFICATE CERT_PASSWORD SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD TEAM_ID; do
+            if [[ -z "${!value}" ]]; then echo "Missing macOS release setting: $value" >&2; exit 1; fi
+          done
+        shell: bash
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.KEYSCRIBE_MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/keyscribe.p12"
+          security create-keychain -p "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security unlock-keychain -p "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/keyscribe.keychain-db"
+          security import "$RUNNER_TEMP/keyscribe.p12" -k "$RUNNER_TEMP/keyscribe.keychain-db" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$RUNNER_TEMP" "$RUNNER_TEMP/keyscribe.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/keyscribe.keychain-db"
+        shell: bash
+      - name: Build and verify signed native app
+        env:
+          KEYSCRIBE_CODESIGN_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
+        run: |
+          export KEYSCRIBE_VERSION="$PREVIEW_VERSION"
+          bash native/macos/build.sh
+          codesign --verify --deep --strict --verbose=2 dist-native/KeyScribe.app
+          binary_arch="$(lipo -archs dist-native/KeyScribe.app/Contents/MacOS/KeyScribe)"
+          [[ "$binary_arch" == '${{ matrix.binary_arch }}' ]] || {
+            echo "Unexpected app architecture: $binary_arch" >&2; exit 1;
+          }
+        shell: bash
+      - name: Create and notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.KEYSCRIBE_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
+        run: |
+          build_id="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          dmg="KeyScribe-macos-${{ matrix.arch }}-$build_id.dmg"
+          mkdir -p "$RUNNER_TEMP/dmg-root"
+          cp -R dist-native/KeyScribe.app "$RUNNER_TEMP/dmg-root/KeyScribe.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
+          hdiutil create -volname KeyScribe -srcfolder "$RUNNER_TEMP/dmg-root" \
+            -format UDZO -ov "$dmg"
+          codesign --sign "$SIGNING_IDENTITY" --timestamp "$dmg"
+          codesign --verify --verbose=2 "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$TEAM_ID" --wait \
+            --output-format json > "$RUNNER_TEMP/notary-result.json"
+          cat "$RUNNER_TEMP/notary-result.json"
+          jq -e '.status == "Accepted"' "$RUNNER_TEMP/notary-result.json" >/dev/null
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --verbose=2 --type open \
+            --context context:primary-signature "$dmg"
+          hdiutil verify "$dmg"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-macos-${{ matrix.arch }}
+          path: KeyScribe-macos-*.dmg
+          if-no-files-found: error
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/keyscribe.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/keyscribe.p12"
+
+  publish:
+    name: Publish private macOS main preview
+    needs: macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-macos-*
+          path: release-assets
+          merge-multiple: true
+      - name: Check and publish DMGs
+        run: |
+          build_id="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          release_tag="macos-$build_id"
+          for arch in arm64 x64; do
+            test -s "release-assets/KeyScribe-macos-$arch-$build_id.dmg" || {
+              echo "Missing macOS $arch DMG" >&2; exit 1;
+            }
+          done
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $release_tag already exists; refusing to replace its files" >&2
+            exit 1
+          fi
+          gh release create "$release_tag" release-assets/*.dmg \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "KeyScribe macOS main ${GITHUB_SHA:0:12}" --generate-notes \
+            --prerelease --latest=false
+        shell: bash

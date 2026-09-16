@@ -1,6 +1,6 @@
 # 네이티브 전환 작업
 
-macOS와 Windows 네이티브 앱이 `main`에 병합되었다. `vMAJOR.MINOR.PATCH` 태그는 두 플랫폼의 통합 네이티브 릴리스를 만들고, `macos-vMAJOR.MINOR.PATCH` 태그는 macOS 전용 사전 릴리스를 만든다.
+macOS와 Windows 네이티브 앱이 `main`에 병합되었다. `main` 푸시마다 macOS DMG 미리보기 사전 릴리스를 만들고, `vMAJOR.MINOR.PATCH` 태그는 두 플랫폼의 통합 네이티브 릴리스를 만든다. `macos-vMAJOR.MINOR.PATCH` 태그도 macOS 전용 사전 릴리스에 사용할 수 있다.
 
 ## 목표와 현재 상태
 

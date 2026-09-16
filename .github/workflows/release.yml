@@ -105,9 +105,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       - name: Check signing settings
         shell: pwsh
         env:
@@ -139,7 +136,6 @@ jobs:
             [Convert]::FromBase64String($env:CERTIFICATE))
           try {
             $version = $env:GITHUB_REF_NAME.Substring(1)
-            python -m pip install pillow
             ./packaging/build-msix.ps1 -Version $env:GITHUB_REF_NAME.Substring(1) `
               -CertificatePath $certificatePath -CertificatePassword $env:CERT_PASSWORD `
               -ExecutablePath 'dist\KeyScribe.exe'
@@ -163,9 +159,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       - uses: actions/download-artifact@v4
         with:
           pattern: '*'
@@ -211,7 +204,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.KEYSCRIBE_R2_BUCKET || 'keyscribe-downloads' }}
         run: |
-          python -m pip install awscli
+          aws --version
           version="${GITHUB_REF_NAME#v}"
           for file in release-assets/*; do
             aws s3 cp "$file" "s3://$R2_BUCKET/releases/$version/$(basename "$file")" \
@@ -222,7 +215,7 @@ jobs:
       - name: Render and push static branch
         run: |
           version="${GITHUB_REF_NAME#v}"
-          python3 scripts/render_site.py "$version" "$RUNNER_TEMP/static-site"
+          bash scripts/render_site.sh "$version" "$RUNNER_TEMP/static-site"
           git worktree add --detach "$RUNNER_TEMP/static-branch"
           git -C "$RUNNER_TEMP/static-branch" switch --orphan static
           cp "$RUNNER_TEMP/static-site"/* "$RUNNER_TEMP/static-branch"/
