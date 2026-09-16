@@ -68,7 +68,7 @@ final class RecordingOverlay {
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
-            window.setFrameOrigin(NSPoint(x: frame.maxX - width - 32, y: frame.minY + 40))
+            window.setFrameOrigin(NSPoint(x: frame.midX - width / 2, y: frame.minY + 40))
         }
         window.orderFrontRegardless()
     }
