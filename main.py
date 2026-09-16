@@ -562,6 +562,16 @@ else:
 # ================================================================== #
 # 공통 로직 Mixin
 # ================================================================== #
+class _VADSession:
+    """한 번의 연속입력 세션이 소유하는 종료 신호와 세그먼트 큐."""
+
+    _END = object()
+
+    def __init__(self):
+        self.stop_requested = threading.Event()
+        self.segments: queue.Queue = queue.Queue()
+
+
 class VoiceSTTCore:
     """
     플랫폼 독립적인 녹음·STT·VAD·키보드 로직.
@@ -606,7 +616,7 @@ class VoiceSTTCore:
         self._continuous_paste_count = 0
         self._vad_thread: threading.Thread | None = None
         self._vad_worker_thread: threading.Thread | None = None
-        self._vad_segment_queue: queue.Queue = queue.Queue()
+        self._vad_session: _VADSession | None = None
         self._cfg_trigger_key = keyboard.Key.alt_r
         self._cfg_continuous_combo: frozenset | None = None
         self._pressed_keys: set = set()
@@ -1084,7 +1094,7 @@ class VoiceSTTCore:
 
     def _call_stt(self, config: dict, api_key: str, tmp_path: str,
                   hard_timeout: float, sdk_timeout: float) -> object:
-        """API 키 prefix로 STT 제공자 라우팅. sk- → OpenAI Whisper, 그 외 → ElevenLabs."""
+        """API 키 prefix로 STT 제공자 라우팅. sk- → OpenAI gpt-transcribe, 그 외 → ElevenLabs."""
         if api_key.startswith("sk-"):
             return self._call_openai(config, api_key, tmp_path, hard_timeout, sdk_timeout)
         return self._call_elevenlabs(config, api_key, tmp_path, hard_timeout, sdk_timeout)
@@ -1147,10 +1157,10 @@ class VoiceSTTCore:
         if httpx is None:
             raise RuntimeError("httpx 모듈이 로드되지 않아 OpenAI 호출 불가")
 
-        model = config.get("openai_model", "whisper-1")
+        model = config.get("openai_model", "gpt-transcribe")
         language = config.get("language", "ko")
         keyterms = config.get("keyterms", []) or []
-        # Whisper는 단순 나열보다 자연어 문장이 인식률이 더 높다 (공식 권장).
+        # 용어는 자연어 문장으로 제공해 전사 정확도를 돕는다.
         prompt = f"이 녹음에는 다음 용어가 포함됩니다: {', '.join(keyterms)}." if keyterms else None
 
         last_exc = None
@@ -1159,7 +1169,7 @@ class VoiceSTTCore:
             if self._cancelled:
                 return None
             try:
-                log.info("OpenAI Whisper API 호출 (시도 %d/2) — model=%s", attempt, model)
+                log.info("OpenAI Transcription API 호출 (시도 %d/2) — model=%s", attempt, model)
                 _holder: dict = {}
 
                 def _call(_holder=_holder):
@@ -1297,17 +1307,21 @@ class VoiceSTTCore:
     # ------------------------------------------------------------------
 
     def _start_vad_listening(self):
+        # 이전 세션이 마지막 발화를 변환 중이면 새 스트림을 열지 않는다. 두 세션이
+        # 같은 마이크를 동시에 열거나, 이전 세션의 UI/입력 결과가 새 세션을 덮는
+        # 경쟁 상태를 막는다.
+        if self._vad_session is not None:
+            log.warning("VAD 시작 요청 무시 — 이전 세션 마무리 중")
+            self._ui(lambda: self._set_status("상태: 마지막 발화 마무리 중..."))
+            return
+
+        session = _VADSession()
+        self._vad_session = session
         self._continuous_listening = True
         self._continuous_paste_count = 0
-        # 이전 세션에 남은 구간 비우기
-        while not self._vad_segment_queue.empty():
-            try:
-                self._vad_segment_queue.get_nowait()
-            except queue.Empty:
-                break
-        self._vad_thread = threading.Thread(target=self._vad_loop, daemon=True)
+        self._vad_thread = threading.Thread(target=self._vad_loop, args=(session,), daemon=True)
         self._vad_thread.start()
-        self._vad_worker_thread = threading.Thread(target=self._vad_worker, daemon=True)
+        self._vad_worker_thread = threading.Thread(target=self._vad_worker, args=(session,), daemon=True)
         self._vad_worker_thread.start()
         log.info("VAD 리스닝 + 워커 시작")
         self._ui(lambda: (
@@ -1318,13 +1332,18 @@ class VoiceSTTCore:
         ))
 
     def _stop_vad_listening(self):
+        session = self._vad_session
         self._continuous_listening = False
+        if session:
+            # 루프와 워커는 여기서 즉시 버려지지 않는다. VAD 루프가 현재 버퍼를
+            # 세그먼트로 확정하고 종료 표식을 넣으면, 워커가 그 표식 전까지의 모든
+            # 세그먼트를 순서대로 변환한다.
+            session.stop_requested.set()
         log.info("VAD 리스닝 중지 요청")
         self._ui(lambda: (
             self._set_tray_title("🎙"),
-            self._set_status("상태: 대기중"),
+            self._set_status("상태: 마지막 발화 마무리 중..." if session else "상태: 대기중"),
             self._set_continuous_state(False),
-            self.overlay.hide() if self.overlay else None,
         ))
 
     def _request_continuous_mode(self):
@@ -1338,16 +1357,27 @@ class VoiceSTTCore:
             log.info("메뉴 — 연속입력 리스닝 ON")
             self._start_vad_listening()
 
-    def _vad_loop(self):
+    def _vad_loop(self, session: _VADSession):
         config = load_config()
         threshold = config.get("vad_threshold", 500)
+        # 시작은 배경 소음을 피하기 위해 높은 임계값을 쓰되, 한번 말하기 시작한
+        # 뒤에는 더 낮은 임계값으로 유지한다. 끝 음절은 보통 첫 음절보다 작아서
+        # 한 임계값만 쓰면 '침묵'으로 잘못 분류된다.
+        continue_threshold = config.get(
+            "vad_continue_threshold", max(100, int(threshold * 0.35)),
+        )
+        continue_threshold = max(1, min(int(continue_threshold), int(threshold)))
         silence_sec = config.get("vad_silence_sec", 1.0)
         chunk_sec = 0.05
         chunk_samples = int(self.SAMPLE_RATE * chunk_sec)
-        silence_chunks_needed = int(silence_sec / chunk_sec)
+        silence_chunks_needed = max(1, math.ceil(silence_sec / chunk_sec))
         chunk_q: queue.Queue = queue.Queue()
 
         def _vad_callback(indata, frames, time_info, status):
+            # 종료 요청 뒤에 새 오디오를 넣지 않아, 종료 시 큐를 확정적으로 비울 수
+            # 있게 한다. 이미 넣어진 청크는 아래 루프가 모두 처리한다.
+            if session.stop_requested.is_set():
+                return
             chunk_q.put(indata.copy())
             rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
             if self.overlay:
@@ -1360,10 +1390,11 @@ class VoiceSTTCore:
         # pre-roll: 말 시작 클리핑 방지 — 임계값 초과 직전 250ms를 보존
         pre_roll_chunks = int(0.25 / chunk_sec)
         ring_buf: collections.deque = collections.deque(maxlen=pre_roll_chunks)
-        # post-roll: 말 끝 클리핑 방지 — trailing silence에서 150ms를 남겨둠
-        post_roll_chunks = int(0.15 / chunk_sec)
 
-        log.info("VAD 루프 진입 — threshold=%d, silence_sec=%.1f", threshold, silence_sec)
+        log.info(
+            "VAD 루프 진입 — start_threshold=%d, continue_threshold=%d, silence_sec=%.1f",
+            threshold, continue_threshold, silence_sec,
+        )
         diag_rms: list[float] = []
         diag_chunks_target = int(1.0 / chunk_sec)  # 처음 1초만 수집
         diag_logged = False
@@ -1375,10 +1406,14 @@ class VoiceSTTCore:
                 blocksize=chunk_samples,
                 callback=_vad_callback,
             ):
-                while self._continuous_listening:
+                # 종료 요청을 받은 뒤에도, 콜백이 이미 넣은 청크는 비울 때까지
+                # 처리한다. 이 과정이 없으면 토글 시 마지막 50~100ms가 사라진다.
+                while True:
                     try:
                         chunk = chunk_q.get(timeout=0.1)
                     except queue.Empty:
+                        if session.stop_requested.is_set():
+                            break
                         continue
 
                     rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
@@ -1401,39 +1436,40 @@ class VoiceSTTCore:
                                 )
                             diag_logged = True
 
-                    if rms >= threshold:
-                        if not speaking:
-                            speaking = True
-                            silence_count = 0
-                            speech_frames = list(ring_buf)  # pre-roll 삽입
-                            log.info("VAD: 음성 감지 시작 (pre-roll %d 청크)", len(speech_frames))
-                            self._ui(lambda: (
-                                self._set_tray_title("🔴"),
-                                self._set_status("상태: 녹음중 (VAD)"),
-                                self.overlay.show("🔴  녹음중") if self.overlay else None,
-                            ))
-                        else:
-                            silence_count = 0
-                        speech_frames.append(chunk)
-                    elif speaking:
-                        silence_count += 1
-                        speech_frames.append(chunk)
+                    if not speaking:
+                        if rms < threshold:
+                            ring_buf.append(chunk)  # 침묵 구간: pre-roll 버퍼에 누적
+                            continue
+                        speaking = True
+                        silence_count = 0
+                        speech_frames = list(ring_buf)  # pre-roll 삽입
+                        log.info("VAD: 음성 감지 시작 (pre-roll %d 청크)", len(speech_frames))
+                        self._ui(lambda: (
+                            self._set_tray_title("🔴"),
+                            self._set_status("상태: 녹음중 (VAD)"),
+                            self.overlay.show("🔴  녹음중") if self.overlay else None,
+                        ))
 
+                    speech_frames.append(chunk)
+                    if rms >= continue_threshold:
+                        silence_count = 0
+                    else:
+                        silence_count += 1
                         if silence_count >= silence_chunks_needed:
-                            # post-roll: silence 중 마지막 150ms는 유지
-                            trim = max(0, silence_count - post_roll_chunks)
-                            frames_to_send = speech_frames[:-trim] if trim > 0 else speech_frames
+                            # 절대 잘라내지 않는다. 이전 구현은 이 시점에서 마지막
+                            # 1초 중 150ms만 남겨, 임계값 아래로 떨어진 끝 단어를
+                            # '침묵'으로 오인한 채 삭제했다. STT에는 1초의 무음보다
+                            # 완전한 발화가 훨씬 중요하다.
+                            frames_to_send = speech_frames
                             speech_frames = []
                             silence_count = 0
                             speaking = False
                             ring_buf.clear()
 
                             if frames_to_send:
-                                self._vad_segment_queue.put(frames_to_send)
+                                session.segments.put(frames_to_send)
                                 log.info("VAD: 음성 구간 → 대기열 (%d 청크, 대기 %d개)",
-                                         len(frames_to_send), self._vad_segment_queue.qsize())
-                    else:
-                        ring_buf.append(chunk)  # 침묵 구간: pre-roll 버퍼에 누적
+                                         len(frames_to_send), session.segments.qsize())
         except Exception:
             log.exception("VAD 루프 오류 — 마이크 사용 불가")
             # 연속입력 모드를 자동으로 OFF 시키고 사용자에게 알린다
@@ -1456,28 +1492,36 @@ class VoiceSTTCore:
             self._reset_timer = threading.Timer(3.0, _on_vad_mic_error_reset)
             self._reset_timer.start()
         finally:
+            # 모드를 끄는 순간에도 아직 silence timeout에 닿지 않은 마지막 발화는
+            # 반드시 하나의 세그먼트로 확정한다.
+            if speaking and speech_frames:
+                session.segments.put(speech_frames)
+                log.info("VAD 종료: 진행 중 마지막 음성 구간 확정 (%d 청크, 대기 %d개)",
+                         len(speech_frames), session.segments.qsize())
+            session.segments.put(_VADSession._END)
             log.info("VAD 루프 종료")
 
-    def _vad_worker(self):
+    def _vad_worker(self, session: _VADSession):
         """VAD 세그먼트 큐를 순서대로 처리하는 워커. VAD 루프와 독립적으로 동작."""
         log.info("VAD 워커 진입")
-        while self._continuous_listening:
-            try:
-                frames = self._vad_segment_queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
+        while True:
+            frames = session.segments.get()
+            if frames is _VADSession._END:
+                break
             log.info("VAD 워커: 세그먼트 처리 시작 (%d 청크, 남은 대기 %d개)",
-                     len(frames), self._vad_segment_queue.qsize())
+                     len(frames), session.segments.qsize())
             self._transcribing = True
             self._ui(lambda: (
                 self._set_tray_title("⏳"),
                 self._set_status("상태: 변환중..."),
                 self.overlay.show("⏳  변환중...") if self.overlay else None,
             ))
-            self._transcribe_vad(frames)  # 동기 호출 — 완료될 때까지 대기
+            self._transcribe_vad(frames, session)  # 동기 호출 — 완료될 때까지 대기
+        if self._vad_session is session:
+            self._vad_session = None
         log.info("VAD 워커 종료")
 
-    def _transcribe_vad(self, frames: list[np.ndarray]):
+    def _transcribe_vad(self, frames: list[np.ndarray], session: _VADSession):
         t_start = time.time()
         tmp_path = None
         try:
@@ -1523,7 +1567,7 @@ class VoiceSTTCore:
                     pass
             self._transcribing = False
             # 큐에 다음 구간이 있으면 워커가 곧 다시 ⏳로 바꾸므로 잠깐 듣는중 표시
-            if self._continuous_listening:
+            if self._continuous_listening and self._vad_session is session:
                 self._ui(lambda: (
                     self._set_tray_title("👂"),
                     self._set_status("상태: 듣는중 (연속입력 ON)"),
@@ -1647,7 +1691,7 @@ if PLATFORM == "darwin":
                 title="STT API Key 설정",
                 message="API Key를 입력하세요.\n"
                         "  • sk_…  → ElevenLabs Scribe v2 (elevenlabs.io → Profile → API Keys)\n"
-                        "  • sk-…  → OpenAI Whisper (platform.openai.com → API keys)",
+                        "  • sk-…  → OpenAI gpt-transcribe (platform.openai.com → API keys)",
                 default_text=self._api_key,
                 ok="저장",
                 cancel="취소",
@@ -1826,7 +1870,7 @@ elif PLATFORM == "win32":
                 "API Key 설정",
                 "API Key를 입력하세요:\n"
                 "  • sk_…  → ElevenLabs Scribe v2\n"
-                "  • sk-…  → OpenAI Whisper",
+                "  • sk-…  → OpenAI gpt-transcribe",
                 initialvalue=self._api_key,
                 parent=self._root,
             )
