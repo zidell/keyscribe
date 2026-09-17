@@ -27,6 +27,8 @@ const KEY_MESSAGE: u32 = WM_APP + 2;
 const RESULT_MESSAGE: u32 = WM_APP + 3;
 const MODELS_MESSAGE: u32 = WM_APP + 4;
 const RIGHT_ALT_TIMER: usize = 3;
+const AUTO_SEND_DOWN_TIMER: usize = 4;
+const AUTO_SEND_UP_TIMER: usize = 5;
 const ID_SETTINGS: usize = 101;
 const ID_FOLDER: usize = 102;
 const ID_EXIT: usize = 103;
@@ -440,7 +442,7 @@ unsafe extern "system" fn root_proc(
                     Ok(text) if !text.is_empty() => {
                         hide_overlay(hwnd);
                         app(hwnd).last_text = text.chars().take(60).collect();
-                        match paste(&text, app(hwnd).settings.auto_send) {
+                        match paste(hwnd, &text, app(hwnd).settings.auto_send) {
                             Ok(()) => set_status(hwnd, "완료"),
                             Err(error) => set_status(hwnd, &format!("붙여넣기 실패: {error}")),
                         }
@@ -513,6 +515,15 @@ unsafe extern "system" fn root_proc(
                 {
                     PostMessageW(hwnd, KEY_MESSAGE, VK_RMENU as usize, 1);
                 }
+            } else if wparam == AUTO_SEND_DOWN_TIMER {
+                KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
+                send_keys(&[(VK_RETURN, false)]);
+                if SetTimer(hwnd, AUTO_SEND_UP_TIMER, 40, None) == 0 {
+                    send_keys(&[(VK_RETURN, true)]);
+                }
+            } else if wparam == AUTO_SEND_UP_TIMER {
+                KillTimer(hwnd, AUTO_SEND_UP_TIMER);
+                send_keys(&[(VK_RETURN, true)]);
             }
             0
         }
@@ -530,6 +541,10 @@ unsafe extern "system" fn root_proc(
             mute::restore(owned.mute_before);
             KillTimer(hwnd, 1);
             KillTimer(hwnd, RIGHT_ALT_TIMER);
+            KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
+            if KillTimer(hwnd, AUTO_SEND_UP_TIMER) != 0 {
+                send_keys(&[(VK_RETURN, true)]);
+            }
             if RIGHT_ALT_STATE.swap(0, Ordering::Relaxed) == 3 {
                 send_keys(&[(VK_RMENU, true)]);
             }
@@ -764,7 +779,8 @@ unsafe fn cancel(hwnd: HWND) {
     transient_overlay(hwnd, overlay::State::Cancelled);
 }
 
-unsafe fn paste(text: &str, auto_send: bool) -> Result<(), String> {
+unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
+    KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
     if OpenClipboard(ptr::null_mut()) == 0 {
         return Err("클립보드를 열 수 없습니다".into());
     }
@@ -803,8 +819,11 @@ unsafe fn paste(text: &str, auto_send: bool) -> Result<(), String> {
             (VK_CONTROL, true),
         ]);
         if auto_send {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            send_keys(&[(VK_RETURN, false), (VK_RETURN, true)]);
+            // Editors can apply pasted text asynchronously. Keep the UI responsive
+            // while waiting, then hold Return briefly like a physical key press.
+            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 400, None) == 0 {
+                return Err("Enter 입력을 예약할 수 없습니다".into());
+            }
         }
     }
     Ok(())

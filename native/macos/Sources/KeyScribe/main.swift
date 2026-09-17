@@ -299,9 +299,17 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         if settings.autoSend {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true)?.post(tap: .cghidEventTap)
-                CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false)?.post(tap: .cghidEventTap)
+            // Some editors apply pasted text asynchronously. Give them time to finish
+            // before sending Return, and hold the key briefly like a physical press.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard let enterDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true),
+                      let enterUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false) else { return }
+                enterDown.flags = []
+                enterUp.flags = []
+                enterDown.post(tap: .cghidEventTap)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    enterUp.post(tap: .cghidEventTap)
+                }
             }
         }
     }
