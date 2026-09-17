@@ -213,7 +213,7 @@ unsafe extern "system" fn procedure(
                     let strength =
                         data.level * (0.5 + 0.5 * wave) + (1.0 - data.level) * 0.12 * wave;
                     let height = (4.0 + strength * 24.0) as i32;
-                    let x = 196 + index * 7;
+                    let x = 210 + index * 7;
                     RoundRect(
                         dc,
                         x,

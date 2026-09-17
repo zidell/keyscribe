@@ -55,7 +55,7 @@ final class RecordingOverlay {
 
         for index in 0..<5 {
             let bar = CALayer()
-            bar.frame = NSRect(x: 196 + CGFloat(index) * 7, y: 24, width: 3, height: 4)
+            bar.frame = NSRect(x: 210 + CGFloat(index) * 7, y: 24, width: 3, height: 4)
             bar.backgroundColor = NSColor(calibratedRed: 1, green: 0.28, blue: 0.28, alpha: 1).cgColor
             bar.cornerRadius = 1.5
             content.layer?.addSublayer(bar)
@@ -74,7 +74,15 @@ final class RecordingOverlay {
     }
 
     func updateRecordingTime(_ seconds: Int) {
-        label.stringValue = String(format: "🔴  녹음 중 (%02d:%02d)", seconds / 60, seconds % 60)
+        let elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+        let title = "🔴  녹음 중 (\(elapsed))"
+        let styled = NSMutableAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 14, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ])
+        styled.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .regular),
+                            range: (title as NSString).range(of: elapsed))
+        label.attributedStringValue = styled
     }
 
     func tick(level: CGFloat?) {
@@ -90,7 +98,7 @@ final class RecordingOverlay {
             let wave = 0.5 + 0.5 * sin(phase + CGFloat(index) * 1.3)
             let strength = volume * (0.5 + 0.5 * wave) + (1 - volume) * 0.12 * wave
             let barHeight = 4 + strength * 24
-            bar.frame = NSRect(x: 166 + CGFloat(index) * 7,
+            bar.frame = NSRect(x: 210 + CGFloat(index) * 7,
                                y: (height - barHeight) / 2,
                                width: 3, height: barHeight)
         }
