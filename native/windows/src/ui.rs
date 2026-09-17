@@ -32,6 +32,7 @@ const AUTO_SEND_UP_TIMER: usize = 5;
 const ID_SETTINGS: usize = 101;
 const ID_FOLDER: usize = 102;
 const ID_EXIT: usize = 103;
+const ID_RESTART: usize = 104;
 const ID_SAVE: usize = 201;
 const ID_CANCEL: usize = 202;
 const ID_REFRESH: usize = 203;
@@ -72,6 +73,17 @@ unsafe fn another_key_is_held(now: u32) -> bool {
 
 fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target || (target == VK_RMENU as u32 && physical == VK_HANGUL as u32)
+}
+
+fn summarize_recent(text: &str) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let length = normalized.chars().count();
+    if length <= 30 {
+        return normalized;
+    }
+    let start: String = normalized.chars().take(15).collect();
+    let end: String = normalized.chars().skip(length - 15).collect();
+    format!("{start}…{end}")
 }
 
 #[cfg(test)]
@@ -441,7 +453,7 @@ unsafe extern "system" fn root_proc(
                 match result.result {
                     Ok(text) if !text.is_empty() => {
                         hide_overlay(hwnd);
-                        app(hwnd).last_text = text.chars().take(60).collect();
+                        app(hwnd).last_text = summarize_recent(&text);
                         match paste(hwnd, &text, app(hwnd).settings.auto_send) {
                             Ok(()) => set_status(hwnd, "완료"),
                             Err(error) => set_status(hwnd, &format!("붙여넣기 실패: {error}")),
@@ -590,6 +602,7 @@ unsafe fn tray_menu(hwnd: HWND) {
         ))
         .as_ptr(),
     );
+    AppendMenuW(menu, MF_STRING, ID_RESTART, wide("재실행").as_ptr());
     AppendMenuW(menu, MF_STRING, ID_EXIT, wide("종료").as_ptr());
     let mut point: POINT = mem::zeroed();
     GetCursorPos(&mut point);
@@ -617,6 +630,14 @@ unsafe fn tray_command(hwnd: HWND, command: usize) {
             let _ = std::process::Command::new("explorer.exe")
                 .arg(settings::directory())
                 .spawn();
+        }
+        ID_RESTART => {
+            match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn()) {
+                Ok(_) => {
+                    DestroyWindow(hwnd);
+                }
+                Err(error) => set_status(hwnd, &format!("재실행 실패: {error}")),
+            }
         }
         ID_EXIT => {
             DestroyWindow(hwnd);
