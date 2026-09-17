@@ -38,6 +38,8 @@ const ID_CANCEL: usize = 202;
 const ID_REFRESH: usize = 203;
 const ID_API_KEY: usize = 204;
 const ID_MODEL: usize = 205;
+const ID_ELEVENLABS_KEY: usize = 206;
+const ID_OPENAI_KEY: usize = 207;
 const SHORTCUTS: [(&str, &str, u16); 6] = [
     ("right_alt", "오른쪽 Alt", VK_RMENU),
     ("left_alt", "왼쪽 Alt", VK_LMENU),
@@ -882,6 +884,20 @@ unsafe fn info(owner: HWND, message: &str) {
     );
 }
 
+unsafe fn open_api_key_page(owner: HWND, url: &str) {
+    let result = ShellExecuteW(
+        owner,
+        wide("open").as_ptr(),
+        wide(url).as_ptr(),
+        ptr::null(),
+        ptr::null(),
+        SW_SHOWNORMAL,
+    );
+    if result as isize <= 32 {
+        info(owner, "API 키 페이지를 열지 못했습니다.");
+    }
+}
+
 unsafe fn show_settings(root: HWND) {
     let current = app(root).dialog;
     if !current.is_null() && IsWindow(current) != 0 {
@@ -934,14 +950,37 @@ unsafe fn show_settings(root: HWND) {
         26,
         ID_API_KEY,
     );
-    label("전사 모델", 62);
+    label("API 키 발급", 48);
+    control(
+        dialog,
+        "BUTTON",
+        "ElevenLabs 키 받기 ↗",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+        165,
+        47,
+        175,
+        20,
+        ID_ELEVENLABS_KEY,
+    );
+    control(
+        dialog,
+        "BUTTON",
+        "OpenAI 키 받기 ↗",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+        350,
+        47,
+        180,
+        20,
+        ID_OPENAI_KEY,
+    );
+    label("전사 모델", 80);
     let model = control(
         dialog,
         "COMBOBOX",
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         165,
-        60,
+        78,
         265,
         260,
         ID_MODEL,
@@ -952,7 +991,7 @@ unsafe fn show_settings(root: HWND) {
         "새로고침",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         440,
-        60,
+        78,
         90,
         28,
         ID_REFRESH,
@@ -963,7 +1002,7 @@ unsafe fn show_settings(root: HWND) {
         "",
         WS_CHILD | WS_VISIBLE,
         165,
-        96,
+        109,
         365,
         24,
         0,
@@ -1358,6 +1397,10 @@ unsafe extern "system" fn dialog_proc(
                     DestroyWindow(hwnd);
                 }
                 ID_REFRESH => refresh_models(hwnd, false),
+                ID_ELEVENLABS_KEY => {
+                    open_api_key_page(hwnd, "https://elevenlabs.io/app/developers/api-keys")
+                }
+                ID_OPENAI_KEY => open_api_key_page(hwnd, "https://platform.openai.com/api-keys"),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
                     dialog_state(hwnd).pending_key = None;

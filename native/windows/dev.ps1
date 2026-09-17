@@ -22,7 +22,22 @@ function Get-SourceSnapshot {
     }) -join "`n")
 }
 
+function Follow-RestartedApp {
+    if ($null -eq $script:app -or -not $script:app.HasExited) { return }
+    $child = Get-CimInstance Win32_Process -Filter "ParentProcessId = $($script:app.Id)" |
+        Where-Object { $_.ExecutablePath -eq $output } |
+        Sort-Object CreationDate -Descending |
+        Select-Object -First 1
+    if ($null -eq $child) { return }
+    $replacement = Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $replacement) { return }
+    $script:app.Dispose()
+    $script:app = $replacement
+    Write-Output "Following restarted KeyScribe: PID $($script:app.Id)"
+}
+
 function Stop-OwnedApp {
+    Follow-RestartedApp
     if ($null -ne $script:app) {
         if (-not $script:app.HasExited) {
             $script:app.Kill()
@@ -58,6 +73,7 @@ try {
         $observed = $after
         do {
             Start-Sleep -Milliseconds 500
+            Follow-RestartedApp
             $current = Get-SourceSnapshot
         } while ($current -eq $observed)
         Start-Sleep -Milliseconds 800

@@ -2,6 +2,12 @@ use image::{imageops, ImageFormat, ImageReader};
 use std::{env, path::PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-changed=keyscribe.rc");
+    println!("cargo:rerun-if-changed=../../assets/keyscribe.ico");
+    embed_resource::compile("keyscribe.rc", embed_resource::NONE)
+        .manifest_required()
+        .expect("embed KeyScribe executable icon");
+
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/keyscribe-menu.png");
     println!("cargo:rerun-if-changed={}", source.display());
     let source_icon = ImageReader::open(&source)

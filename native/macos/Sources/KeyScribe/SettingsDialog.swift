@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 
 final class SettingsDialog: NSObject, NSTextFieldDelegate {
+    private static let elevenLabsAPIKeysURL = URL(string: "https://elevenlabs.io/app/developers/api-keys")!
+    private static let openAIAPIKeysURL = URL(string: "https://platform.openai.com/api-keys")!
     private let original: Settings
     private var selectedModels: [TranscriptionProvider: String]
     private var shownProvider: TranscriptionProvider?
@@ -90,17 +92,28 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         apiKey.placeholderString = "sk_… (ElevenLabs) 또는 sk-… (OpenAI)"
         apiKey.delegate = self
         form.addSubview(apiKey)
+        addLabel("API 키 발급", y: 431, height: 18)
+        func addKeyLink(_ title: String, x: CGFloat, width: CGFloat, action: Selector) {
+            let button = NSButton(title: title, target: self, action: action)
+            button.frame = NSRect(x: x, y: 431, width: width, height: 18)
+            button.isBordered = false
+            button.contentTintColor = .linkColor
+            button.font = .systemFont(ofSize: 11)
+            form.addSubview(button)
+        }
+        addKeyLink("ElevenLabs 키 받기 ↗", x: 125, width: 170, action: #selector(openElevenLabsAPIKeys(_:)))
+        addKeyLink("OpenAI 키 받기 ↗", x: 305, width: 170, action: #selector(openOpenAIAPIKeys(_:)))
 
-        addLabel("전사 모델", y: 410)
-        addPicker(model, y: 408, width: 255)
+        addLabel("전사 모델", y: 399)
+        addPicker(model, y: 398, width: 255)
         model.target = self
         model.action = #selector(modelSelectionChanged(_:))
-        refreshButton.frame = NSRect(x: 385, y: 408, width: 90, height: 26)
+        refreshButton.frame = NSRect(x: 385, y: 398, width: 90, height: 26)
         refreshButton.title = "새로고침"
         refreshButton.target = self
         refreshButton.action = #selector(refreshModels(_:))
         form.addSubview(refreshButton)
-        modelHint.frame = NSRect(x: 125, y: 386, width: 350, height: 18)
+        modelHint.frame = NSRect(x: 125, y: 376, width: 350, height: 18)
         modelHint.font = .systemFont(ofSize: 11)
         modelHint.textColor = .secondaryLabelColor
         form.addSubview(modelHint)
@@ -242,5 +255,13 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ notification: Notification) {
         guard notification.object as? NSTextField === apiKey else { return }
         refreshModels(nil)
+    }
+
+    @objc private func openElevenLabsAPIKeys(_ sender: Any?) {
+        NSWorkspace.shared.open(Self.elevenLabsAPIKeysURL)
+    }
+
+    @objc private func openOpenAIAPIKeys(_ sender: Any?) {
+        NSWorkspace.shared.open(Self.openAIAPIKeysURL)
     }
 }
