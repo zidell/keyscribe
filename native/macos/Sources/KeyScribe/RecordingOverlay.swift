@@ -80,8 +80,11 @@ final class RecordingOverlay {
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
             .foregroundColor: NSColor.white,
         ])
+        let timeRange = (title as NSString).range(of: "(\(elapsed))")
         styled.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .regular),
-                            range: (title as NSString).range(of: elapsed))
+                            range: timeRange)
+        styled.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(0.7),
+                            range: timeRange)
         label.attributedStringValue = styled
     }
 

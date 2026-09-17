@@ -3,9 +3,9 @@ use windows_sys::Win32::{
     Foundation::HWND,
     Graphics::Gdi::{
         BeginPaint, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect, GetMonitorInfoW,
-        GetStockObject, InvalidateRect, MonitorFromPoint, RoundRect, SelectObject, SetBkMode,
-        SetTextColor, TextOutW, DEFAULT_GUI_FONT, MONITORINFO, MONITOR_DEFAULTTONEAREST, NULL_PEN,
-        PAINTSTRUCT,
+        GetStockObject, GetTextExtentPoint32W, InvalidateRect, MonitorFromPoint, RoundRect,
+        SelectObject, SetBkMode, SetTextColor, TextOutW, DEFAULT_GUI_FONT, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, NULL_PEN, PAINTSTRUCT,
     },
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetWindowLongPtrW,
@@ -195,14 +195,34 @@ unsafe extern "system" fn procedure(
             let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
             if GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
                 let data = &*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Data);
-                let title: Vec<u16> = data.title.encode_utf16().collect();
-                TextOutW(
-                    dc,
-                    if data.recording { 40 } else { 20 },
-                    18,
-                    title.as_ptr(),
-                    title.len() as i32,
-                );
+                if data.recording {
+                    if let Some(time) = data.title.strip_prefix("녹음 중 ") {
+                        let prefix: Vec<u16> = "녹음 중 ".encode_utf16().collect();
+                        let time: Vec<u16> = time.encode_utf16().collect();
+                        TextOutW(dc, 40, 18, prefix.as_ptr(), prefix.len() as i32);
+                        let mut prefix_size = mem::zeroed();
+                        GetTextExtentPoint32W(
+                            dc,
+                            prefix.as_ptr(),
+                            prefix.len() as i32,
+                            &mut prefix_size,
+                        );
+                        SetTextColor(dc, 0x00b9b9b9);
+                        TextOutW(
+                            dc,
+                            40 + prefix_size.cx,
+                            18,
+                            time.as_ptr(),
+                            time.len() as i32,
+                        );
+                    } else {
+                        let title: Vec<u16> = data.title.encode_utf16().collect();
+                        TextOutW(dc, 40, 18, title.as_ptr(), title.len() as i32);
+                    }
+                } else {
+                    let title: Vec<u16> = data.title.encode_utf16().collect();
+                    TextOutW(dc, 20, 18, title.as_ptr(), title.len() as i32);
+                }
                 let red = CreateSolidBrush(0x004747ff);
                 SelectObject(dc, red as _);
                 if data.recording {
