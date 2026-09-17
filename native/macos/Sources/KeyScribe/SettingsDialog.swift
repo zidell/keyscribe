@@ -20,6 +20,8 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let keyterms = NSTextView()
     private let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거 (ElevenLabs)", target: nil, action: nil)
     private let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
+    private let recordingStartSoundVolume = NSSlider()
+    private let recordingStartSoundValue = NSTextField(labelWithString: "100%")
     private let autoSend = NSButton(checkboxWithTitle: "붙여넣은 뒤 Enter 입력", target: nil, action: nil)
 
     init(settings: Settings) {
@@ -36,7 +38,6 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         alert.addButton(withTitle: "취소")
         alert.accessoryView = makeForm()
         NSApp.activate(ignoringOtherApps: true)
-        alert.window.initialFirstResponder = apiKey
         refreshModels(nil)
         guard alert.runModal() == .alertFirstButtonReturn else {
             requestID = UUID()
@@ -57,6 +58,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         updated.noVerbatim = noVerbatim.state == .on
         updated.muteDuringRecording = mute.state == .on
+        updated.recordingStartSoundVolume = Int(recordingStartSoundVolume.doubleValue.rounded())
         updated.autoSend = autoSend.state == .on
         return updated
     }
@@ -161,12 +163,27 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         mute.frame = NSRect(x: 125, y: 116, width: 350, height: 25)
         mute.state = original.muteDuringRecording ? .on : .off
         form.addSubview(mute)
+        addLabel("녹음 시작 효과음", y: 40)
+        recordingStartSoundVolume.frame = NSRect(x: 125, y: 40, width: 280, height: 25)
+        recordingStartSoundVolume.minValue = 0
+        recordingStartSoundVolume.maxValue = 200
+        recordingStartSoundVolume.doubleValue = Double(original.recordingStartSoundVolume)
+        recordingStartSoundVolume.target = self
+        recordingStartSoundVolume.action = #selector(recordingStartSoundVolumeChanged(_:))
+        form.addSubview(recordingStartSoundVolume)
+        recordingStartSoundValue.frame = NSRect(x: 415, y: 40, width: 60, height: 25)
+        recordingStartSoundValue.stringValue = "\(original.recordingStartSoundVolume)%"
+        form.addSubview(recordingStartSoundValue)
         autoSend.frame = NSRect(x: 125, y: 78, width: 350, height: 25)
         autoSend.state = original.autoSend ? .on : .off
         form.addSubview(autoSend)
 
         updateProvider()
         return form
+    }
+
+    @objc private func recordingStartSoundVolumeChanged(_ sender: NSSlider) {
+        recordingStartSoundValue.stringValue = "\(Int(sender.doubleValue.rounded()))%"
     }
 
     private func updateProvider() {

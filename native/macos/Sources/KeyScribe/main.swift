@@ -42,6 +42,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var statusLine: NSMenuItem!
     private var lastLine: NSMenuItem!
     private var recorder: AVAudioRecorder?
+    private var recordingStartSound: AVAudioPlayer?
     private var recordingURL: URL?
     private var eventTap: CFMachPort?
     private var keyDown = false
@@ -207,7 +208,24 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             DebugLog.shared.record("recording started")
             setStatus("녹음 중 · Esc 취소")
             showActiveOverlay(.recording)
-            if settings.muteDuringRecording { muteSystemAudio() }
+            if settings.recordingStartSoundVolume > 0,
+               let sound = makeRecordingStartSound(volume: settings.recordingStartSoundVolume) {
+                recordingStartSound = sound
+                sound.prepareToPlay()
+                if sound.play() {
+                    if settings.muteDuringRecording {
+                        let currentSession = session
+                        DispatchQueue.main.asyncAfter(deadline: .now() + sound.duration + 0.03) { [weak self] in
+                            guard let self, self.phase == .recording, self.session == currentSession else { return }
+                            self.muteSystemAudio()
+                        }
+                    }
+                } else if settings.muteDuringRecording {
+                    muteSystemAudio()
+                }
+            } else if settings.muteDuringRecording {
+                muteSystemAudio()
+            }
         } catch {
             DebugLog.shared.record("recording start failed type=\(type(of: error))")
             recorder = nil
@@ -217,9 +235,35 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func makeRecordingStartSound(volume: Int) -> AVAudioPlayer? {
+        guard let url = Bundle.main.url(forResource: "recording-start", withExtension: "wav") else { return nil }
+        if volume <= 100 {
+            guard let sound = try? AVAudioPlayer(contentsOf: url) else { return nil }
+            sound.volume = Float(volume) / 100
+            return sound
+        }
+        guard var data = try? Data(contentsOf: url), data.count >= 44 else { return nil }
+        let gain = Double(volume) / 100
+        data.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
+            for offset in stride(from: 44, to: bytes.count - 1, by: 2) {
+                let sample = Int16(bitPattern: UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8))
+                let scaled = Double(sample) / 32768 * gain
+                let magnitude = abs(scaled)
+                let limited = magnitude <= 0.8 ? magnitude : 0.8 + 0.2 * (1 - exp(-(magnitude - 0.8) / 0.2))
+                let adjusted = Int16(((scaled < 0 ? -limited : limited) * 32767).rounded())
+                let encoded = UInt16(bitPattern: adjusted)
+                bytes[offset] = UInt8(truncatingIfNeeded: encoded)
+                bytes[offset + 1] = UInt8(truncatingIfNeeded: encoded >> 8)
+            }
+        }
+        return try? AVAudioPlayer(data: data)
+    }
+
     private func stopRecording() {
         guard phase == .recording, let url = recordingURL else { return }
         DebugLog.shared.record("recording stop requested")
+        recordingStartSound?.stop()
+        recordingStartSound = nil
         recorder?.stop()
         recorder = nil
         restoreSystemAudio()
@@ -264,6 +308,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         DebugLog.shared.record("recording/transcription cancelled phase=\(phase)")
         session = UUID()
         transcriber.cancel()
+        recordingStartSound?.stop()
+        recordingStartSound = nil
         recorder?.stop()
         recorder = nil
         if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
@@ -325,7 +371,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         if settings.autoSend {
             // Some editors apply pasted text asynchronously. Give them time to finish
             // before sending Return, and hold the key briefly like a physical press.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 guard let enterDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true),
                       let enterUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false) else { return }
                 enterDown.flags = []

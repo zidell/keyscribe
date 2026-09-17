@@ -191,10 +191,7 @@ fn multipart(settings: &Settings, boundary: &str) -> (Vec<u8>, Vec<u8>) {
         if !settings.keyterms.is_empty() {
             field(
                 "prompt",
-                &format!(
-                    "이 녹음에는 다음 용어가 포함됩니다: {}.",
-                    settings.keyterms.join(", ")
-                ),
+                &format!("고유명사 표기 참고: {}", settings.keyterms.join(", ")),
             );
         }
     } else {
@@ -225,12 +222,11 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
     if settings.api_key.is_empty() {
         return Err("API 키를 설정해 주세요".into());
     }
-    if settings.openai()
-        && std::fs::metadata(wav).map_err(|e| e.to_string())?.len() > 24 * 1024 * 1024
-    {
+    let openai = settings.openai();
+    if openai && std::fs::metadata(wav).map_err(|e| e.to_string())?.len() > 24 * 1024 * 1024 {
         return Err("OpenAI 녹음 크기 제한(24 MB)을 초과했습니다".into());
     }
-    let (host, path) = if settings.openai() {
+    let (host, path) = if openai {
         ("api.openai.com", "/v1/audio/transcriptions")
     } else {
         ("api.elevenlabs.io", "/v1/speech-to-text")
@@ -246,7 +242,7 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
             path,
             "POST",
             &settings.api_key,
-            settings.openai(),
+            openai,
             Body::File {
                 prefix: &prefix,
                 path: wav,
@@ -258,7 +254,14 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
                 crate::debug_log::log(|| format!("transcription HTTP {status} attempt={}", attempt + 1));
                 match serde_json::from_slice::<Value>(&response) {
                     Ok(json) => match json.get("text").and_then(Value::as_str) {
-                        Some(text) => return Ok(clean_text(text)),
+                        Some(text) => {
+                            let cleaned = clean_text(text);
+                            return Ok(if openai && is_prompt_echo(&cleaned, &settings.keyterms) {
+                                String::new()
+                            } else {
+                                cleaned
+                            });
+                        }
                         None => last_error = "전사 응답에 텍스트가 없습니다".into(),
                     },
                     Err(_) => last_error = "전사 응답을 읽을 수 없습니다".into(),
@@ -364,6 +367,16 @@ fn clean_text(text: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn is_prompt_echo(text: &str, keyterms: &[String]) -> bool {
+    if keyterms.is_empty() {
+        return false;
+    }
+    let terms = keyterms.join(", ");
+    let candidate = text.trim().trim_end_matches(['.', '。', '!', ' ']);
+    candidate == format!("이 녹음에는 다음 용어가 포함됩니다: {terms}")
+        || candidate == format!("고유명사 표기 참고: {terms}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,6 +399,8 @@ mod tests {
         let openai = String::from_utf8(openai).unwrap();
         assert!(openai.contains("name=\"model\"\r\n\r\ngpt-transcribe"));
         assert!(openai.contains("name=\"prompt\""));
+        assert!(openai.contains("고유명사 표기 참고: KeyScribe"));
+        assert!(!openai.contains("이 녹음에는 다음 용어가 포함됩니다"));
         assert!(!openai.contains("name=\"model_id\""));
         assert_eq!(suffix, b"\r\n--boundary--\r\n");
 
@@ -395,5 +410,19 @@ mod tests {
         assert!(elevenlabs.contains("name=\"model_id\"\r\n\r\nscribe_v2"));
         assert!(elevenlabs.contains("name=\"no_verbatim\""));
         assert!(!elevenlabs.contains("name=\"prompt\""));
+    }
+
+    #[test]
+    fn discards_prompt_echo_without_discarding_spoken_terms() {
+        let terms = vec!["비디오스튜".into(), "후잉".into()];
+        assert!(is_prompt_echo(
+            "이 녹음에는 다음 용어가 포함됩니다: 비디오스튜, 후잉.",
+            &terms
+        ));
+        assert!(is_prompt_echo(
+            "고유명사 표기 참고: 비디오스튜, 후잉",
+            &terms
+        ));
+        assert!(!is_prompt_echo("비디오스튜와 후잉을 사용합니다", &terms));
     }
 }

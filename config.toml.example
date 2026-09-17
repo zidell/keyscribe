@@ -51,3 +51,6 @@ no_verbatim = true
 # false → 음소거 없이 녹음 (에코·피드백이 없는 헤드셋 환경 등)
 # macOS와 Windows에서 동작합니다.
 mute_during_recording = true
+
+# 녹음 시작 효과음 음량: 0은 끔, 100은 기본, 최대 200 (%)
+recording_start_sound_volume = 100

@@ -11,6 +11,9 @@ pub struct Settings {
     pub keyterms: Vec<String>,
     pub no_verbatim: bool,
     pub mute_during_recording: bool,
+    pub recording_start_sound_volume: u16,
+    #[serde(rename = "play_recording_start_sound", skip_serializing)]
+    pub legacy_play_recording_start_sound: Option<bool>,
     pub openai_model: String,
     pub elevenlabs_model: String,
     #[serde(skip)]
@@ -27,6 +30,8 @@ impl Default for Settings {
             keyterms: Vec::new(),
             no_verbatim: true,
             mute_during_recording: true,
+            recording_start_sound_volume: 100,
+            legacy_play_recording_start_sound: None,
             openai_model: "gpt-transcribe".into(),
             elevenlabs_model: "scribe_v2".into(),
             api_key: String::new(),
@@ -46,7 +51,7 @@ impl Settings {
         let directory = directory();
         let mut value = fs::read_to_string(directory.join("config.toml"))
             .ok()
-            .and_then(|text| toml::from_str::<Self>(&text).ok())
+            .and_then(|text| Self::from_config(&text))
             .unwrap_or_default();
         if let Ok(text) = fs::read_to_string(directory.join("user_config.json")) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -78,5 +83,38 @@ impl Settings {
 
     pub fn openai(&self) -> bool {
         self.api_key.starts_with("sk-")
+    }
+
+    fn from_config(text: &str) -> Option<Self> {
+        let mut value = toml::from_str::<Self>(text).ok()?;
+        let has_volume = toml::from_str::<toml::Table>(text)
+            .ok()?
+            .contains_key("recording_start_sound_volume");
+        if !has_volume && value.legacy_play_recording_start_sound == Some(false) {
+            value.recording_start_sound_volume = 0;
+        }
+        value.recording_start_sound_volume = value.recording_start_sound_volume.min(200);
+        value.legacy_play_recording_start_sound = None;
+        Some(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings;
+
+    #[test]
+    fn migrates_disabled_start_sound_to_zero_volume() {
+        let settings = Settings::from_config("play_recording_start_sound = false").unwrap();
+        assert_eq!(settings.recording_start_sound_volume, 0);
+    }
+
+    #[test]
+    fn explicit_volume_overrides_legacy_checkbox() {
+        let settings = Settings::from_config(
+            "play_recording_start_sound = false\nrecording_start_sound_volume = 150",
+        )
+        .unwrap();
+        assert_eq!(settings.recording_start_sound_volume, 150);
     }
 }

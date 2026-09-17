@@ -59,10 +59,12 @@ final class Transcriber {
             request.setValue(settings.apiKey, forHTTPHeaderField: "xi-api-key")
         }
         perform(request: request, body: body, attempt: 1, generation: currentGeneration,
+                keyterms: openAI ? settings.keyterms : [],
                 completion: completion)
     }
 
     private func perform(request: URLRequest, body: URL, attempt: Int, generation: UUID,
+                         keyterms: [String],
                          completion: @escaping (Result<String, Error>) -> Void) {
         DebugLog.shared.record("transcription request provider=\(request.url?.host ?? "unknown") attempt=\(attempt)")
         task = URLSession.shared.uploadTask(with: request, fromFile: body) { [weak self] data, response, error in
@@ -73,6 +75,7 @@ final class Transcriber {
                 if (error as NSError).code == NSURLErrorCancelled { return }
                 if attempt == 1 {
                     self.retry(request: request, body: body, generation: generation,
+                               keyterms: keyterms,
                                completion: completion)
                 } else {
                     self.finish(body: body, result: .failure(error), completion: completion)
@@ -83,6 +86,7 @@ final class Transcriber {
             DebugLog.shared.record("transcription HTTP \(status) attempt=\(attempt)")
             if (status == 408 || status == 429 || (500...599).contains(status)) && attempt == 1 {
                 self.retry(request: request, body: body, generation: generation,
+                           keyterms: keyterms,
                            completion: completion)
                 return
             }
@@ -96,24 +100,28 @@ final class Transcriber {
                   let text = json["text"] as? String else {
                 if attempt == 1 {
                     self.retry(request: request, body: body, generation: generation,
+                               keyterms: keyterms,
                                completion: completion)
                 } else {
                     self.finish(body: body, result: .failure(TranscriptionError.invalidResponse), completion: completion)
                 }
                 return
             }
-            self.finish(body: body, result: .success(cleanText(text)), completion: completion)
+            let cleaned = cleanText(text)
+            let transcript = isPromptEcho(cleaned, keyterms: keyterms) ? "" : cleaned
+            self.finish(body: body, result: .success(transcript), completion: completion)
             }
         }
         task?.resume()
     }
 
-    private func retry(request: URLRequest, body: URL, generation: UUID,
+    private func retry(request: URLRequest, body: URL, generation: UUID, keyterms: [String],
                        completion: @escaping (Result<String, Error>) -> Void) {
         DebugLog.shared.record("transcription retry scheduled after 1s")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, self.generation == generation else { return }
             self.perform(request: request, body: body, attempt: 2, generation: generation,
+                         keyterms: keyterms,
                          completion: completion)
         }
     }
@@ -131,7 +139,7 @@ private func makeFields(settings: Settings, openAI: Bool) -> [(String, String)] 
     if openAI {
         var fields = [("model", settings.openAIModel), ("language", settings.language)]
         if !settings.keyterms.isEmpty {
-            fields.append(("prompt", "이 녹음에는 다음 용어가 포함됩니다: \(settings.keyterms.joined(separator: ", "))."))
+            fields.append(("prompt", "고유명사 표기 참고: \(settings.keyterms.joined(separator: ", "))"))
         }
         return fields
     }
@@ -167,4 +175,13 @@ private func cleanText(_ text: String) -> String {
     let range = NSRange(text.startIndex..<text.endIndex, in: text)
     let stripped = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
     return stripped.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+}
+
+private func isPromptEcho(_ text: String, keyterms: [String]) -> Bool {
+    guard !keyterms.isEmpty else { return false }
+    let terms = keyterms.joined(separator: ", ")
+    let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: ".。! "))
+    return candidate == "이 녹음에는 다음 용어가 포함됩니다: \(terms)"
+        || candidate == "고유명사 표기 참고: \(terms)"
 }

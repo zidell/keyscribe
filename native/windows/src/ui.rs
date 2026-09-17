@@ -14,13 +14,22 @@ use windows_sys::Win32::{
     Foundation::{CloseHandle, GlobalFree, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0, WPARAM},
     Globalization::{GetLocaleInfoEx, LOCALE_SLOCALIZEDLANGUAGENAME},
     Graphics::Gdi::{GetStockObject, UpdateWindow, COLOR_BTNFACE, DEFAULT_GUI_FONT},
+    Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC},
     System::{
         DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
         LibraryLoader::GetModuleHandleW,
         Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
         Threading::{CreateEventW, WaitForSingleObject},
     },
-    UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+    UI::{
+        Controls::{
+            InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TBM_SETPOS,
+            TBM_SETRANGEMAX, TBM_SETRANGEMIN, TBS_NOTICKS,
+        },
+        Input::KeyboardAndMouse::*,
+        Shell::*,
+        WindowsAndMessaging::*,
+    },
 };
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
@@ -32,6 +41,7 @@ const MODELS_MESSAGE: u32 = WM_APP + 4;
 const RIGHT_ALT_TIMER: usize = 3;
 const AUTO_SEND_DOWN_TIMER: usize = 4;
 const AUTO_SEND_UP_TIMER: usize = 5;
+const TRACKBAR_GET_POSITION: u32 = WM_USER;
 const ID_SETTINGS: usize = 101;
 const ID_FOLDER: usize = 102;
 const ID_EXIT: usize = 103;
@@ -199,6 +209,8 @@ struct Dialog {
     keyterms: HWND,
     no_verbatim: HWND,
     mute: HWND,
+    recording_start_sound_volume: HWND,
+    recording_start_sound_value: HWND,
     auto_send: HWND,
 }
 
@@ -219,6 +231,13 @@ pub fn run() -> Result<(), String> {
     unsafe {
         mute::initialize();
         crate::debug_log::log(|| "audio COM initialized".into());
+        let common_controls = INITCOMMONCONTROLSEX {
+            dwSize: mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_BAR_CLASSES,
+        };
+        if InitCommonControlsEx(&common_controls) == 0 {
+            return Err("설정 슬라이더를 초기화하지 못했습니다".into());
+        }
         let instance = GetModuleHandleW(ptr::null());
         if instance.is_null() {
             return Err("Windows 모듈을 찾을 수 없습니다".into());
@@ -792,6 +811,15 @@ unsafe fn start(hwnd: HWND) {
     match Recording::start() {
         Ok(recording) => {
             app(hwnd).recording = Some(recording);
+            let volume = app(hwnd).settings.recording_start_sound_volume;
+            if volume > 0 {
+                let sound = recording_start_sound(volume);
+                PlaySoundW(
+                    sound.as_ptr().cast(),
+                    ptr::null_mut(),
+                    SND_MEMORY | SND_NODEFAULT | SND_SYNC,
+                );
+            }
             if app(hwnd).settings.mute_during_recording {
                 app(hwnd).mute_before = mute::mute();
                 crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
@@ -812,6 +840,27 @@ unsafe fn start(hwnd: HWND) {
             SetTimer(hwnd, 1, 50, None);
         }
     }
+}
+
+fn recording_start_sound(volume: u16) -> Vec<u8> {
+    let mut sound = include_bytes!("../../../assets/recording-start.wav").to_vec();
+    if volume != 100 {
+        let gain = f64::from(volume.min(200)) / 100.0;
+        for sample in sound[44..].chunks_exact_mut(2) {
+            let original = i16::from_le_bytes([sample[0], sample[1]]);
+            let scaled = f64::from(original) / 32768.0 * gain;
+            let magnitude = scaled.abs();
+            let limited = if magnitude <= 0.8 {
+                magnitude
+            } else {
+                0.8 + 0.2 * (1.0 - (-(magnitude - 0.8) / 0.2).exp())
+            };
+            let adjusted =
+                ((if scaled < 0.0 { -limited } else { limited }) * 32767.0).round() as i16;
+            sample.copy_from_slice(&adjusted.to_le_bytes());
+        }
+    }
+    sound
 }
 
 unsafe fn stop(hwnd: HWND) {
@@ -908,7 +957,7 @@ unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
         if auto_send {
             // Editors can apply pasted text asynchronously. Keep the UI responsive
             // while waiting, then hold Return briefly like a physical key press.
-            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 400, None) == 0 {
+            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 300, None) == 0 {
                 return Err("Enter 입력을 예약할 수 없습니다".into());
             }
         }
@@ -978,7 +1027,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        620,
+        660,
         root,
         ptr::null_mut(),
         instance,
@@ -1198,13 +1247,44 @@ unsafe fn show_settings(root: HWND) {
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
+    label("녹음 시작 효과음", 491);
+    let recording_start_sound_volume = control(
+        dialog,
+        "msctls_trackbar32",
+        "",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
+        165,
+        486,
+        300,
+        36,
+        0,
+    );
+    SendMessageW(recording_start_sound_volume, TBM_SETRANGEMIN, 0, 0);
+    SendMessageW(recording_start_sound_volume, TBM_SETRANGEMAX, 0, 200);
+    SendMessageW(
+        recording_start_sound_volume,
+        TBM_SETPOS,
+        1,
+        settings.recording_start_sound_volume as isize,
+    );
+    let recording_start_sound_value = control(
+        dialog,
+        "STATIC",
+        &format!("{}%", settings.recording_start_sound_volume),
+        WS_CHILD | WS_VISIBLE,
+        475,
+        491,
+        55,
+        25,
+        0,
+    );
     control(
         dialog,
         "STATIC",
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        495,
+        530,
         365,
         26,
         0,
@@ -1215,7 +1295,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        535,
+        570,
         85,
         32,
         ID_SAVE,
@@ -1226,7 +1306,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        535,
+        570,
         85,
         32,
         ID_CANCEL,
@@ -1249,6 +1329,8 @@ unsafe fn show_settings(root: HWND) {
         keyterms,
         no_verbatim,
         mute,
+        recording_start_sound_volume,
+        recording_start_sound_value,
         auto_send,
     });
     SetWindowLongPtrW(dialog, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -1455,6 +1537,23 @@ unsafe extern "system" fn dialog_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
+        WM_HSCROLL => {
+            let dialog = dialog_state(hwnd);
+            if lparam as HWND == dialog.recording_start_sound_volume {
+                let volume = SendMessageW(
+                    dialog.recording_start_sound_volume,
+                    TRACKBAR_GET_POSITION,
+                    0,
+                    0,
+                )
+                .clamp(0, 200);
+                SetWindowTextW(
+                    dialog.recording_start_sound_value,
+                    wide(&format!("{volume}%")).as_ptr(),
+                );
+            }
+            0
+        }
         WM_COMMAND => {
             match loword(wparam) {
                 ID_SAVE => save_dialog(hwnd),
@@ -1539,6 +1638,13 @@ unsafe fn save_dialog(hwnd: HWND) {
         .collect();
     updated.no_verbatim = SendMessageW(dialog.no_verbatim, BM_GETCHECK, 0, 0) == 1;
     updated.mute_during_recording = SendMessageW(dialog.mute, BM_GETCHECK, 0, 0) == 1;
+    updated.recording_start_sound_volume = SendMessageW(
+        dialog.recording_start_sound_volume,
+        TRACKBAR_GET_POSITION,
+        0,
+        0,
+    )
+    .clamp(0, 200) as u16;
     updated.auto_send = SendMessageW(dialog.auto_send, BM_GETCHECK, 0, 0) == 1;
     match updated.save() {
         Ok(()) => {

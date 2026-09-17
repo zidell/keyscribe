@@ -9,6 +9,7 @@ struct Settings {
     var keyterms: [String] = []
     var noVerbatim = true
     var muteDuringRecording = true
+    var recordingStartSoundVolume = 100
     var openAIModel = "gpt-transcribe"
     var elevenLabsModel = "scribe_v2"
 
@@ -35,6 +36,11 @@ struct Settings {
             result.keyterms = values["keyterms"] as? [String] ?? result.keyterms
             result.noVerbatim = values["no_verbatim"] as? Bool ?? result.noVerbatim
             result.muteDuringRecording = values["mute_during_recording"] as? Bool ?? result.muteDuringRecording
+            if let volume = values["recording_start_sound_volume"] as? Int {
+                result.recordingStartSoundVolume = min(200, max(0, volume))
+            } else if values["play_recording_start_sound"] as? Bool == false {
+                result.recordingStartSoundVolume = 0
+            }
             result.openAIModel = values["openai_model"] as? String ?? result.openAIModel
             result.elevenLabsModel = values["elevenlabs_model"] as? String ?? result.elevenLabsModel
         }
@@ -63,6 +69,7 @@ struct Settings {
             "keyterms = [\(keyterms.map(jsonString).joined(separator: ", "))]",
             "no_verbatim = \(noVerbatim)",
             "mute_during_recording = \(muteDuringRecording)",
+            "recording_start_sound_volume = \(recordingStartSoundVolume)",
             "openai_model = \(jsonString(openAIModel))",
             "elevenlabs_model = \(jsonString(elevenLabsModel))",
         ]
