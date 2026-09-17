@@ -139,7 +139,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
         addLabel("녹음 방식", y: 268)
         populate(recordingControl, options: [
-            ("hold", "누르는 동안 녹음"), ("toggle", "다시 누르면 종료"),
+            ("hold", "누르는 동안 녹음"), ("toggle", "한번 누르면 녹음시작, 다시 누르면 종료"),
         ], selected: original.recordingControl)
         addPicker(recordingControl, y: 266)
 

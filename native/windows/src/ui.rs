@@ -7,7 +7,7 @@ use crate::{
 use std::{
     collections::HashMap,
     mem, ptr,
-    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
+    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -26,7 +26,6 @@ const TRAY_MESSAGE: u32 = WM_APP + 1;
 const KEY_MESSAGE: u32 = WM_APP + 2;
 const RESULT_MESSAGE: u32 = WM_APP + 3;
 const MODELS_MESSAGE: u32 = WM_APP + 4;
-const RIGHT_ALT_TIMER: usize = 3;
 const AUTO_SEND_DOWN_TIMER: usize = 4;
 const AUTO_SEND_UP_TIMER: usize = 5;
 const ID_SETTINGS: usize = 101;
@@ -52,27 +51,6 @@ static ROOT: AtomicIsize = AtomicIsize::new(0);
 static TARGET_KEY: AtomicU16 = AtomicU16::new(VK_RMENU);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
-// 0 = idle, 1 = waiting for a chord, 2 = recording, 3 = passing a chord through.
-static RIGHT_ALT_STATE: AtomicU8 = AtomicU8::new(0);
-static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
-static LAST_LEFT_CTRL_DOWN: AtomicU32 = AtomicU32::new(0);
-
-unsafe fn another_key_is_held(now: u32) -> bool {
-    for vk in 8u16..=254 {
-        if matches!(
-            vk,
-            VK_CONTROL | VK_LCONTROL | VK_MENU | VK_RMENU | VK_HANGUL
-        ) {
-            continue;
-        }
-        if GetAsyncKeyState(vk as i32) < 0 {
-            return true;
-        }
-    }
-    GetAsyncKeyState(VK_LCONTROL as i32) < 0
-        && now.wrapping_sub(LAST_LEFT_CTRL_DOWN.load(Ordering::Relaxed)) > 50
-}
-
 fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target || (target == VK_RMENU as u32 && physical == VK_HANGUL as u32)
 }
@@ -356,63 +334,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             other => other,
         } as u32;
         let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
-        if physical == VK_LCONTROL as u32 && down {
-            LAST_LEFT_CTRL_DOWN.store(key.time, Ordering::Relaxed);
-        }
         let target = TARGET_KEY.load(Ordering::Relaxed) as u32;
         let recording_key = is_recording_key(physical, target);
         let root = ROOT.load(Ordering::Relaxed) as HWND;
-        let alt_state = RIGHT_ALT_STATE.load(Ordering::Relaxed);
-        if !root.is_null() && (target == VK_RMENU as u32 || alt_state != 0) {
-            if is_recording_key(physical, VK_RMENU as u32) {
-                if down {
-                    if alt_state == 0 {
-                        if another_key_is_held(key.time) {
-                            return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-                        }
-                        if SetTimer(root, RIGHT_ALT_TIMER, 100, None) == 0 {
-                            return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-                        }
-                        RIGHT_ALT_DOWN_TIME.store(key.time, Ordering::Relaxed);
-                        RIGHT_ALT_STATE.store(1, Ordering::Relaxed);
-                    }
-                    return 1;
-                }
-                match alt_state {
-                    1 => {
-                        KillTimer(root, RIGHT_ALT_TIMER);
-                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 1);
-                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
-                    }
-                    2 => {
-                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
-                    }
-                    3 => send_keys(&[(VK_RMENU, true)]),
-                    _ => return CallNextHookEx(ptr::null_mut(), code, wparam, lparam),
-                }
-                RIGHT_ALT_STATE.store(0, Ordering::Relaxed);
-                return 1;
-            }
-            if down && (alt_state == 1 || alt_state == 2) {
-                // AltGr can generate a synthetic left Ctrl alongside right Alt.
-                if physical == VK_LCONTROL as u32
-                    && key
-                        .time
-                        .wrapping_sub(RIGHT_ALT_DOWN_TIME.load(Ordering::Relaxed))
-                        <= 1
-                {
-                    return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-                }
-                KillTimer(root, RIGHT_ALT_TIMER);
-                RIGHT_ALT_STATE.store(3, Ordering::Relaxed);
-                if alt_state == 2 {
-                    PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
-                    PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
-                }
-                send_keys(&[(VK_RMENU, false)]);
-                return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-            }
-        }
         if recording_key || physical == VK_ESCAPE as u32 {
             if !root.is_null() {
                 PostMessageW(root, KEY_MESSAGE, physical as usize, down as isize);
@@ -521,14 +445,6 @@ unsafe extern "system" fn root_proc(
                     let level = app(hwnd).recording.as_ref().map(Recording::level);
                     overlay::tick(app(hwnd).overlay, level);
                 }
-            } else if wparam == RIGHT_ALT_TIMER {
-                KillTimer(hwnd, RIGHT_ALT_TIMER);
-                if RIGHT_ALT_STATE
-                    .compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    PostMessageW(hwnd, KEY_MESSAGE, VK_RMENU as usize, 1);
-                }
             } else if wparam == AUTO_SEND_DOWN_TIMER {
                 KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
                 send_keys(&[(VK_RETURN, false)]);
@@ -554,13 +470,9 @@ unsafe extern "system" fn root_proc(
             }
             mute::restore(owned.mute_before);
             KillTimer(hwnd, 1);
-            KillTimer(hwnd, RIGHT_ALT_TIMER);
             KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
             if KillTimer(hwnd, AUTO_SEND_UP_TIMER) != 0 {
                 send_keys(&[(VK_RETURN, true)]);
-            }
-            if RIGHT_ALT_STATE.swap(0, Ordering::Relaxed) == 3 {
-                send_keys(&[(VK_RMENU, true)]);
             }
             overlay::destroy(owned.overlay);
             if !owned.dialog.is_null() {
@@ -1061,7 +973,8 @@ unsafe fn show_settings(root: HWND) {
         100,
         0,
     );
-    for title in ["누르는 동안 녹음", "다시 누르면 종료"] {
+    for title in ["누르는 동안 녹음", "한번 누르면 녹음시작, 다시 누르면 종료"]
+    {
         SendMessageW(mode, CB_ADDSTRING, 0, wide(title).as_ptr() as isize);
     }
     SendMessageW(
