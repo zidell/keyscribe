@@ -49,5 +49,5 @@ no_verbatim = true
 # 기본값: true
 # true  → 녹음 시작 시 스피커를 음소거하고 종료 시 복원
 # false → 음소거 없이 녹음 (에코·피드백이 없는 헤드셋 환경 등)
-# 참고: 현재 macOS에서만 동작합니다. Windows에서는 이 값을 무시합니다.
+# macOS와 Windows에서 동작합니다.
 mute_during_recording = true
