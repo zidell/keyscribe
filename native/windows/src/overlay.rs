@@ -2,7 +2,7 @@ use std::{mem, ptr};
 use windows_sys::Win32::{
     Foundation::HWND,
     Graphics::Gdi::{
-        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, GetMonitorInfoW,
+        BeginPaint, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect, GetMonitorInfoW,
         GetStockObject, InvalidateRect, MonitorFromPoint, RoundRect, SelectObject, SetBkMode,
         SetTextColor, TextOutW, DEFAULT_GUI_FONT, MONITORINFO, MONITOR_DEFAULTTONEAREST, NULL_PEN,
         PAINTSTRUCT,
@@ -39,6 +39,7 @@ impl State {
 
 struct Data {
     title: String,
+    recording: bool,
     level: f32,
     phase: f32,
 }
@@ -82,6 +83,7 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
     if !hwnd.is_null() {
         let data = Box::new(Data {
             title: String::new(),
+            recording: false,
             level: 0.0,
             phase: 0.0,
         });
@@ -92,15 +94,20 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
 }
 
 pub unsafe fn show(hwnd: HWND, state: State) {
-    show_message(hwnd, state.title());
+    show_with_message(hwnd, state.title(), matches!(state, State::Recording));
 }
 
 pub unsafe fn show_message(hwnd: HWND, message: &str) {
+    show_with_message(hwnd, message, false);
+}
+
+unsafe fn show_with_message(hwnd: HWND, message: &str, recording: bool) {
     if hwnd.is_null() {
         return;
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
     data.title = message.into();
+    data.recording = recording;
     data.level = 0.0;
     data.phase = 0.0;
     let mut pointer = mem::zeroed();
@@ -178,9 +185,12 @@ unsafe extern "system" fn procedure(
             if GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
                 let data = &*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Data);
                 let title: Vec<u16> = data.title.encode_utf16().collect();
-                TextOutW(dc, 20, 18, title.as_ptr(), title.len() as i32);
+                TextOutW(dc, if data.recording { 40 } else { 20 }, 18, title.as_ptr(), title.len() as i32);
                 let red = CreateSolidBrush(0x004747ff);
                 SelectObject(dc, red as _);
+                if data.recording {
+                    Ellipse(dc, 19, 20, 31, 32);
+                }
                 for index in 0..5 {
                     let wave = (data.phase + index as f32 * 1.3).sin() * 0.5 + 0.5;
                     let strength =
