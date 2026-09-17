@@ -183,7 +183,7 @@ jobs:
             test -s "release-assets/$filename" || { echo "Missing asset: $filename" >&2; exit 1; }
           done
         shell: bash
-      - name: Publish private GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

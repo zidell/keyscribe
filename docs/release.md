@@ -84,6 +84,8 @@ Repository **Settings → Secrets and variables → Actions**에 다음 값을 �
 
 Windows PFX Secret 두 개는 Store 제출용 MSIX 빌드에 사용하지 않습니다. 이 값이 없는 동안 아래 `v*` 직접 다운로드 통합 릴리스는 Windows 단계에서 실패하며, 서명 없는 Store 제출 파일로 대신 게시하지 않습니다.
 
+현재 `v*` 워크플로의 Windows 서명은 내보낼 수 있는 PFX가 있는 경우에만 동작합니다. 신규 공인 코드 서명 인증서의 개인키는 보통 하드웨어 또는 클라우드 HSM에 보관되므로 PFX 내보내기를 전제로 구매하지 않습니다. Windows 무료 직접 배포는 [Code signing policy](code-signing-policy.md)에 기록한 SignPath Foundation 신청·승인 후 별도 연동합니다.
+
 다음 Repository **Variables**는 선택 사항이며 생략 시 오른쪽 기본값을 사용합니다.
 
 | Variable | 기본값 |

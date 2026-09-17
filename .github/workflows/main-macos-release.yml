@@ -197,7 +197,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish private macOS main preview
+    name: Publish macOS main preview
     needs: macos
     runs-on: ubuntu-24.04
     permissions:

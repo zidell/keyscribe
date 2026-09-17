@@ -123,7 +123,7 @@ jobs:
           rm -f "$RUNNER_TEMP/keyscribe.p12"
 
   publish:
-    name: Publish private macOS prerelease
+    name: Publish macOS prerelease
     needs: macos
     runs-on: ubuntu-24.04
     permissions:
