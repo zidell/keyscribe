@@ -4,7 +4,7 @@ KeyScribe는 macOS 메뉴바와 Windows 트레이에서 실행되는 음성 받�
 
 ## 설치 및 실행
 
-[다운로드 페이지](https://keyscribe.gitools.net)에서 운영체제에 맞는 파일을 받습니다.
+[다운로드 페이지](https://keyscribe.gitools.net)에서 운영체제에 맞는 파일을 받습니다. 현재 Windows Store 배포는 준비 중이며, 첫 등록이 승인되면 Microsoft Store에서 설치할 수 있습니다.
 
 최신 `main`의 macOS 설치용 DMG는 [GitHub Releases](https://github.com/zidell/keyscribe/releases)의 사전 릴리스에서 받을 수 있습니다. 비공개 저장소 접근 권한이 필요합니다.
 
@@ -12,9 +12,7 @@ KeyScribe는 macOS 메뉴바와 Windows 트레이에서 실행되는 음성 받�
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | MSIX를 열어 설치한 뒤 시작 메뉴에서 실행 |
-
-Windows에서는 설치 없이 실행하는 서명된 `.exe`도 다운로드할 수 있습니다.
+| Windows 10/11 x64 | Microsoft Store | 첫 등록·심사 완료 후 Store에서 설치 |
 
 macOS 네이티브 개발 버전은 Swift가 설치된 Mac에서 아래처럼 빌드하고 실행할 수 있습니다.
 

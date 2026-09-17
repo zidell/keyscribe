@@ -1,4 +1,4 @@
-name: Main macOS preview
+name: Main previews
 
 on:
   push:
@@ -113,6 +113,88 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/keyscribe.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/keyscribe.p12"
+
+  windows:
+    name: Windows Store package x64
+    runs-on: windows-2022
+    env:
+      STORE_PACKAGE_NAME: ${{ vars.KEYSCRIBE_STORE_PACKAGE_NAME }}
+      STORE_PUBLISHER: ${{ vars.KEYSCRIBE_STORE_PUBLISHER }}
+      STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.KEYSCRIBE_STORE_PUBLISHER_DISPLAY_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Check Store identity
+        id: identity
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne $env:GITHUB_SHA) { throw 'Checkout does not match push commit.' }
+          if ([int]$env:GITHUB_RUN_NUMBER -gt 65535) { throw 'Store version build number exceeded 65535.' }
+          $values = @($env:STORE_PACKAGE_NAME, $env:STORE_PUBLISHER, $env:STORE_PUBLISHER_DISPLAY_NAME)
+          $configured = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+          if ($configured -ne 0 -and $configured -ne 3) {
+            throw 'Set all three KEYSCRIBE_STORE_* repository variables together.'
+          }
+          if ($configured -eq 0) {
+            'configured=false' >> $env:GITHUB_OUTPUT
+            'Windows source will be built. Set the three Partner Center identity variables to create a Store submission MSIX.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            'configured=true' >> $env:GITHUB_OUTPUT
+          }
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build native executable
+        shell: pwsh
+        run: |
+          $env:KEYSCRIBE_VERSION = "1.0.$env:GITHUB_RUN_NUMBER"
+          ./native/windows/build.ps1
+          if (-not (Test-Path 'dist-native\KeyScribe.exe')) { throw 'Native executable is missing.' }
+      - name: Package and inspect Store MSIX
+        if: steps.identity.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $version = "1.0.$env:GITHUB_RUN_NUMBER"
+          $package = ./packaging/build-msix.ps1 -Version $version `
+            -ExecutablePath 'dist-native\KeyScribe.exe' `
+            -StorePackageName $env:STORE_PACKAGE_NAME `
+            -StorePublisher $env:STORE_PUBLISHER `
+            -StorePublisherDisplayName $env:STORE_PUBLISHER_DISPLAY_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'MSIX packaging failed.' }
+          $package = @($package | Where-Object { $_ -like '*.msix' })[-1]
+          if (-not (Test-Path $package)) { throw 'Store MSIX was not created.' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $package).Path)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName })
+            if ('AppxManifest.xml' -notin $names -or 'App/KeyScribe/KeyScribe.exe' -notin $names) {
+              throw 'MSIX manifest or executable is missing.'
+            }
+            if ('AppxSignature.p7x' -in $names) { throw 'Store submission MSIX must remain unsigned.' }
+            $entry = $archive.GetEntry('AppxManifest.xml')
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $identity = $manifest.Package.Identity
+            if ($identity.Name -ne $env:STORE_PACKAGE_NAME -or
+                $identity.Publisher -ne $env:STORE_PUBLISHER -or
+                $identity.Version -ne "$version.0" -or
+                $identity.ProcessorArchitecture -ne 'x64' -or
+                $manifest.Package.Properties.PublisherDisplayName -ne $env:STORE_PUBLISHER_DISPLAY_NAME) {
+              throw 'MSIX identity does not match Partner Center variables.'
+            }
+          } finally { $archive.Dispose() }
+          $buildId = "main-$env:GITHUB_RUN_NUMBER-$($env:GITHUB_SHA.Substring(0, 12))"
+          $artifact = "dist\KeyScribe-windows-store-x64-$buildId.msix"
+          Move-Item -LiteralPath $package -Destination $artifact
+          "Store submission artifact: $artifact" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: steps.identity.outputs.configured == 'true'
+        with:
+          name: main-windows-store-x64
+          path: dist/KeyScribe-windows-store-x64-*.msix
+          if-no-files-found: error
 
   publish:
     name: Publish private macOS main preview

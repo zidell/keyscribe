@@ -1,8 +1,12 @@
+[CmdletBinding(DefaultParameterSetName = 'Signed')]
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [Parameter(Mandatory = $true)][string]$CertificatePath,
-    [Parameter(Mandatory = $true)][string]$CertificatePassword,
-    [Parameter(Mandatory = $true)][string]$ExecutablePath
+    [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Signed')][string]$CertificatePath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Signed')][string]$CertificatePassword,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Store')][string]$StorePackageName,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Store')][string]$StorePublisher,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Store')][string]$StorePublisherDisplayName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,15 +15,33 @@ if ($parts.Count -ne 3 -or ($parts | Where-Object { $_ -notmatch '^\d+$' }).Coun
     throw 'Version must have three numeric parts, for example 1.2.3.'
 }
 $msixVersion = "$Version.0"
-$certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-    (Resolve-Path $CertificatePath).Path, $CertificatePassword
-)
-$publisher = [System.Security.SecurityElement]::Escape($certificate.Subject)
+$storeBuild = $PSCmdlet.ParameterSetName -eq 'Store'
+if ($storeBuild) {
+    if ([int]$parts[0] -eq 0 -or @($parts | Where-Object { [int]$_ -gt 65535 }).Count -ne 0) {
+        throw 'Store package version components must be 0..65535 and the major version must be nonzero.'
+    }
+    $packageName = $StorePackageName
+    $publisherName = $StorePublisher
+    $publisherDisplayName = $StorePublisherDisplayName
+} else {
+    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+        (Resolve-Path $CertificatePath).Path, $CertificatePassword
+    )
+    $packageName = 'KeyScribe'
+    $publisherName = $certificate.Subject
+    $publisherDisplayName = 'KeyScribe'
+}
+$packageName = [System.Security.SecurityElement]::Escape($packageName)
+$publisher = [System.Security.SecurityElement]::Escape($publisherName)
+$publisherDisplayName = [System.Security.SecurityElement]::Escape($publisherDisplayName)
 $root = (Resolve-Path '.').Path
-$stage = Join-Path $root 'build\msix'
+$stageName = if ($storeBuild) { 'build\msix-store' } else { 'build\msix' }
+$stage = Join-Path $root $stageName
 $appDirectory = Join-Path $stage 'App\KeyScribe'
 $assetsDirectory = Join-Path $stage 'Assets'
-$output = Join-Path $root "dist\KeyScribe-windows-x64-$Version.msix"
+$suffix = if ($storeBuild) { '-store' } else { '' }
+$output = Join-Path $root "dist\KeyScribe-windows-x64-$Version$suffix.msix"
+New-Item (Join-Path $root 'dist') -ItemType Directory -Force | Out-Null
 
 if (-not (Test-Path $ExecutablePath)) {
     throw "Portable executable not found: $ExecutablePath"
@@ -41,10 +63,10 @@ $manifest = @"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap rescap">
-  <Identity Name="KeyScribe" Publisher="$publisher" Version="$msixVersion" ProcessorArchitecture="x64" />
+  <Identity Name="$packageName" Publisher="$publisher" Version="$msixVersion" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>KeyScribe</DisplayName>
-    <PublisherDisplayName>KeyScribe</PublisherDisplayName>
+    <PublisherDisplayName>$publisherDisplayName</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Resources><Resource Language="en-us" /></Resources>
@@ -72,19 +94,21 @@ $tools = Get-ChildItem $sdkRoot -Recurse -Filter 'makeappx.exe' |
     Sort-Object FullName -Descending
 $makeappx = $tools | Select-Object -First 1
 if (-not $makeappx) { throw 'Windows SDK MakeAppx.exe was not found.' }
-$signtool = Join-Path $makeappx.Directory.FullName 'signtool.exe'
-if (-not (Test-Path $signtool)) { throw 'Windows SDK SignTool.exe was not found.' }
 
 & $makeappx.FullName pack /d $stage /p $output /o
 if ($LASTEXITCODE -ne 0) { throw 'MakeAppx failed.' }
-& $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword `
-    /tr 'http://timestamp.digicert.com' /td SHA256 $output
-if ($LASTEXITCODE -ne 0) { throw 'MSIX signing failed.' }
-& $signtool verify /pa /v $output
-if ($LASTEXITCODE -ne 0) { throw 'MSIX signature verification failed.' }
-& $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword `
-    /tr 'http://timestamp.digicert.com' /td SHA256 $ExecutablePath
-if ($LASTEXITCODE -ne 0) { throw 'EXE signing failed.' }
-& $signtool verify /pa /v $ExecutablePath
-if ($LASTEXITCODE -ne 0) { throw 'EXE signature verification failed.' }
+if (-not $storeBuild) {
+    $signtool = Join-Path $makeappx.Directory.FullName 'signtool.exe'
+    if (-not (Test-Path $signtool)) { throw 'Windows SDK SignTool.exe was not found.' }
+    & $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword `
+        /tr 'http://timestamp.digicert.com' /td SHA256 $output
+    if ($LASTEXITCODE -ne 0) { throw 'MSIX signing failed.' }
+    & $signtool verify /pa /v $output
+    if ($LASTEXITCODE -ne 0) { throw 'MSIX signature verification failed.' }
+    & $signtool sign /fd SHA256 /f $CertificatePath /p $CertificatePassword `
+        /tr 'http://timestamp.digicert.com' /td SHA256 $ExecutablePath
+    if ($LASTEXITCODE -ne 0) { throw 'EXE signing failed.' }
+    & $signtool verify /pa /v $ExecutablePath
+    if ($LASTEXITCODE -ne 0) { throw 'EXE signature verification failed.' }
+}
 Write-Output $output
