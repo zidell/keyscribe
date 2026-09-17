@@ -1,12 +1,12 @@
 # 배포 설정과 릴리스
 
-유지 관리자를 위한 문서입니다. 앱 사용 방법은 [README](../README.md)에 있습니다. 소스 저장소 `zidell/keyscribe`는 **비공개**로 유지합니다.
+유지 관리자를 위한 문서입니다. 앱 사용 방법은 [README](../README.md)에 있습니다. 소스 저장소 `zidell/keyscribe`는 MIT 라이선스로 공개합니다.
 
 ## 배포 구조
 
 ### `main` 푸시 미리보기
 
-`main`에 커밋을 푸시할 때마다 [Main previews 워크플로](../.github/workflows/main-macos-release.yml)가 해당 커밋을 빌드합니다. Apple Silicon·Intel 앱과 DMG를 Developer ID로 서명하고 공증한 뒤, 두 DMG가 모두 검증되면 [비공개 GitHub Releases](https://github.com/zidell/keyscribe/releases)에 사전 릴리스로 게시합니다. 태그는 `macos-main-실행번호-커밋해시12자리` 형식이며, DMG 파일명에도 같은 식별자를 사용합니다. 앱 내부 미리보기 버전은 `0.1.실행번호` 형식입니다. 저장소 접근 권한이 있어야 다운로드할 수 있습니다.
+`main`에 커밋을 푸시할 때마다 [Main previews 워크플로](../.github/workflows/main-macos-release.yml)가 해당 커밋을 빌드합니다. Apple Silicon·Intel 앱과 DMG를 Developer ID로 서명하고 공증한 뒤, 두 DMG가 모두 검증되면 [GitHub Releases](https://github.com/zidell/keyscribe/releases)에 사전 릴리스로 게시합니다. 태그는 `macos-main-실행번호-커밋해시12자리` 형식이며, DMG 파일명에도 같은 식별자를 사용합니다. 앱 내부 미리보기 버전은 `0.1.실행번호` 형식입니다.
 
 같은 워크플로는 Windows x64 Rust 앱도 매번 빌드합니다. Partner Center의 제품 Identity Secret 세 개가 모두 설정되면 `1.0.실행번호.0` 버전의 **Store 제출용 서명 없는 MSIX**를 만들고 manifest, 실행 파일, 서명 부재를 확인해 Actions artifact에만 올립니다. 세 값이 아직 없으면 Rust 빌드만 검증합니다. 일부만 있으면 설정 오류로 실패합니다. 이 MSIX는 Store 인증·재서명 전에는 직접 설치용으로 배포하지 않습니다. Windows 작업의 결과는 macOS DMG 게시와 독립적입니다.
 
@@ -29,7 +29,7 @@
 
 ### 네이티브 macOS 시험 릴리스
 
-`main`의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포할 수도 있습니다. `macos-vMAJOR.MINOR.PATCH` 태그를 `main`의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **비공개 GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.
+`main`의 macOS 앱은 [Native macOS release 워크플로](../.github/workflows/native-macos-release.yml)에서 별도로 배포할 수도 있습니다. `macos-vMAJOR.MINOR.PATCH` 태그를 `main`의 커밋에 붙여 푸시하면 Apple Silicon·Intel 앱을 Swift로 빌드하고 Developer ID로 서명한 뒤 DMG를 공증·스테이플합니다. 두 DMG가 모두 통과하면 **GitHub 사전 릴리스**에 올립니다. 각 DMG에는 앱과 Applications 바로가기가 있습니다.
 
 ```bash
 git switch main
@@ -45,7 +45,7 @@ git push origin macos-v0.1.2
 
 1. macOS Apple Silicon·Intel 앱을 빌드하고 Developer ID로 서명·공증한 DMG 두 개를 만듭니다.
 2. Windows x64 앱을 빌드하고 서명한 MSIX 설치 파일과 단독 EXE를 만듭니다.
-3. 네 파일을 비공개 GitHub Release에 보관하고, 공개 다운로드용 파일은 Cloudflare R2에 업로드합니다.
+3. 네 파일을 GitHub Release에 보관하고, 공개 다운로드용 파일은 Cloudflare R2에 업로드합니다.
 4. [랜딩 페이지](../site/index.html)에 해당 버전의 다운로드 링크를 채워 `static` 브랜치에 게시하고 Cloudflare Pages에 직접 배포합니다. [Pages Worker](../site/_worker.js)가 같은 도메인의 `/downloads/` 요청을 R2에서 스트리밍합니다.
 
 `static` 브랜치에는 HTML과 버전 표기만 들어갑니다. 매 릴리스마다 생성된 브랜치로 갱신하며 이전 브랜치 기록은 유지하지 않습니다. 앱 바이너리는 Cloudflare Pages의 [파일당 25 MiB 제한](https://developers.cloudflare.com/pages/platform/limits/)과 Git의 [100 MiB 파일 제한](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits/) 때문에 브랜치에 넣지 않습니다.

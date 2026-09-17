@@ -19,4 +19,4 @@ macOS Swift/AppKit 실행 파일의 첫 릴리스 빌드는 `bash native/macos/b
 - Windows 네이티브 앱과 MSIX/EXE 빌드 및 서명 경로를 실제 Windows에서 확인한다.
 - 두 플랫폼의 대기 중 RSS를 동일한 조건에서 측정한다.
 
-`macos-vMAJOR.MINOR.PATCH` 태그는 [네이티브 macOS 워크플로](../.github/workflows/native-macos-release.yml)를 실행해 공증된 Apple Silicon·Intel DMG를 비공개 GitHub 사전 릴리스에 올린다. `v*` 태그는 macOS와 Windows의 통합 네이티브 릴리스에 사용한다. 자세한 절차는 [배포 문서](release.md)에 있다.
+`macos-vMAJOR.MINOR.PATCH` 태그는 [네이티브 macOS 워크플로](../.github/workflows/native-macos-release.yml)를 실행해 공증된 Apple Silicon·Intel DMG를 GitHub 사전 릴리스에 올린다. `v*` 태그는 macOS와 Windows의 통합 네이티브 릴리스에 사용한다. 자세한 절차는 [배포 문서](release.md)에 있다.
