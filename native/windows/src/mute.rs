@@ -1,3 +1,4 @@
+use std::time::Duration;
 use windows::Win32::{
     Media::Audio::{
         eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
@@ -5,6 +6,12 @@ use windows::Win32::{
     },
     System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct MuteState {
+    was_muted: bool,
+    volume: Option<f32>,
+}
 
 pub fn initialize() {
     unsafe {
@@ -21,7 +28,7 @@ fn endpoint() -> windows::core::Result<IAudioEndpointVolume> {
     }
 }
 
-pub fn mute() -> Option<bool> {
+pub fn mute() -> Option<MuteState> {
     let endpoint = match endpoint() {
         Ok(endpoint) => endpoint,
         Err(error) => {
@@ -37,21 +44,48 @@ pub fn mute() -> Option<bool> {
                 return None;
             }
         };
+        let volume = match endpoint.GetMasterVolumeLevelScalar() {
+            Ok(value) => Some(value),
+            Err(error) => {
+                crate::debug_log::log(|| format!("audio volume query failed; muting without fade: {error}"));
+                None
+            }
+        };
         if !was_muted {
+            if let Some(volume) = volume {
+                for step in 1..=5 {
+                    let level = volume * (5 - step) as f32 / 5.0;
+                    if let Err(error) = endpoint.SetMasterVolumeLevelScalar(level, std::ptr::null()) {
+                        crate::debug_log::log(|| format!("audio fade failed: {error}"));
+                        let _ = endpoint.SetMasterVolumeLevelScalar(volume, std::ptr::null());
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+            }
             if let Err(error) = endpoint.SetMute(true, std::ptr::null()) {
                 crate::debug_log::log(|| format!("audio mute failed: {error}"));
+                if let Some(volume) = volume {
+                    let _ = endpoint.SetMasterVolumeLevelScalar(volume, std::ptr::null());
+                }
                 return None;
+            }
+            if let Some(volume) = volume {
+                let _ = endpoint.SetMasterVolumeLevelScalar(volume, std::ptr::null());
             }
         }
         crate::debug_log::log(|| format!("audio mute set previous={was_muted}"));
-        Some(was_muted)
+        Some(MuteState { was_muted, volume })
     }
 }
 
-pub fn restore(was_muted: Option<bool>) {
-    if was_muted == Some(false) {
+pub fn restore(state: Option<MuteState>) {
+    if let Some(state) = state.filter(|state| !state.was_muted) {
         for attempt in 1..=3 {
             let result = endpoint().and_then(|endpoint| unsafe {
+                if let Some(volume) = state.volume {
+                    let _ = endpoint.SetMasterVolumeLevelScalar(volume, std::ptr::null());
+                }
                 endpoint.SetMute(false, std::ptr::null())
             });
             match result {
@@ -62,12 +96,12 @@ pub fn restore(was_muted: Option<bool>) {
                 Err(error) => {
                     crate::debug_log::log(|| format!("audio restore failed attempt={attempt}: {error}"));
                     if attempt < 3 {
-                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        std::thread::sleep(Duration::from_millis(200));
                     }
                 }
             }
         }
     } else {
-        crate::debug_log::log(|| format!("audio restore skipped previous={was_muted:?}"));
+        crate::debug_log::log(|| format!("audio restore skipped previous={state:?}"));
     }
 }

@@ -39,6 +39,7 @@ static DEV_STOP_EVENT: AtomicIsize = AtomicIsize::new(0);
 const RESULT_MESSAGE: u32 = WM_APP + 3;
 const MODELS_MESSAGE: u32 = WM_APP + 4;
 const RIGHT_ALT_TIMER: usize = 3;
+const CHIME_FINISHED_MESSAGE: u32 = WM_APP + 5;
 const AUTO_SEND_DOWN_TIMER: usize = 4;
 const AUTO_SEND_UP_TIMER: usize = 5;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
@@ -183,7 +184,7 @@ struct App {
     model_cache: HashMap<String, Vec<String>>,
     dialog: HWND,
     recording: Option<Recording>,
-    mute_before: Option<bool>,
+    mute_before: Option<mute::MuteState>,
     pressed: bool,
     generation: u64,
     transcribing: bool,
@@ -504,6 +505,16 @@ unsafe extern "system" fn root_proc(
             handle_key(hwnd, wparam as u32, lparam != 0);
             0
         }
+        CHIME_FINISHED_MESSAGE => {
+            if wparam as u64 == app(hwnd).generation
+                && app(hwnd).recording.is_some()
+                && app(hwnd).settings.mute_during_recording
+            {
+                app(hwnd).mute_before = mute::mute();
+                crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
+            }
+            0
+        }
         RESULT_MESSAGE => {
             let result = Box::from_raw(lparam as *mut ResultMessage);
             if result.generation == app(hwnd).generation && app(hwnd).transcribing {
@@ -810,22 +821,29 @@ unsafe fn start(hwnd: HWND) {
     }
     match Recording::start() {
         Ok(recording) => {
+            app(hwnd).generation += 1;
             app(hwnd).recording = Some(recording);
             let volume = app(hwnd).settings.recording_start_sound_volume;
+            set_status(hwnd, "녹음 중 · Esc 취소");
+            active_overlay(hwnd, overlay::State::Recording);
             if volume > 0 {
-                let sound = recording_start_sound(volume);
-                PlaySoundW(
-                    sound.as_ptr().cast(),
-                    ptr::null_mut(),
-                    SND_MEMORY | SND_NODEFAULT | SND_SYNC,
-                );
-            }
-            if app(hwnd).settings.mute_during_recording {
+                let root = hwnd as isize;
+                let generation = app(hwnd).generation;
+                std::thread::spawn(move || {
+                    let sound = recording_start_sound(volume);
+                    unsafe {
+                        PlaySoundW(
+                            sound.as_ptr().cast(),
+                            ptr::null_mut(),
+                            SND_MEMORY | SND_NODEFAULT | SND_SYNC,
+                        );
+                        PostMessageW(root as HWND, CHIME_FINISHED_MESSAGE, generation as usize, 0);
+                    }
+                });
+            } else if app(hwnd).settings.mute_during_recording {
                 app(hwnd).mute_before = mute::mute();
                 crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
             }
-            set_status(hwnd, "녹음 중 · Esc 취소");
-            active_overlay(hwnd, overlay::State::Recording);
         }
         Err(error) => {
             crate::debug_log::log(|| format!("recording start failed: {error}"));
@@ -957,7 +975,7 @@ unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
         if auto_send {
             // Editors can apply pasted text asynchronously. Keep the UI responsive
             // while waiting, then hold Return briefly like a physical key press.
-            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 300, None) == 0 {
+            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 400, None) == 0 {
                 return Err("Enter 입력을 예약할 수 없습니다".into());
             }
         }

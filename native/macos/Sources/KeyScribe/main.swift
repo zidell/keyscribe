@@ -47,6 +47,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var eventTap: CFMachPort?
     private var keyDown = false
     private var session = UUID()
+    private var audioOutput: SystemAudioOutput.Snapshot?
     private var wasMuted: Bool?
     private var audioRestoreTimer: Timer?
     private var overlay: RecordingOverlay?
@@ -262,7 +263,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         guard phase == .recording, let url = recordingURL else { return }
         DebugLog.shared.record("recording stop requested")
-        recordingStartSound?.stop()
+        if let sound = recordingStartSound {
+            let remaining = max(0, sound.duration - sound.currentTime)
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.02) { sound.stop() }
+        }
         recordingStartSound = nil
         recorder?.stop()
         recorder = nil
@@ -371,7 +375,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         if settings.autoSend {
             // Some editors apply pasted text asynchronously. Give them time to finish
             // before sending Return, and hold the key briefly like a physical press.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 guard let enterDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true),
                       let enterUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false) else { return }
                 enterDown.flags = []
@@ -398,12 +402,39 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func muteSystemAudio() {
-        if wasMuted == false {
+        if audioOutput != nil || wasMuted == false {
             restoreSystemAudio()
-            if wasMuted == false {
+            if audioOutput != nil || wasMuted == false {
                 DebugLog.shared.record("audio mute state retained while restore is pending")
                 return
             }
+        }
+        if let output = SystemAudioOutput.capture() {
+            audioOutput = output
+            DebugLog.shared.record("audio output captured muted=\(output.wasMuted)")
+            guard !output.wasMuted else { return }
+            guard let volume = output.volume, volume > 0 else {
+                if !SystemAudioOutput.setMuted(true, on: output) {
+                    DebugLog.shared.record("audio mute failed")
+                    audioOutput = nil
+                }
+                return
+            }
+            let currentSession = session
+            for step in 1...5 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.025) { [weak self] in
+                    guard let self, self.phase == .recording, self.session == currentSession,
+                          self.audioOutput?.device == output.device else { return }
+                    let level = volume * Float(5 - step) / 5
+                    SystemAudioOutput.setVolume(level, on: output)
+                    if step == 5 && SystemAudioOutput.setMuted(true, on: output) {
+                        SystemAudioOutput.setVolume(volume, on: output)
+                    } else if step == 5 {
+                        DebugLog.shared.record("audio mute failed after fade")
+                    }
+                }
+            }
+            return
         }
         guard let state = runAppleScript("output muted of (get volume settings)") else {
             DebugLog.shared.record("audio mute skipped: state query failed")
@@ -423,6 +454,25 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func restoreSystemAudio() {
+        if let output = audioOutput {
+            if let volume = output.volume { SystemAudioOutput.setVolume(volume, on: output) }
+            if !output.wasMuted {
+                for attempt in 1...3 {
+                    if SystemAudioOutput.setMuted(false, on: output) {
+                        DebugLog.shared.record("audio restored attempt=\(attempt)")
+                        audioRestoreTimer?.invalidate()
+                        audioRestoreTimer = nil
+                        audioOutput = nil
+                        return
+                    }
+                    DebugLog.shared.record("audio restore failed attempt=\(attempt)")
+                    if attempt < 3 { Thread.sleep(forTimeInterval: 0.2) }
+                }
+                scheduleAudioRestore()
+                return
+            }
+            audioOutput = nil
+        }
         if wasMuted == false {
             for attempt in 1...3 {
                 if runAppleScript("set volume output muted false") != nil {
@@ -435,14 +485,18 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 DebugLog.shared.record("audio restore failed attempt=\(attempt)")
                 if attempt < 3 { Thread.sleep(forTimeInterval: 0.2) }
             }
-            if audioRestoreTimer == nil {
-                audioRestoreTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-                    self?.restoreSystemAudio()
-                }
-            }
+            scheduleAudioRestore()
             return
         }
         wasMuted = nil
+    }
+
+    private func scheduleAudioRestore() {
+        if audioRestoreTimer == nil {
+            audioRestoreTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                self?.restoreSystemAudio()
+            }
+        }
     }
 
     @objc private func openSettingsFolder(_ sender: Any?) {
