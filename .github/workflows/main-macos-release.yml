@@ -118,9 +118,9 @@ jobs:
     name: Windows Store package x64
     runs-on: windows-2022
     env:
-      STORE_PACKAGE_NAME: ${{ vars.KEYSCRIBE_STORE_PACKAGE_NAME }}
-      STORE_PUBLISHER: ${{ vars.KEYSCRIBE_STORE_PUBLISHER }}
-      STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.KEYSCRIBE_STORE_PUBLISHER_DISPLAY_NAME }}
+      STORE_PACKAGE_NAME: ${{ secrets.KEYSCRIBE_STORE_PACKAGE_NAME }}
+      STORE_PUBLISHER: ${{ secrets.KEYSCRIBE_STORE_PUBLISHER }}
+      STORE_PUBLISHER_DISPLAY_NAME: ${{ secrets.KEYSCRIBE_STORE_PUBLISHER_DISPLAY_NAME }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,11 +134,11 @@ jobs:
           $values = @($env:STORE_PACKAGE_NAME, $env:STORE_PUBLISHER, $env:STORE_PUBLISHER_DISPLAY_NAME)
           $configured = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
           if ($configured -ne 0 -and $configured -ne 3) {
-            throw 'Set all three KEYSCRIBE_STORE_* repository variables together.'
+            throw 'Set all three KEYSCRIBE_STORE_* repository secrets together.'
           }
           if ($configured -eq 0) {
             'configured=false' >> $env:GITHUB_OUTPUT
-            'Windows source will be built. Set the three Partner Center identity variables to create a Store submission MSIX.' >> $env:GITHUB_STEP_SUMMARY
+            'Windows source will be built. Set the three Partner Center identity secrets to create a Store submission MSIX.' >> $env:GITHUB_STEP_SUMMARY
           } else {
             'configured=true' >> $env:GITHUB_OUTPUT
           }

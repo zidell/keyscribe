@@ -8,20 +8,20 @@
 
 `main`에 커밋을 푸시할 때마다 [Main previews 워크플로](../.github/workflows/main-macos-release.yml)가 해당 커밋을 빌드합니다. Apple Silicon·Intel 앱과 DMG를 Developer ID로 서명하고 공증한 뒤, 두 DMG가 모두 검증되면 [비공개 GitHub Releases](https://github.com/zidell/keyscribe/releases)에 사전 릴리스로 게시합니다. 태그는 `macos-main-실행번호-커밋해시12자리` 형식이며, DMG 파일명에도 같은 식별자를 사용합니다. 앱 내부 미리보기 버전은 `0.1.실행번호` 형식입니다. 저장소 접근 권한이 있어야 다운로드할 수 있습니다.
 
-같은 워크플로는 Windows x64 Rust 앱도 매번 빌드합니다. Partner Center의 제품 Identity 변수 세 개가 모두 설정되면 `1.0.실행번호.0` 버전의 **Store 제출용 서명 없는 MSIX**를 만들고 manifest, 실행 파일, 서명 부재를 확인해 Actions artifact에만 올립니다. 세 값이 아직 없으면 Rust 빌드만 검증합니다. 일부만 있으면 설정 오류로 실패합니다. 이 MSIX는 Store 인증·재서명 전에는 직접 설치용으로 배포하지 않습니다. Windows 작업의 결과는 macOS DMG 게시와 독립적입니다.
+같은 워크플로는 Windows x64 Rust 앱도 매번 빌드합니다. Partner Center의 제품 Identity Secret 세 개가 모두 설정되면 `1.0.실행번호.0` 버전의 **Store 제출용 서명 없는 MSIX**를 만들고 manifest, 실행 파일, 서명 부재를 확인해 Actions artifact에만 올립니다. 세 값이 아직 없으면 Rust 빌드만 검증합니다. 일부만 있으면 설정 오류로 실패합니다. 이 MSIX는 Store 인증·재서명 전에는 직접 설치용으로 배포하지 않습니다. Windows 작업의 결과는 macOS DMG 게시와 독립적입니다.
 
 이 미리보기는 R2, `static` 브랜치, 랜딩 페이지를 갱신하지 않습니다. 아래 `vMAJOR.MINOR.PATCH` 태그 경로는 별도의 Windows 코드 서명 인증서가 필요한 직접 다운로드 배포입니다.
 
 ### Windows Store 등록과 자동 업데이트
 
 1. Partner Center에서 KeyScribe 앱 이름을 예약하고 **Product management → Product identity**의 `Package/Identity/Name`, `Package/Identity/Publisher`, `Package/Properties/PublisherDisplayName`을 복사합니다. 값을 추정하거나 수정하지 않습니다. [제품 Identity 안내](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
-2. Repository **Settings → Secrets and variables → Actions → Variables**에 아래 세 값을 등록합니다. 다음 `main` 푸시부터 Actions의 `main-windows-store-x64` artifact에 Store 제출용 MSIX가 생성됩니다. 파일명에는 실행 번호와 커밋 해시가 들어갑니다. `1.0.실행번호.0`은 이전에 제출한 Store 버전보다 커야 하며 실행 번호가 65535에 도달하면 버전 정책을 갱신해야 합니다. [MSIX 버전 요구사항](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements)
+2. Repository **Settings → Secrets and variables → Actions → Secrets**에 아래 세 값을 등록합니다. 다음 `main` 푸시부터 Actions의 `main-windows-store-x64` artifact에 Store 제출용 MSIX가 생성됩니다. 파일명에는 실행 번호와 커밋 해시가 들어갑니다. `1.0.실행번호.0`은 이전에 제출한 Store 버전보다 커야 하며 실행 번호가 65535에 도달하면 버전 정책을 갱신해야 합니다. [MSIX 버전 요구사항](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements)
 3. 첫 제출은 Partner Center에서 직접 진행합니다. 가격·제공 지역, 설명·스크린샷, 개인정보 처리방침, 연령 등급, `runFullTrust` 기능 선언 등 필수 항목을 채우고 MSIX를 업로드해 인증을 마칩니다. Store는 승인된 MSIX를 재서명합니다. [첫 제출 안내](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/create-app-submission), [Store 서명 안내](https://learn.microsoft.com/en-us/windows/apps/publish/faq/get-started-with-the-microsoft-store)
 4. 첫 제출 완료 후 Microsoft Store Submission API와 Entra 앱 자격 증명을 연결하면 새 MSIX 업로드·업데이트 제출을 CI에서 자동화할 수 있습니다. 현재 워크플로는 **빌드와 artifact 생성까지만** 자동화합니다. API 연결 전에는 새 버전을 Partner Center에 수동 제출해야 합니다. API로 제출한 버전은 심사를 거치고 승인되면 Store가 설치된 앱에 업데이트를 전달합니다. [Submission API](https://learn.microsoft.com/en-us/windows/uwp/monetize/manage-app-submissions), [Store 업데이트 안내](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app)
 
 자동 제출 자격 증명은 **Partner Center → 계정 설정 → Users**에서 제출용 Microsoft Entra 앱을 추가하고 `Manager` 역할을 부여해 준비합니다. 해당 앱 화면의 Tenant ID와 Client ID를 기록한 뒤 **Add new key**에서 키를 발급합니다. Azure 화면으로 연결되면 **Entra ID → App registrations → 해당 앱 → Certificates & secrets → Client secrets → New client secret**에서 생성합니다. Secret의 **Value**는 한 번만 표시되므로 즉시 GitHub Actions Secret `KEYSCRIBE_STORE_CLIENT_SECRET`에 저장합니다. Tenant ID와 Client ID는 각각 `KEYSCRIBE_STORE_TENANT_ID`, `KEYSCRIBE_STORE_CLIENT_ID`로 저장할 예정입니다. 첫 제출 완료 전에는 이 Secret들이 있어도 자동 제출 API를 사용할 수 없습니다. [Microsoft의 앱 연결 및 키 발급 안내](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-and-manage-submissions-using-windows-store-services)
 
-| Repository Variable | Partner Center 제품 Identity 값 |
+| Repository Secret | Partner Center 제품 Identity 값 |
 | --- | --- |
 | `KEYSCRIBE_STORE_PACKAGE_NAME` | `Package/Identity/Name` |
 | `KEYSCRIBE_STORE_PUBLISHER` | `Package/Identity/Publisher` |

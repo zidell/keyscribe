@@ -14,7 +14,7 @@
 - `README.md`는 실행·사용법 요약만 담고, 릴리스·서명·페이지 설정은 `docs/release.md`에 기록한다.
 - 이전 py2app macOS 앱의 대기 중 RSS는 이 Mac에서 약 76~91 MiB로 측정되었다. Python 없는 macOS Swift/AppKit 앱과 Windows Rust 앱이 `main`에 병합되었다. 20 MiB 안팎은 목표이며 실제 상주 메모리는 권한과 기능 검증을 마친 뒤 측정한다.
 - `vMAJOR.MINOR.PATCH` 태그의 통합 릴리스 워크플로는 macOS와 Windows 네이티브 앱을 빌드한다. 네이티브 진행 상태와 남은 검증 항목은 `docs/native-rewrite.md`에 기록한다.
-- `main`에 푸시할 때마다 Apple Silicon·Intel용 서명·공증 DMG를 비공개 GitHub 사전 릴리스로 게시하고 Windows x64 앱을 빌드한다. Partner Center 제품 Identity 변수가 모두 설정된 경우 Store 제출용 unsigned MSIX를 Actions artifact로 만든다. 고유 `macos-main-*` 태그를 사용하며 R2와 랜딩 페이지는 갱신하지 않는다.
+- `main`에 푸시할 때마다 Apple Silicon·Intel용 서명·공증 DMG를 비공개 GitHub 사전 릴리스로 게시하고 Windows x64 앱을 빌드한다. Partner Center 제품 Identity Secret이 모두 설정된 경우 Store 제출용 unsigned MSIX를 Actions artifact로 만든다. 고유 `macos-main-*` 태그를 사용하며 R2와 랜딩 페이지는 갱신하지 않는다.
 - macOS 네이티브 앱은 `macos-vMAJOR.MINOR.PATCH` 태그로 별도 서명·공증 DMG 사전 릴리스도 만들 수 있다. 이 사전 릴리스는 랜딩 페이지를 갱신하지 않는다.
 - `main`에는 네이티브 앱 소스만 유지한다. 이전 Python 앱 소스와 Python 기반 패키징 도구는 `python` 브랜치에 남겨 둔다.
 - 이 Mac에서는 로그인 에이전트가 빌드된 네이티브 앱을 직접 실행한다. 별도 소스 감시 작업은 변경 시에만 `scripts/rebuild_macos_app.sh`를 실행한다. 앱은 셸 감시기의 자식 프로세스로 실행하지 않는다.
