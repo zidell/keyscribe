@@ -13,7 +13,7 @@ private let keyCodes: [String: CGKeyCode] = [
     "left_option": 58, "option": 58, "left_alt": 58, "alt": 58,
     "right_ctrl": 62, "left_ctrl": 59, "ctrl": 59,
     "right_shift": 60, "left_shift": 56, "shift": 56,
-    "right_cmd": 54, "left_cmd": 55, "cmd": 55,
+    "right_command": 54, "right_cmd": 54, "left_cmd": 55, "cmd": 55,
     "enter": 36, "esc": 53, "tab": 48, "space": 49,
     "f1": 122, "f2": 120, "f3": 99, "f4": 118,
     "f5": 96, "f6": 97, "f7": 98, "f8": 100,
@@ -44,6 +44,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var recorder: AVAudioRecorder?
     private var recordingStartSound: AVAudioPlayer?
     private var recordingURL: URL?
+    private var recordingStartedAt: TimeInterval?
+    private var recordingSecondsShown: Int?
     private var eventTap: CFMachPort?
     private var keyDown = false
     private var session = UUID()
@@ -164,7 +166,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func triggerKeyCode() -> CGKeyCode {
-        keyCodes[settings.shortcut] ?? 61
+        keyCodes[settings.shortcut] ?? 54
     }
 
     private func startRecording() {
@@ -206,9 +208,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
             recordingURL = url
             phase = .recording
+            recordingStartedAt = ProcessInfo.processInfo.systemUptime
+            recordingSecondsShown = nil
             DebugLog.shared.record("recording started")
-            setStatus("녹음 중 · Esc 취소")
             showActiveOverlay(.recording)
+            updateRecordingElapsed()
             if settings.recordingStartSoundVolume > 0,
                let sound = makeRecordingStartSound(volume: settings.recordingStartSoundVolume) {
                 recordingStartSound = sound
@@ -262,6 +266,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func stopRecording() {
         guard phase == .recording, let url = recordingURL else { return }
+        recordingStartedAt = nil
+        recordingSecondsShown = nil
         DebugLog.shared.record("recording stop requested")
         if let sound = recordingStartSound {
             let remaining = max(0, sound.duration - sound.currentTime)
@@ -311,6 +317,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private func cancelRecording() {
         DebugLog.shared.record("recording/transcription cancelled phase=\(phase)")
         session = UUID()
+        recordingStartedAt = nil
+        recordingSecondsShown = nil
         transcriber.cancel()
         recordingStartSound?.stop()
         recordingStartSound = nil
@@ -332,6 +340,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let level: CGFloat?
             if self.phase == .recording, let recorder = self.recorder {
+                self.updateRecordingElapsed()
                 recorder.updateMeters()
                 let power = Double(recorder.averagePower(forChannel: 0))
                 level = CGFloat(min(1, pow(10.0, power / 20.0) * 8.0))
@@ -342,6 +351,16 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         }
         overlayTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func updateRecordingElapsed() {
+        guard phase == .recording, let started = recordingStartedAt else { return }
+        let seconds = max(0, Int(ProcessInfo.processInfo.systemUptime - started))
+        guard recordingSecondsShown != seconds else { return }
+        recordingSecondsShown = seconds
+        let elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+        setStatus("녹음 중 (\(elapsed)) · Esc 취소")
+        overlay?.updateRecordingTime(seconds)
     }
 
     private func showTransientOverlay(_ state: RecordingOverlay.State) {

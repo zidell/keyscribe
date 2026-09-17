@@ -132,7 +132,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         addLabel("녹음 단축키", y: 308)
         let shortcuts = [
             ("right_option", "오른쪽 Option (⌥)"), ("left_option", "왼쪽 Option (⌥)"),
-            ("right_cmd", "오른쪽 Command (⌘)"), ("left_cmd", "왼쪽 Command (⌘)"),
+            ("right_command", "오른쪽 Command (⌘)"), ("left_cmd", "왼쪽 Command (⌘)"),
             ("right_ctrl", "오른쪽 Control (⌃)"), ("left_ctrl", "왼쪽 Control (⌃)"),
             ("right_shift", "오른쪽 Shift (⇧)"), ("left_shift", "왼쪽 Shift (⇧)"),
         ]

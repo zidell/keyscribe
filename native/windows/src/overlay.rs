@@ -16,7 +16,7 @@ use windows_sys::Win32::{
     },
 };
 
-const WIDTH: i32 = 230;
+const WIDTH: i32 = 260;
 const HEIGHT: i32 = 52;
 
 pub enum State {
@@ -99,6 +99,17 @@ pub unsafe fn show(hwnd: HWND, state: State) {
 
 pub unsafe fn show_message(hwnd: HWND, message: &str) {
     show_with_message(hwnd, message, false);
+}
+
+pub unsafe fn update_recording_time(hwnd: HWND, seconds: u64) {
+    if hwnd.is_null() {
+        return;
+    }
+    let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
+    if data.recording {
+        data.title = format!("녹음 중 ({:02}:{:02})", seconds / 60, seconds % 60);
+        InvalidateRect(hwnd, ptr::null(), 0);
+    }
 }
 
 unsafe fn show_with_message(hwnd: HWND, message: &str, recording: bool) {
@@ -185,7 +196,13 @@ unsafe extern "system" fn procedure(
             if GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
                 let data = &*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Data);
                 let title: Vec<u16> = data.title.encode_utf16().collect();
-                TextOutW(dc, if data.recording { 40 } else { 20 }, 18, title.as_ptr(), title.len() as i32);
+                TextOutW(
+                    dc,
+                    if data.recording { 40 } else { 20 },
+                    18,
+                    title.as_ptr(),
+                    title.len() as i32,
+                );
                 let red = CreateSolidBrush(0x004747ff);
                 SelectObject(dc, red as _);
                 if data.recording {
@@ -196,7 +213,7 @@ unsafe extern "system" fn procedure(
                     let strength =
                         data.level * (0.5 + 0.5 * wave) + (1.0 - data.level) * 0.12 * wave;
                     let height = (4.0 + strength * 24.0) as i32;
-                    let x = 166 + index * 7;
+                    let x = 196 + index * 7;
                     RoundRect(
                         dc,
                         x,

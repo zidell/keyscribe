@@ -11,7 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GlobalFree, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0, WPARAM},
+    Foundation::{
+        CloseHandle, GlobalFree, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0, WPARAM,
+    },
     Globalization::{GetLocaleInfoEx, LOCALE_SLOCALIZEDLANGUAGENAME},
     Graphics::Gdi::{GetStockObject, UpdateWindow, COLOR_BTNFACE, DEFAULT_GUI_FONT},
     Media::Audio::{PlaySoundW, SND_MEMORY, SND_NODEFAULT, SND_SYNC},
@@ -184,6 +186,8 @@ struct App {
     model_cache: HashMap<String, Vec<String>>,
     dialog: HWND,
     recording: Option<Recording>,
+    recording_started_at: Option<Instant>,
+    recording_seconds_shown: Option<u64>,
     mute_before: Option<mute::MuteState>,
     pressed: bool,
     generation: u64,
@@ -314,6 +318,8 @@ pub fn run() -> Result<(), String> {
             model_cache: HashMap::new(),
             dialog: ptr::null_mut(),
             recording: None,
+            recording_started_at: None,
+            recording_seconds_shown: None,
             mute_before: None,
             pressed: false,
             generation: 0,
@@ -370,8 +376,16 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     {
         let key = &*(lparam as *const KBDLLHOOKSTRUCT);
         if key.flags & LLKHF_INJECTED != 0 {
-            if key.vkCode == VK_RMENU as u32 || key.vkCode == VK_MENU as u32 || key.vkCode == VK_ESCAPE as u32 {
-                crate::debug_log::log(|| format!("key injected vk={} scan={} flags=0x{:x} ignored", key.vkCode, key.scanCode, key.flags));
+            if key.vkCode == VK_RMENU as u32
+                || key.vkCode == VK_MENU as u32
+                || key.vkCode == VK_ESCAPE as u32
+            {
+                crate::debug_log::log(|| {
+                    format!(
+                        "key injected vk={} scan={} flags=0x{:x} ignored",
+                        key.vkCode, key.scanCode, key.flags
+                    )
+                });
             }
             return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
         }
@@ -408,7 +422,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         let root = ROOT.load(Ordering::Relaxed) as HWND;
         let alt_state = RIGHT_ALT_STATE.load(Ordering::Relaxed);
         if recording_key || physical == VK_RMENU as u32 || physical == VK_ESCAPE as u32 {
-            crate::debug_log::log(|| format!("key vk={} physical={} scan={} flags=0x{:x} down={} target={} alt_state={} root={}", key.vkCode, physical, key.scanCode, key.flags, down, target, alt_state, !root.is_null()));
+            crate::debug_log::log(|| {
+                format!("key vk={} physical={} scan={} flags=0x{:x} down={} target={} alt_state={} root={}", key.vkCode, physical, key.scanCode, key.flags, down, target, alt_state, !root.is_null())
+            });
         }
         if !root.is_null() && (target == VK_RMENU as u32 || alt_state != 0) {
             if is_recording_key(physical, VK_RMENU as u32) {
@@ -460,7 +476,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 }
                 KillTimer(root, RIGHT_ALT_TIMER);
                 RIGHT_ALT_STATE.store(3, Ordering::Relaxed);
-                crate::debug_log::log(|| format!("right_alt combo: key={} prior_state={alt_state}; replay down", physical));
+                crate::debug_log::log(|| {
+                    format!(
+                        "right_alt combo: key={} prior_state={alt_state}; replay down",
+                        physical
+                    )
+                });
                 if alt_state == 2 {
                     PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
                     PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
@@ -511,7 +532,9 @@ unsafe extern "system" fn root_proc(
                 && app(hwnd).settings.mute_during_recording
             {
                 app(hwnd).mute_before = mute::mute();
-                crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
+                crate::debug_log::log(|| {
+                    format!("recording mute result={:?}", app(hwnd).mute_before)
+                });
             }
             0
         }
@@ -521,7 +544,12 @@ unsafe extern "system" fn root_proc(
                 app(hwnd).transcribing = false;
                 match result.result {
                     Ok(text) if !text.is_empty() => {
-                        crate::debug_log::log(|| format!("transcription completed characters={}", text.chars().count()));
+                        crate::debug_log::log(|| {
+                            format!(
+                                "transcription completed characters={}",
+                                text.chars().count()
+                            )
+                        });
                         hide_overlay(hwnd);
                         app(hwnd).last_text = summarize_recent(&text);
                         match paste(hwnd, &text, app(hwnd).settings.auto_send) {
@@ -599,6 +627,7 @@ unsafe extern "system" fn root_proc(
                 } else {
                     let level = app(hwnd).recording.as_ref().map(Recording::level);
                     overlay::tick(app(hwnd).overlay, level);
+                    update_recording_elapsed(hwnd);
                 }
             } else if wparam == RIGHT_ALT_TIMER {
                 KillTimer(hwnd, RIGHT_ALT_TIMER);
@@ -754,6 +783,26 @@ unsafe fn active_overlay(hwnd: HWND, state: overlay::State) {
     SetTimer(hwnd, 1, 50, None);
 }
 
+unsafe fn update_recording_elapsed(hwnd: HWND) {
+    let Some(started) = app(hwnd).recording_started_at else {
+        return;
+    };
+    let seconds = started.elapsed().as_secs();
+    if app(hwnd).recording_seconds_shown == Some(seconds) {
+        return;
+    }
+    app(hwnd).recording_seconds_shown = Some(seconds);
+    set_status(
+        hwnd,
+        &format!(
+            "녹음 중 ({:02}:{:02}) · Esc 취소",
+            seconds / 60,
+            seconds % 60
+        ),
+    );
+    overlay::update_recording_time(app(hwnd).overlay, seconds);
+}
+
 unsafe fn transient_overlay(hwnd: HWND, state: overlay::State) {
     app(hwnd).overlay_expires = Some(Instant::now() + Duration::from_millis(2500));
     overlay::show(app(hwnd).overlay, state);
@@ -781,7 +830,15 @@ fn shortcut_key(value: &str) -> u16 {
 }
 
 unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
-    crate::debug_log::log(|| format!("handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}", app(hwnd).recording.is_some(), app(hwnd).transcribing, app(hwnd).pressed, app(hwnd).settings.recording_control));
+    crate::debug_log::log(|| {
+        format!(
+            "handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}",
+            app(hwnd).recording.is_some(),
+            app(hwnd).transcribing,
+            app(hwnd).pressed,
+            app(hwnd).settings.recording_control
+        )
+    });
     if key == VK_ESCAPE as u32 && down {
         if app(hwnd).recording.is_some() || app(hwnd).transcribing {
             cancel(hwnd);
@@ -823,9 +880,11 @@ unsafe fn start(hwnd: HWND) {
         Ok(recording) => {
             app(hwnd).generation += 1;
             app(hwnd).recording = Some(recording);
+            app(hwnd).recording_started_at = Some(Instant::now());
+            app(hwnd).recording_seconds_shown = None;
             let volume = app(hwnd).settings.recording_start_sound_volume;
-            set_status(hwnd, "녹음 중 · Esc 취소");
             active_overlay(hwnd, overlay::State::Recording);
+            update_recording_elapsed(hwnd);
             if volume > 0 {
                 let root = hwnd as isize;
                 let generation = app(hwnd).generation;
@@ -842,7 +901,9 @@ unsafe fn start(hwnd: HWND) {
                 });
             } else if app(hwnd).settings.mute_during_recording {
                 app(hwnd).mute_before = mute::mute();
-                crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
+                crate::debug_log::log(|| {
+                    format!("recording mute result={:?}", app(hwnd).mute_before)
+                });
             }
         }
         Err(error) => {
@@ -886,9 +947,16 @@ unsafe fn stop(hwnd: HWND) {
     let Some(recording) = app(hwnd).recording.take() else {
         return;
     };
+    app(hwnd).recording_started_at = None;
+    app(hwnd).recording_seconds_shown = None;
     let stopped = recording.stop();
     mute::restore(app(hwnd).mute_before.take());
-    crate::debug_log::log(|| format!("recording stopped; audio restore attempted; success={}", stopped.is_ok()));
+    crate::debug_log::log(|| {
+        format!(
+            "recording stopped; audio restore attempted; success={}",
+            stopped.is_ok()
+        )
+    });
     let wav = match stopped {
         Ok(path) => path,
         Err(error) => {
@@ -927,6 +995,8 @@ unsafe fn cancel(hwnd: HWND) {
     crate::debug_log::log(|| "recording cancelled; restoring audio".into());
     app(hwnd).generation += 1;
     app(hwnd).recording = None;
+    app(hwnd).recording_started_at = None;
+    app(hwnd).recording_seconds_shown = None;
     mute::restore(app(hwnd).mute_before.take());
     app(hwnd).transcribing = false;
     set_status(hwnd, "취소됨");

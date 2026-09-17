@@ -47,7 +47,9 @@ pub fn mute() -> Option<MuteState> {
         let volume = match endpoint.GetMasterVolumeLevelScalar() {
             Ok(value) => Some(value),
             Err(error) => {
-                crate::debug_log::log(|| format!("audio volume query failed; muting without fade: {error}"));
+                crate::debug_log::log(|| {
+                    format!("audio volume query failed; muting without fade: {error}")
+                });
                 None
             }
         };
@@ -55,7 +57,8 @@ pub fn mute() -> Option<MuteState> {
             if let Some(volume) = volume {
                 for step in 1..=5 {
                     let level = volume * (5 - step) as f32 / 5.0;
-                    if let Err(error) = endpoint.SetMasterVolumeLevelScalar(level, std::ptr::null()) {
+                    if let Err(error) = endpoint.SetMasterVolumeLevelScalar(level, std::ptr::null())
+                    {
                         crate::debug_log::log(|| format!("audio fade failed: {error}"));
                         let _ = endpoint.SetMasterVolumeLevelScalar(volume, std::ptr::null());
                         break;
@@ -94,7 +97,9 @@ pub fn restore(state: Option<MuteState>) {
                     return;
                 }
                 Err(error) => {
-                    crate::debug_log::log(|| format!("audio restore failed attempt={attempt}: {error}"));
+                    crate::debug_log::log(|| {
+                        format!("audio restore failed attempt={attempt}: {error}")
+                    });
                     if attempt < 3 {
                         std::thread::sleep(Duration::from_millis(200));
                     }

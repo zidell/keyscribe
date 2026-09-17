@@ -20,7 +20,7 @@ final class RecordingOverlay {
         }
     }
 
-    private let width: CGFloat = 230
+    private let width: CGFloat = 260
     private let height: CGFloat = 52
     private let window: NSPanel
     private let label: NSTextField
@@ -29,7 +29,7 @@ final class RecordingOverlay {
     private var volume: CGFloat = 0
 
     init() {
-        window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 230, height: 52),
+        window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 52),
                          styleMask: [.borderless, .nonactivatingPanel],
                          backing: .buffered, defer: false)
         window.level = .floating
@@ -39,7 +39,7 @@ final class RecordingOverlay {
         window.hasShadow = true
         window.ignoresMouseEvents = true
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 52))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 52))
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 0.9).cgColor
         content.layer?.cornerRadius = 26
@@ -47,7 +47,7 @@ final class RecordingOverlay {
         window.contentView = content
 
         label = NSTextField(labelWithString: "")
-        label.frame = NSRect(x: 20, y: 15, width: 130, height: 22)
+        label.frame = NSRect(x: 20, y: 15, width: 165, height: 22)
         label.font = .systemFont(ofSize: 14, weight: .medium)
         label.textColor = .white
         label.alignment = .left
@@ -55,7 +55,7 @@ final class RecordingOverlay {
 
         for index in 0..<5 {
             let bar = CALayer()
-            bar.frame = NSRect(x: 166 + CGFloat(index) * 7, y: 24, width: 3, height: 4)
+            bar.frame = NSRect(x: 196 + CGFloat(index) * 7, y: 24, width: 3, height: 4)
             bar.backgroundColor = NSColor(calibratedRed: 1, green: 0.28, blue: 0.28, alpha: 1).cgColor
             bar.cornerRadius = 1.5
             content.layer?.addSublayer(bar)
@@ -71,6 +71,10 @@ final class RecordingOverlay {
             window.setFrameOrigin(NSPoint(x: frame.midX - width / 2, y: frame.minY + 40))
         }
         window.orderFrontRegardless()
+    }
+
+    func updateRecordingTime(_ seconds: Int) {
+        label.stringValue = String(format: "🔴  녹음 중 (%02d:%02d)", seconds / 60, seconds % 60)
     }
 
     func tick(level: CGFloat?) {

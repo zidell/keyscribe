@@ -2,7 +2,7 @@ import Foundation
 
 struct Settings {
     var apiKey = ""
-    var shortcut = "right_option"
+    var shortcut = "right_command"
     var recordingControl = "hold"
     var autoSend = true
     var language = "ko"
@@ -24,12 +24,16 @@ struct Settings {
         var result = Settings()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: configURL.path),
-           let example = Bundle.main.url(forResource: "config.toml", withExtension: "example") {
-            try? FileManager.default.copyItem(at: example, to: configURL)
+           let example = Bundle.main.url(forResource: "config.toml", withExtension: "example"),
+           let contents = try? String(contentsOf: example, encoding: .utf8) {
+            let macDefaults = contents.replacingOccurrences(of: "shortcut = \"right_option\"",
+                                                            with: "shortcut = \"right_command\"")
+            try? macDefaults.write(to: configURL, atomically: true, encoding: .utf8)
         }
         if let contents = try? String(contentsOf: configURL, encoding: .utf8) {
             let values = parseTOML(contents)
             result.shortcut = values["shortcut"] as? String ?? result.shortcut
+            if result.shortcut == "right_cmd" { result.shortcut = "right_command" }
             result.recordingControl = values["recording_control"] as? String ?? result.recordingControl
             result.autoSend = values["auto_send"] as? Bool ?? result.autoSend
             result.language = values["language"] as? String ?? result.language
