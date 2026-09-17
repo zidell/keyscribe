@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod debug_log;
 mod mute;
 mod overlay;
 mod settings;
@@ -9,6 +10,7 @@ mod ui;
 
 fn main() {
     if let Err(error) = ui::run() {
+        debug_log::log(|| format!("app startup/runtime failed: {error}"));
         eprintln!("KeyScribe: {error}");
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};

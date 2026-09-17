@@ -7,6 +7,19 @@ $built = Join-Path $PSScriptRoot 'target\release\KeyScribe.exe'
 $output = Join-Path $root 'dist-native\KeyScribe.exe'
 $app = $null
 
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class KeyScribeDevStop {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr OpenEvent(uint access, bool inheritHandle, string name);
+    [DllImport("kernel32.dll")]
+    public static extern bool SetEvent(IntPtr handle);
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+
 function Get-SourceSnapshot {
     $files = @(
         Get-Item -LiteralPath (Join-Path $root 'config.toml.example')
@@ -40,8 +53,18 @@ function Stop-OwnedApp {
     Follow-RestartedApp
     if ($null -ne $script:app) {
         if (-not $script:app.HasExited) {
-            $script:app.Kill()
-            [void]$script:app.WaitForExit(5000)
+            $eventName = 'Local\KeyScribeDevStop-{0}' -f $script:app.Id
+            $eventHandle = [KeyScribeDevStop]::OpenEvent(0x0002, $false, $eventName)
+            if ($eventHandle -ne [IntPtr]::Zero) {
+                [void][KeyScribeDevStop]::SetEvent($eventHandle)
+                [void][KeyScribeDevStop]::CloseHandle($eventHandle)
+                [void]$script:app.WaitForExit(5000)
+            }
+            if (-not $script:app.HasExited) {
+                Write-Warning 'KeyScribe did not close gracefully; forcing shutdown.'
+                $script:app.Kill()
+                [void]$script:app.WaitForExit(5000)
+            }
         }
         $script:app.Dispose()
         $script:app = $null
@@ -63,7 +86,13 @@ try {
             Stop-OwnedApp
             New-Item -ItemType Directory -Path (Split-Path $output) -Force | Out-Null
             Copy-Item -LiteralPath $built -Destination $output -Force
-            $app = Start-Process -FilePath $output -WorkingDirectory $root -WindowStyle Hidden -PassThru
+            $previousLog = [Environment]::GetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', 'Process')
+            try {
+                [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', (Join-Path $root 'dist-native\windows-debug.log'), 'Process')
+                $app = Start-Process -FilePath $output -WorkingDirectory $root -WindowStyle Hidden -PassThru
+            } finally {
+                [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', $previousLog, 'Process')
+            }
             Write-Output "KeyScribe running: PID $($app.Id)"
         } else {
             Write-Output 'Build failed; the last working app remains running.'

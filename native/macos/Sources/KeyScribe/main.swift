@@ -47,10 +47,12 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var keyDown = false
     private var session = UUID()
     private var wasMuted: Bool?
+    private var audioRestoreTimer: Timer?
     private var overlay: RecordingOverlay?
     private var overlayTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DebugLog.shared.record("app start shortcut=\(settings.shortcut) mode=\(settings.recordingControl)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         installEventTap()
@@ -58,6 +60,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DebugLog.shared.record("app terminate; cancelling and restoring audio")
         cancelRecording()
     }
 
@@ -102,6 +105,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                           options: .defaultTap, eventsOfInterest: mask,
                                           callback: eventTapCallback, userInfo: context) else {
+            DebugLog.shared.record("event tap creation failed")
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
             setStatus("손쉬운 사용 권한을 허용한 뒤 앱을 다시 실행해 주세요")
@@ -111,14 +115,20 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        DebugLog.shared.record("event tap enabled")
     }
 
     func enableEventTap() {
         if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
+        DebugLog.shared.record("event tap reenabled")
     }
 
     func handleKeyEvent(type: CGEventType, code: CGKeyCode, flags: CGEventFlags) {
+        if code == triggerKeyCode() || code == 53 || code == 57 || code == 61 {
+            DebugLog.shared.record("key code=\(code) type=\(type.rawValue) flags=0x\(String(flags.rawValue, radix: 16)) trigger=\(triggerKeyCode()) phase=\(phase) keyDown=\(keyDown)")
+        }
         if type == .keyDown && code == 53 {
+            DebugLog.shared.record(phase == .idle ? "escape ignored: idle" : "escape cancels recording/transcription")
             if phase != .idle { cancelRecording() }
             return
         }
@@ -137,8 +147,12 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         } else {
             pressed = type == .keyDown
         }
-        if pressed == keyDown { return }
+        if pressed == keyDown {
+            DebugLog.shared.record("trigger duplicate state ignored pressed=\(pressed)")
+            return
+        }
         keyDown = pressed
+        DebugLog.shared.record("trigger state pressed=\(pressed) mode=\(settings.recordingControl) phase=\(phase)")
         if pressed {
             if phase == .idle { startRecording() }
             else if phase == .recording && settings.recordingControl == "toggle" { stopRecording() }
@@ -152,6 +166,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
+        DebugLog.shared.record("recording start requested")
         guard !settings.apiKey.isEmpty else { showSettings(nil); return }
         let authorization = AVCaptureDevice.authorizationStatus(for: .audio)
         if authorization == .notDetermined {
@@ -161,6 +176,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                     if granted {
                         if self.settings.recordingControl == "toggle" || self.keyDown { self.startRecording() }
                     } else {
+                        DebugLog.shared.record("microphone permission denied")
                         self.setStatus("마이크 권한이 필요합니다")
                         self.showTransientOverlay(.microphoneError)
                     }
@@ -169,6 +185,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             return
         }
         guard authorization == .authorized else {
+            DebugLog.shared.record("microphone permission unavailable status=\(authorization.rawValue)")
             setStatus("마이크 권한이 필요합니다")
             showTransientOverlay(.microphoneError)
             return
@@ -187,10 +204,12 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
             recordingURL = url
             phase = .recording
+            DebugLog.shared.record("recording started")
             setStatus("녹음 중 · Esc 취소")
             showActiveOverlay(.recording)
             if settings.muteDuringRecording { muteSystemAudio() }
         } catch {
+            DebugLog.shared.record("recording start failed type=\(type(of: error))")
             recorder = nil
             try? FileManager.default.removeItem(at: url)
             setStatus("녹음 오류: \(error.localizedDescription)")
@@ -200,9 +219,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func stopRecording() {
         guard phase == .recording, let url = recordingURL else { return }
+        DebugLog.shared.record("recording stop requested")
         recorder?.stop()
         recorder = nil
         restoreSystemAudio()
+        DebugLog.shared.record("recording stopped; audio restore attempted")
         phase = .transcribing
         setStatus("변환 중 · Esc 취소")
         showActiveOverlay(.transcribing)
@@ -226,18 +247,21 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         phase = .idle
         switch result {
         case .success(let text):
+            DebugLog.shared.record("transcription completed characters=\(text.count)")
             hideOverlay()
             guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
             lastLine.title = "최근 변환: \(String(text.prefix(60)))"
             paste(text)
             setStatus("완료")
         case .failure(let error):
+            DebugLog.shared.record("transcription failed type=\(type(of: error))")
             setStatus(error.localizedDescription)
             showTransientOverlay(.failed)
         }
     }
 
     private func cancelRecording() {
+        DebugLog.shared.record("recording/transcription cancelled phase=\(phase)")
         session = UUID()
         transcriber.cancel()
         recorder?.stop()
@@ -328,13 +352,50 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func muteSystemAudio() {
-        guard let state = runAppleScript("output muted of (get volume settings)") else { return }
+        if wasMuted == false {
+            restoreSystemAudio()
+            if wasMuted == false {
+                DebugLog.shared.record("audio mute state retained while restore is pending")
+                return
+            }
+        }
+        guard let state = runAppleScript("output muted of (get volume settings)") else {
+            DebugLog.shared.record("audio mute skipped: state query failed")
+            return
+        }
         wasMuted = state == "true"
-        if wasMuted == false { _ = runAppleScript("set volume output muted true") }
+        if wasMuted == false {
+            if runAppleScript("set volume output muted true") == nil {
+                DebugLog.shared.record("audio mute failed")
+                wasMuted = nil
+            } else {
+                DebugLog.shared.record("audio muted; previous state=unmuted")
+            }
+        } else {
+            DebugLog.shared.record("audio already muted; preserving user state")
+        }
     }
 
     private func restoreSystemAudio() {
-        if wasMuted == false { _ = runAppleScript("set volume output muted false") }
+        if wasMuted == false {
+            for attempt in 1...3 {
+                if runAppleScript("set volume output muted false") != nil {
+                    DebugLog.shared.record("audio restored attempt=\(attempt)")
+                    audioRestoreTimer?.invalidate()
+                    audioRestoreTimer = nil
+                    wasMuted = nil
+                    return
+                }
+                DebugLog.shared.record("audio restore failed attempt=\(attempt)")
+                if attempt < 3 { Thread.sleep(forTimeInterval: 0.2) }
+            }
+            if audioRestoreTimer == nil {
+                audioRestoreTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                    self?.restoreSystemAudio()
+                }
+            }
+            return
+        }
         wasMuted = nil
     }
 

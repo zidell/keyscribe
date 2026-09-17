@@ -7,25 +7,29 @@ use crate::{
 use std::{
     collections::HashMap,
     mem, ptr,
-    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{GlobalFree, HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{CloseHandle, GlobalFree, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_OBJECT_0, WPARAM},
     Globalization::{GetLocaleInfoEx, LOCALE_SLOCALIZEDLANGUAGENAME},
     Graphics::Gdi::{GetStockObject, UpdateWindow, COLOR_BTNFACE, DEFAULT_GUI_FONT},
     System::{
         DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
         LibraryLoader::GetModuleHandleW,
         Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+        Threading::{CreateEventW, WaitForSingleObject},
     },
     UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const KEY_MESSAGE: u32 = WM_APP + 2;
+const DEV_STOP_TIMER: usize = 0x4b53;
+static DEV_STOP_EVENT: AtomicIsize = AtomicIsize::new(0);
 const RESULT_MESSAGE: u32 = WM_APP + 3;
 const MODELS_MESSAGE: u32 = WM_APP + 4;
+const RIGHT_ALT_TIMER: usize = 3;
 const AUTO_SEND_DOWN_TIMER: usize = 4;
 const AUTO_SEND_UP_TIMER: usize = 5;
 const ID_SETTINGS: usize = 101;
@@ -51,6 +55,27 @@ static ROOT: AtomicIsize = AtomicIsize::new(0);
 static TARGET_KEY: AtomicU16 = AtomicU16::new(VK_RMENU);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+// 0 = idle, 1 = waiting for a chord, 2 = recording, 3 = passing a chord through.
+static RIGHT_ALT_STATE: AtomicU8 = AtomicU8::new(0);
+static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
+static LAST_LEFT_CTRL_DOWN: AtomicU32 = AtomicU32::new(0);
+
+unsafe fn another_key_is_held(now: u32) -> bool {
+    for vk in 8u16..=254 {
+        if matches!(
+            vk,
+            VK_CONTROL | VK_LCONTROL | VK_MENU | VK_RMENU | VK_HANGUL
+        ) {
+            continue;
+        }
+        if GetAsyncKeyState(vk as i32) < 0 {
+            return true;
+        }
+    }
+    GetAsyncKeyState(VK_LCONTROL as i32) < 0
+        && now.wrapping_sub(LAST_LEFT_CTRL_DOWN.load(Ordering::Relaxed)) > 50
+}
+
 fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target || (target == VK_RMENU as u32 && physical == VK_HANGUL as u32)
 }
@@ -189,8 +214,11 @@ struct ModelsMessage {
 }
 
 pub fn run() -> Result<(), String> {
+    crate::debug_log::init();
+    crate::debug_log::log(|| "app start".into());
     unsafe {
         mute::initialize();
+        crate::debug_log::log(|| "audio COM initialized".into());
         let instance = GetModuleHandleW(ptr::null());
         if instance.is_null() {
             return Err("Windows 모듈을 찾을 수 없습니다".into());
@@ -223,6 +251,7 @@ pub fn run() -> Result<(), String> {
         if RegisterClassW(&root_definition) == 0 || RegisterClassW(&settings_definition) == 0 {
             return Err("Windows 창 클래스를 등록하지 못했습니다".into());
         }
+        crate::debug_log::log(|| "window classes registered".into());
         if !overlay::register(instance) {
             return Err("녹음 상태 창을 등록하지 못했습니다".into());
         }
@@ -243,6 +272,7 @@ pub fn run() -> Result<(), String> {
         if hwnd.is_null() {
             return Err("KeyScribe 창을 만들지 못했습니다".into());
         }
+        crate::debug_log::log(|| "root window created".into());
         let settings = Settings::load();
         TARGET_KEY.store(shortcut_key(&settings.shortcut), Ordering::SeqCst);
         let mut tray = NOTIFYICONDATAW::default();
@@ -273,15 +303,28 @@ pub fn run() -> Result<(), String> {
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
         ROOT.store(hwnd as isize, Ordering::SeqCst);
+        if std::env::var_os("KEYSCRIBE_DEBUG_LOG").is_some() {
+            let event_name = wide(&format!("Local\\KeyScribeDevStop-{}", std::process::id()));
+            let event = CreateEventW(ptr::null(), 0, 0, event_name.as_ptr());
+            if !event.is_null() {
+                DEV_STOP_EVENT.store(event as isize, Ordering::SeqCst);
+                SetTimer(hwnd, DEV_STOP_TIMER, 250, None);
+                crate::debug_log::log(|| "development shutdown event ready".into());
+            } else {
+                crate::debug_log::log(|| "development shutdown event creation failed".into());
+            }
+        }
         if Shell_NotifyIconW(NIM_ADD, &app(hwnd).tray) == 0 {
             DestroyWindow(hwnd);
             return Err("트레이 아이콘을 만들지 못했습니다".into());
         }
+        crate::debug_log::log(|| "tray icon added".into());
         app(hwnd).hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), instance, 0);
         if app(hwnd).hook.is_null() {
             DestroyWindow(hwnd);
             return Err("전역 단축키를 등록하지 못했습니다".into());
         }
+        crate::debug_log::log(|| "keyboard hook installed".into());
         if app(hwnd).settings.api_key.is_empty() {
             show_settings(hwnd);
         }
@@ -307,6 +350,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     {
         let key = &*(lparam as *const KBDLLHOOKSTRUCT);
         if key.flags & LLKHF_INJECTED != 0 {
+            if key.vkCode == VK_RMENU as u32 || key.vkCode == VK_MENU as u32 || key.vkCode == VK_ESCAPE as u32 {
+                crate::debug_log::log(|| format!("key injected vk={} scan={} flags=0x{:x} ignored", key.vkCode, key.scanCode, key.flags));
+            }
             return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
         }
         let physical = match key.vkCode as u16 {
@@ -334,11 +380,78 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             other => other,
         } as u32;
         let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
+        if physical == VK_LCONTROL as u32 && down {
+            LAST_LEFT_CTRL_DOWN.store(key.time, Ordering::Relaxed);
+        }
         let target = TARGET_KEY.load(Ordering::Relaxed) as u32;
         let recording_key = is_recording_key(physical, target);
         let root = ROOT.load(Ordering::Relaxed) as HWND;
+        let alt_state = RIGHT_ALT_STATE.load(Ordering::Relaxed);
+        if recording_key || physical == VK_RMENU as u32 || physical == VK_ESCAPE as u32 {
+            crate::debug_log::log(|| format!("key vk={} physical={} scan={} flags=0x{:x} down={} target={} alt_state={} root={}", key.vkCode, physical, key.scanCode, key.flags, down, target, alt_state, !root.is_null()));
+        }
+        if !root.is_null() && (target == VK_RMENU as u32 || alt_state != 0) {
+            if is_recording_key(physical, VK_RMENU as u32) {
+                if down {
+                    if alt_state == 0 {
+                        if another_key_is_held(key.time) {
+                            crate::debug_log::log(|| "right_alt pass: another key held".into());
+                            return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
+                        }
+                        if SetTimer(root, RIGHT_ALT_TIMER, 100, None) == 0 {
+                            crate::debug_log::log(|| "right_alt pass: timer failed".into());
+                            return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
+                        }
+                        RIGHT_ALT_DOWN_TIME.store(key.time, Ordering::Relaxed);
+                        RIGHT_ALT_STATE.store(1, Ordering::Relaxed);
+                        crate::debug_log::log(|| "right_alt down suppressed; waiting 100ms".into());
+                    }
+                    return 1;
+                }
+                match alt_state {
+                    1 => {
+                        crate::debug_log::log(|| "right_alt tap: queue down/up".into());
+                        KillTimer(root, RIGHT_ALT_TIMER);
+                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 1);
+                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
+                    }
+                    2 => {
+                        crate::debug_log::log(|| "right_alt hold: queue up".into());
+                        PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
+                    }
+                    3 => {
+                        crate::debug_log::log(|| "right_alt combo: replay up".into());
+                        send_keys(&[(VK_RMENU, true)]);
+                    }
+                    _ => return CallNextHookEx(ptr::null_mut(), code, wparam, lparam),
+                }
+                RIGHT_ALT_STATE.store(0, Ordering::Relaxed);
+                return 1;
+            }
+            if down && (alt_state == 1 || alt_state == 2) {
+                // AltGr can generate a synthetic left Ctrl alongside right Alt.
+                if physical == VK_LCONTROL as u32
+                    && key
+                        .time
+                        .wrapping_sub(RIGHT_ALT_DOWN_TIME.load(Ordering::Relaxed))
+                        <= 1
+                {
+                    return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
+                }
+                KillTimer(root, RIGHT_ALT_TIMER);
+                RIGHT_ALT_STATE.store(3, Ordering::Relaxed);
+                crate::debug_log::log(|| format!("right_alt combo: key={} prior_state={alt_state}; replay down", physical));
+                if alt_state == 2 {
+                    PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
+                    PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
+                }
+                send_keys(&[(VK_RMENU, false)]);
+                return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
+            }
+        }
         if recording_key || physical == VK_ESCAPE as u32 {
             if !root.is_null() {
+                crate::debug_log::log(|| format!("key queued physical={physical} down={down}"));
                 PostMessageW(root, KEY_MESSAGE, physical as usize, down as isize);
             }
         }
@@ -378,18 +491,24 @@ unsafe extern "system" fn root_proc(
                 app(hwnd).transcribing = false;
                 match result.result {
                     Ok(text) if !text.is_empty() => {
+                        crate::debug_log::log(|| format!("transcription completed characters={}", text.chars().count()));
                         hide_overlay(hwnd);
                         app(hwnd).last_text = summarize_recent(&text);
                         match paste(hwnd, &text, app(hwnd).settings.auto_send) {
                             Ok(()) => set_status(hwnd, "완료"),
-                            Err(error) => set_status(hwnd, &format!("붙여넣기 실패: {error}")),
+                            Err(error) => {
+                                crate::debug_log::log(|| "paste failed".into());
+                                set_status(hwnd, &format!("붙여넣기 실패: {error}"));
+                            }
                         }
                     }
                     Ok(_) => {
+                        crate::debug_log::log(|| "transcription completed with empty text".into());
                         hide_overlay(hwnd);
                         set_status(hwnd, "인식된 음성이 없습니다");
                     }
                     Err(error) => {
+                        crate::debug_log::log(|| "transcription failed after retries".into());
                         set_status(hwnd, &error);
                         transient_overlay(hwnd, overlay::State::Failed);
                     }
@@ -437,13 +556,28 @@ unsafe extern "system" fn root_proc(
             0
         }
         WM_TIMER => {
-            if wparam == 1 {
+            if wparam == DEV_STOP_TIMER {
+                let event = DEV_STOP_EVENT.load(Ordering::Relaxed) as HANDLE;
+                if !event.is_null() && WaitForSingleObject(event, 0) == WAIT_OBJECT_0 {
+                    crate::debug_log::log(|| "development shutdown requested".into());
+                    DestroyWindow(hwnd);
+                }
+            } else if wparam == 1 {
                 let expires = app(hwnd).overlay_expires;
                 if expires.is_some_and(|when| Instant::now() >= when) {
                     hide_overlay(hwnd);
                 } else {
                     let level = app(hwnd).recording.as_ref().map(Recording::level);
                     overlay::tick(app(hwnd).overlay, level);
+                }
+            } else if wparam == RIGHT_ALT_TIMER {
+                KillTimer(hwnd, RIGHT_ALT_TIMER);
+                if RIGHT_ALT_STATE
+                    .compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    crate::debug_log::log(|| "right_alt hold threshold: queue down".into());
+                    PostMessageW(hwnd, KEY_MESSAGE, VK_RMENU as usize, 1);
                 }
             } else if wparam == AUTO_SEND_DOWN_TIMER {
                 KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
@@ -458,6 +592,7 @@ unsafe extern "system" fn root_proc(
             0
         }
         WM_DESTROY => {
+            crate::debug_log::log(|| "app shutdown: restoring audio".into());
             let owned = Box::from_raw(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             ROOT.store(0, Ordering::SeqCst);
@@ -469,10 +604,19 @@ unsafe extern "system" fn root_proc(
                 UnhookWindowsHookEx(owned.hook);
             }
             mute::restore(owned.mute_before);
+            KillTimer(hwnd, DEV_STOP_TIMER);
+            let event = DEV_STOP_EVENT.swap(0, Ordering::SeqCst) as HANDLE;
+            if !event.is_null() {
+                CloseHandle(event);
+            }
             KillTimer(hwnd, 1);
+            KillTimer(hwnd, RIGHT_ALT_TIMER);
             KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
             if KillTimer(hwnd, AUTO_SEND_UP_TIMER) != 0 {
                 send_keys(&[(VK_RETURN, true)]);
+            }
+            if RIGHT_ALT_STATE.swap(0, Ordering::Relaxed) == 3 {
+                send_keys(&[(VK_RMENU, true)]);
             }
             overlay::destroy(owned.overlay);
             if !owned.dialog.is_null() {
@@ -607,6 +751,7 @@ fn shortcut_key(value: &str) -> u16 {
 }
 
 unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
+    crate::debug_log::log(|| format!("handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}", app(hwnd).recording.is_some(), app(hwnd).transcribing, app(hwnd).pressed, app(hwnd).settings.recording_control));
     if key == VK_ESCAPE as u32 && down {
         if app(hwnd).recording.is_some() || app(hwnd).transcribing {
             cancel(hwnd);
@@ -639,6 +784,7 @@ unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
 }
 
 unsafe fn start(hwnd: HWND) {
+    crate::debug_log::log(|| "recording start requested".into());
     if app(hwnd).settings.api_key.is_empty() {
         show_settings(hwnd);
         return;
@@ -648,11 +794,13 @@ unsafe fn start(hwnd: HWND) {
             app(hwnd).recording = Some(recording);
             if app(hwnd).settings.mute_during_recording {
                 app(hwnd).mute_before = mute::mute();
+                crate::debug_log::log(|| format!("recording mute result={:?}", app(hwnd).mute_before));
             }
             set_status(hwnd, "녹음 중 · Esc 취소");
             active_overlay(hwnd, overlay::State::Recording);
         }
         Err(error) => {
+            crate::debug_log::log(|| format!("recording start failed: {error}"));
             set_status(hwnd, &format!("마이크 오류: {error}"));
             app(hwnd).overlay_expires = Some(Instant::now() + Duration::from_secs(5));
             let message = if error == "마이크를 찾을 수 없습니다" {
@@ -667,17 +815,20 @@ unsafe fn start(hwnd: HWND) {
 }
 
 unsafe fn stop(hwnd: HWND) {
+    crate::debug_log::log(|| "recording stop requested".into());
     let Some(recording) = app(hwnd).recording.take() else {
         return;
     };
-    let wav = match recording.stop() {
+    let stopped = recording.stop();
+    mute::restore(app(hwnd).mute_before.take());
+    crate::debug_log::log(|| format!("recording stopped; audio restore attempted; success={}", stopped.is_ok()));
+    let wav = match stopped {
         Ok(path) => path,
         Err(error) => {
             set_status(hwnd, &format!("녹음 오류: {error}"));
             return;
         }
     };
-    mute::restore(app(hwnd).mute_before.take());
     if std::fs::metadata(&wav)
         .map(|meta| meta.len() <= 44)
         .unwrap_or(true)
@@ -706,6 +857,7 @@ unsafe fn stop(hwnd: HWND) {
 }
 
 unsafe fn cancel(hwnd: HWND) {
+    crate::debug_log::log(|| "recording cancelled; restoring audio".into());
     app(hwnd).generation += 1;
     app(hwnd).recording = None;
     mute::restore(app(hwnd).mute_before.take());

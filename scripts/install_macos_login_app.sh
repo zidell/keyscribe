@@ -36,6 +36,9 @@ cat > "$agent" <<EOF
         <string>$(xml_escape "$app")</string>
     </array>
     <key>WorkingDirectory</key><string>$(xml_escape "$project_root")</string>
+    <key>EnvironmentVariables</key><dict>
+        <key>KEYSCRIBE_DEBUG_LOG</key><string>$(xml_escape "$project_root/dist-native/macos-debug.log")</string>
+    </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <key>ThrottleInterval</key><integer>10</integer>

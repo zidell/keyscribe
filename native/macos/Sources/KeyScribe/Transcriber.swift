@@ -64,23 +64,26 @@ final class Transcriber {
 
     private func perform(request: URLRequest, body: URL, attempt: Int, generation: UUID,
                          completion: @escaping (Result<String, Error>) -> Void) {
+        DebugLog.shared.record("transcription request provider=\(request.url?.host ?? "unknown") attempt=\(attempt)")
         task = URLSession.shared.uploadTask(with: request, fromFile: body) { [weak self] data, response, error in
             DispatchQueue.main.async { [weak self] in
             guard let self, self.generation == generation else { return }
             if let error {
+                DebugLog.shared.record("transcription transport failure attempt=\(attempt) code=\((error as NSError).code)")
                 if (error as NSError).code == NSURLErrorCancelled { return }
                 if attempt == 1 {
-                    self.perform(request: request, body: body, attempt: 2, generation: generation,
-                                 completion: completion)
+                    self.retry(request: request, body: body, generation: generation,
+                               completion: completion)
                 } else {
                     self.finish(body: body, result: .failure(error), completion: completion)
                 }
                 return
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if (500...599).contains(status) && attempt == 1 {
-                self.perform(request: request, body: body, attempt: 2, generation: generation,
-                             completion: completion)
+            DebugLog.shared.record("transcription HTTP \(status) attempt=\(attempt)")
+            if (status == 408 || status == 429 || (500...599).contains(status)) && attempt == 1 {
+                self.retry(request: request, body: body, generation: generation,
+                           completion: completion)
                 return
             }
             guard (200...299).contains(status) else {
@@ -91,13 +94,28 @@ final class Transcriber {
             guard let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let text = json["text"] as? String else {
-                self.finish(body: body, result: .failure(TranscriptionError.invalidResponse), completion: completion)
+                if attempt == 1 {
+                    self.retry(request: request, body: body, generation: generation,
+                               completion: completion)
+                } else {
+                    self.finish(body: body, result: .failure(TranscriptionError.invalidResponse), completion: completion)
+                }
                 return
             }
             self.finish(body: body, result: .success(cleanText(text)), completion: completion)
             }
         }
         task?.resume()
+    }
+
+    private func retry(request: URLRequest, body: URL, generation: UUID,
+                       completion: @escaping (Result<String, Error>) -> Void) {
+        DebugLog.shared.record("transcription retry scheduled after 1s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.perform(request: request, body: body, attempt: 2, generation: generation,
+                         completion: completion)
+        }
     }
 
     private func finish(body: URL, result: Result<String, Error>,

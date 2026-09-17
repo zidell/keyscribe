@@ -1,6 +1,6 @@
 use crate::settings::Settings;
 use serde_json::Value;
-use std::{ffi::c_void, fs::File, io::Read, path::Path, ptr};
+use std::{ffi::c_void, fs::File, io::Read, path::Path, ptr, time::Duration};
 use windows_sys::Win32::Networking::WinHttp::*;
 
 struct Internet(*mut c_void);
@@ -239,7 +239,8 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
     let (prefix, suffix) = multipart(settings, &boundary);
     let content_type = format!("multipart/form-data; boundary={boundary}");
     let mut last_error = String::new();
-    for _attempt in 0..2 {
+    for attempt in 0..2 {
+        crate::debug_log::log(|| format!("transcription request provider={} attempt={}", if settings.openai() { "openai" } else { "elevenlabs" }, attempt + 1));
         match request(
             host,
             path,
@@ -254,27 +255,34 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
             Some(&content_type),
         ) {
             Ok((status, response)) if (200..300).contains(&status) => {
-                let json: Value = serde_json::from_slice(&response)
-                    .map_err(|_| "전사 응답을 읽을 수 없습니다".to_string())?;
-                let text = json
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or("전사 응답에 텍스트가 없습니다")?;
-                return Ok(clean_text(text));
+                crate::debug_log::log(|| format!("transcription HTTP {status} attempt={}", attempt + 1));
+                match serde_json::from_slice::<Value>(&response) {
+                    Ok(json) => match json.get("text").and_then(Value::as_str) {
+                        Some(text) => return Ok(clean_text(text)),
+                        None => last_error = "전사 응답에 텍스트가 없습니다".into(),
+                    },
+                    Err(_) => last_error = "전사 응답을 읽을 수 없습니다".into(),
+                }
             }
             Ok((status, response)) => {
+                crate::debug_log::log(|| format!("transcription HTTP {status} attempt={}", attempt + 1));
                 let detail = String::from_utf8_lossy(&response);
                 last_error = format!(
                     "전사 실패 (HTTP {status}): {}",
                     detail.chars().take(300).collect::<String>()
                 );
-                if !(500..600).contains(&status) {
+                if status != 408 && status != 429 && !(500..600).contains(&status) {
                     break;
                 }
             }
             Err(error) => {
+                crate::debug_log::log(|| format!("transcription transport failure attempt={} type=network", attempt + 1));
                 last_error = error;
             }
+        }
+        if attempt == 0 {
+            crate::debug_log::log(|| "transcription retry scheduled after 1s".into());
+            std::thread::sleep(Duration::from_secs(1));
         }
     }
     Err(last_error)
