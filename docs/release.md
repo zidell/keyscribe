@@ -19,6 +19,8 @@
 3. 첫 제출은 Partner Center에서 직접 진행합니다. 가격·제공 지역, 설명·스크린샷, 개인정보 처리방침, 연령 등급, `runFullTrust` 기능 선언 등 필수 항목을 채우고 MSIX를 업로드해 인증을 마칩니다. Store는 승인된 MSIX를 재서명합니다. [첫 제출 안내](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/create-app-submission), [Store 서명 안내](https://learn.microsoft.com/en-us/windows/apps/publish/faq/get-started-with-the-microsoft-store)
 4. 첫 제출 완료 후 Microsoft Store Submission API와 Entra 앱 자격 증명을 연결하면 새 MSIX 업로드·업데이트 제출을 CI에서 자동화할 수 있습니다. 현재 워크플로는 **빌드와 artifact 생성까지만** 자동화합니다. API 연결 전에는 새 버전을 Partner Center에 수동 제출해야 합니다. API로 제출한 버전은 심사를 거치고 승인되면 Store가 설치된 앱에 업데이트를 전달합니다. [Submission API](https://learn.microsoft.com/en-us/windows/uwp/monetize/manage-app-submissions), [Store 업데이트 안내](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app)
 
+자동 제출 자격 증명은 **Partner Center → 계정 설정 → Users**에서 제출용 Microsoft Entra 앱을 추가하고 `Manager` 역할을 부여해 준비합니다. 해당 앱 화면의 Tenant ID와 Client ID를 기록한 뒤 **Add new key**에서 키를 발급합니다. Azure 화면으로 연결되면 **Entra ID → App registrations → 해당 앱 → Certificates & secrets → Client secrets → New client secret**에서 생성합니다. Secret의 **Value**는 한 번만 표시되므로 즉시 GitHub Actions Secret `KEYSCRIBE_STORE_CLIENT_SECRET`에 저장합니다. Tenant ID와 Client ID는 각각 `KEYSCRIBE_STORE_TENANT_ID`, `KEYSCRIBE_STORE_CLIENT_ID`로 저장할 예정입니다. 첫 제출 완료 전에는 이 Secret들이 있어도 자동 제출 API를 사용할 수 없습니다. [Microsoft의 앱 연결 및 키 발급 안내](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-and-manage-submissions-using-windows-store-services)
+
 | Repository Variable | Partner Center 제품 Identity 값 |
 | --- | --- |
 | `KEYSCRIBE_STORE_PACKAGE_NAME` | `Package/Identity/Name` |
