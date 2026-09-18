@@ -40,10 +40,7 @@ fn prune(path: &Path) {
 
 pub fn init() {
     SENDER.get_or_init(|| {
-        let path = path();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
+        let path = ensure_file().unwrap_or_else(|_| path());
         let (sender, receiver) = sync_channel::<String>(1024);
         thread::spawn(move || {
             prune(&path);
@@ -72,6 +69,15 @@ pub fn path() -> PathBuf {
     env::var_os("KEYSCRIBE_DEBUG_LOG")
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::settings::directory().join("debug.log"))
+}
+
+pub fn ensure_file() -> std::io::Result<PathBuf> {
+    let path = path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new().create(true).append(true).open(&path)?;
+    Ok(path)
 }
 
 pub fn log(message: impl FnOnce() -> String) {

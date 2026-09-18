@@ -76,23 +76,6 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static RIGHT_ALT_STATE: AtomicU8 = AtomicU8::new(0);
 static AUTO_STOPPED_ALT_HELD: AtomicBool = AtomicBool::new(false);
 static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
-static LAST_LEFT_CTRL_DOWN: AtomicU32 = AtomicU32::new(0);
-
-unsafe fn another_key_is_held(now: u32) -> bool {
-    for vk in 8u16..=254 {
-        if matches!(
-            vk,
-            VK_CONTROL | VK_LCONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_HANGUL
-        ) {
-            continue;
-        }
-        if GetAsyncKeyState(vk as i32) < 0 {
-            return true;
-        }
-    }
-    GetAsyncKeyState(VK_LCONTROL as i32) < 0
-        && now.wrapping_sub(LAST_LEFT_CTRL_DOWN.load(Ordering::Relaxed)) > 50
-}
 
 fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target || (target == VK_RMENU as u32 && physical == VK_HANGUL as u32)
@@ -426,9 +409,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             other => other,
         } as u32;
         let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
-        if physical == VK_LCONTROL as u32 && down {
-            LAST_LEFT_CTRL_DOWN.store(key.time, Ordering::Relaxed);
-        }
         let target = TARGET_KEY.load(Ordering::Relaxed) as u32;
         let recording_key = is_recording_key(physical, target);
         let root = ROOT.load(Ordering::Relaxed) as HWND;
@@ -442,10 +422,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             if is_recording_key(physical, VK_RMENU as u32) {
                 if down {
                     if alt_state == 0 {
-                        if another_key_is_held(key.time) {
-                            crate::debug_log::log(|| "right_alt pass: another key held".into());
-                            return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
-                        }
                         if SetTimer(root, RIGHT_ALT_TIMER, 100, None) == 0 {
                             crate::debug_log::log(|| "right_alt pass: timer failed".into());
                             return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
@@ -1178,13 +1154,19 @@ unsafe fn open_api_key_page(owner: HWND, url: &str) {
 }
 
 unsafe fn open_log(owner: HWND) {
-    let path = crate::debug_log::path();
+    let path = match crate::debug_log::ensure_file() {
+        Ok(path) => path,
+        Err(_) => {
+            info(owner, "로그 파일을 만들 수 없습니다.");
+            return;
+        }
+    };
     crate::debug_log::log(|| "log opened by user".into());
     let result = ShellExecuteW(
         owner,
         wide("open").as_ptr(),
+        wide("notepad.exe").as_ptr(),
         wide(&path.to_string_lossy()).as_ptr(),
-        ptr::null(),
         ptr::null(),
         SW_SHOW,
     );
@@ -1251,7 +1233,7 @@ unsafe fn show_settings(root: HWND) {
         "BUTTON",
         "로그 보기",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
-        165,
+        18,
         610,
         100,
         32,
