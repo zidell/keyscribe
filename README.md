@@ -15,7 +15,15 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 
 ## 화면 미리보기
 
-아래 이미지는 앱 사용 흐름을 보여 주는 소개용 UI 이미지입니다.
+아래 이미지는 앱의 제어 메뉴와 사용 흐름을 보여 주는 소개용 UI 이미지입니다.
+
+### 제어 메뉴
+
+| macOS | Windows |
+| --- | --- |
+| ![macOS 메뉴 막대에서 열린 KeyScribe 메뉴](assets/screenshots/macos-menu-preview.png) | ![Windows 트레이에서 열린 KeyScribe 메뉴](assets/screenshots/windows-menu-preview.png) |
+
+### 사용 흐름
 
 | macOS | Windows |
 | --- | --- |
