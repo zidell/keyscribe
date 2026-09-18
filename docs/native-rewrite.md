@@ -21,4 +21,4 @@ macOS Swift/AppKit 실행 파일의 첫 릴리스 빌드는 `bash native/macos/b
 
 `macos-vMAJOR.MINOR.PATCH` 태그는 [네이티브 macOS 워크플로](../.github/workflows/native-macos-release.yml)를 실행해 공증된 Apple Silicon·Intel DMG를 GitHub 사전 릴리스에 올린다. `v*` 태그는 macOS와 Windows의 통합 네이티브 릴리스에 사용한다. 자세한 절차는 [배포 문서](release.md)에 있다.
 
-개발 실행 로그는 Windows `dist-native/windows-debug.log`, macOS `dist-native/macos-debug.log`에 기록한다. 실행 중 1분마다 최근 24시간 이전 기록을 제거하며, API 키와 녹음·변환 내용은 기록하지 않는다. macOS에서 새 로그 환경 변수를 적용하려면 `bash scripts/install_macos_login_app.sh`를 다시 실행한다. Windows 빌드와 개발 감시 재시작 경로는 확인했고, macOS 빌드와 녹음 중 오류·음소거 복구는 실제 Mac에서 확인해야 한다.
+모든 빌드는 최근 24시간의 진단 로그를 기록한다. Windows는 `%APPDATA%\keyscribe\debug.log`, macOS는 `~/Library/Application Support/keyscribe/debug.log`에 기록하며, 개발 실행은 각각 `dist-native/windows-debug.log`, `dist-native/macos-debug.log`을 사용한다. 설정 창의 `로그 보기`로 파일을 열어 필요한 부분을 복사할 수 있다. 실행 중 1분마다 이전 기록을 제거하며, API 키와 녹음·변환 내용은 기록하지 않는다. macOS에서 새 로그 환경 변수를 적용하려면 `bash scripts/install_macos_login_app.sh`를 다시 실행한다. Windows 빌드와 개발 감시 재시작 경로는 확인했고, macOS 빌드와 녹음 중 오류·음소거 복구는 실제 Mac에서 확인해야 한다.

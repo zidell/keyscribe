@@ -2,7 +2,7 @@ use std::{
     env,
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{sync_channel, RecvTimeoutError, SyncSender},
         OnceLock,
@@ -40,16 +40,18 @@ fn prune(path: &Path) {
 
 pub fn init() {
     SENDER.get_or_init(|| {
-        let path = env::var_os("KEYSCRIBE_DEBUG_LOG")?;
+        let path = path();
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let (sender, receiver) = sync_channel::<String>(1024);
         thread::spawn(move || {
-            let path = Path::new(&path);
-            prune(path);
+            prune(&path);
             let mut last_prune = Instant::now();
             loop {
                 match receiver.recv_timeout(Duration::from_secs(60)) {
                     Ok(message) => {
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
                             let _ = writeln!(file, "{} {message}", now_ms());
                         }
                     }
@@ -57,13 +59,19 @@ pub fn init() {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
                 if last_prune.elapsed() >= Duration::from_secs(60) {
-                    prune(path);
+                    prune(&path);
                     last_prune = Instant::now();
                 }
             }
         });
         Some(sender)
     });
+}
+
+pub fn path() -> PathBuf {
+    env::var_os("KEYSCRIBE_DEBUG_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::settings::directory().join("debug.log"))
 }
 
 pub fn log(message: impl FnOnce() -> String) {

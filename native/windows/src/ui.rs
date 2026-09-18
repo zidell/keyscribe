@@ -59,6 +59,7 @@ const ID_API_KEY: usize = 204;
 const ID_MODEL: usize = 205;
 const ID_ELEVENLABS_KEY: usize = 206;
 const ID_OPENAI_KEY: usize = 207;
+const ID_LOG: usize = 208;
 const SHORTCUTS: [(&str, &str, u16); 6] = [
     ("right_alt", "오른쪽 Alt", VK_RMENU),
     ("left_alt", "왼쪽 Alt", VK_LMENU),
@@ -81,7 +82,7 @@ unsafe fn another_key_is_held(now: u32) -> bool {
     for vk in 8u16..=254 {
         if matches!(
             vk,
-            VK_CONTROL | VK_LCONTROL | VK_MENU | VK_RMENU | VK_HANGUL
+            VK_CONTROL | VK_LCONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_HANGUL
         ) {
             continue;
         }
@@ -1176,6 +1177,22 @@ unsafe fn open_api_key_page(owner: HWND, url: &str) {
     }
 }
 
+unsafe fn open_log(owner: HWND) {
+    let path = crate::debug_log::path();
+    crate::debug_log::log(|| "log opened by user".into());
+    let result = ShellExecuteW(
+        owner,
+        wide("open").as_ptr(),
+        wide(&path.to_string_lossy()).as_ptr(),
+        ptr::null(),
+        ptr::null(),
+        SW_SHOW,
+    );
+    if (result as isize) <= 32 {
+        info(owner, "로그 파일을 열 수 없습니다.");
+    }
+}
+
 unsafe fn show_settings(root: HWND) {
     let current = app(root).dialog;
     if !current.is_null() && IsWindow(current) != 0 {
@@ -1229,6 +1246,17 @@ unsafe fn show_settings(root: HWND) {
         ID_API_KEY,
     );
     label("API 키 발급", 48);
+    control(
+        dialog,
+        "BUTTON",
+        "로그 보기",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+        165,
+        610,
+        100,
+        32,
+        ID_LOG,
+    );
     control(
         dialog,
         "BUTTON",
@@ -1756,6 +1784,7 @@ unsafe extern "system" fn dialog_proc(
                     open_api_key_page(hwnd, "https://elevenlabs.io/app/developers/api-keys")
                 }
                 ID_OPENAI_KEY => open_api_key_page(hwnd, "https://platform.openai.com/api-keys"),
+                ID_LOG => open_log(hwnd),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
                     dialog_state(hwnd).pending_key = None;

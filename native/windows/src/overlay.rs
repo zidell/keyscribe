@@ -39,10 +39,17 @@ impl State {
 
 struct Data {
     title: String,
-    recording: bool,
+    indicator: Indicator,
     time_warning: bool,
     level: f32,
     phase: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Indicator {
+    None,
+    Recording,
+    Transcribing,
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -84,7 +91,7 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
     if !hwnd.is_null() {
         let data = Box::new(Data {
             title: String::new(),
-            recording: false,
+            indicator: Indicator::None,
             time_warning: false,
             level: 0.0,
             phase: 0.0,
@@ -96,11 +103,16 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
 }
 
 pub unsafe fn show(hwnd: HWND, state: State) {
-    show_with_message(hwnd, state.title(), matches!(state, State::Recording));
+    let indicator = match state {
+        State::Recording => Indicator::Recording,
+        State::Transcribing => Indicator::Transcribing,
+        State::Cancelled | State::Failed => Indicator::None,
+    };
+    show_with_message(hwnd, state.title(), indicator);
 }
 
 pub unsafe fn show_message(hwnd: HWND, message: &str) {
-    show_with_message(hwnd, message, false);
+    show_with_message(hwnd, message, Indicator::None);
 }
 
 pub unsafe fn update_recording_time(hwnd: HWND, seconds: u64, warning: bool) {
@@ -108,20 +120,20 @@ pub unsafe fn update_recording_time(hwnd: HWND, seconds: u64, warning: bool) {
         return;
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
-    if data.recording {
+    if data.indicator == Indicator::Recording {
         data.title = format!("녹음 중 ({:02}:{:02})", seconds / 60, seconds % 60);
         data.time_warning = warning;
         InvalidateRect(hwnd, ptr::null(), 0);
     }
 }
 
-unsafe fn show_with_message(hwnd: HWND, message: &str, recording: bool) {
+unsafe fn show_with_message(hwnd: HWND, message: &str, indicator: Indicator) {
     if hwnd.is_null() {
         return;
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
     data.title = message.into();
-    data.recording = recording;
+    data.indicator = indicator;
     data.time_warning = false;
     data.level = 0.0;
     data.phase = 0.0;
@@ -199,7 +211,7 @@ unsafe extern "system" fn procedure(
             let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
             if GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
                 let data = &*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Data);
-                if data.recording {
+                if data.indicator == Indicator::Recording {
                     if let Some(time) = data.title.strip_prefix("녹음 중 ") {
                         let prefix: Vec<u16> = "녹음 중 ".encode_utf16().collect();
                         let time: Vec<u16> = time.encode_utf16().collect();
@@ -230,14 +242,25 @@ unsafe extern "system" fn procedure(
                         let title: Vec<u16> = data.title.encode_utf16().collect();
                         TextOutW(dc, 40, 18, title.as_ptr(), title.len() as i32);
                     }
+                } else if data.indicator == Indicator::Transcribing {
+                    let title: Vec<u16> = data.title.encode_utf16().collect();
+                    TextOutW(dc, 40, 18, title.as_ptr(), title.len() as i32);
                 } else {
                     let title: Vec<u16> = data.title.encode_utf16().collect();
                     TextOutW(dc, 20, 18, title.as_ptr(), title.len() as i32);
                 }
-                let red = CreateSolidBrush(0x004747ff);
-                SelectObject(dc, red as _);
-                if data.recording {
+                if data.indicator == Indicator::Recording {
+                    let brush = CreateSolidBrush(0x004747ff);
+                    SelectObject(dc, brush as _);
                     Ellipse(dc, 19, 20, 31, 32);
+                    SelectObject(dc, old_brush);
+                    DeleteObject(brush as _);
+                } else if data.indicator == Indicator::Transcribing {
+                    let frames = ["◴", "◷", "◶", "◵"];
+                    let frame = frames[(data.phase as usize) % frames.len()];
+                    let glyph: Vec<u16> = frame.encode_utf16().collect();
+                    SetTextColor(dc, 0x00ff9d47);
+                    TextOutW(dc, 18, 17, glyph.as_ptr(), glyph.len() as i32);
                 }
                 for index in 0..5 {
                     let wave = (data.phase + index as f32 * 1.3).sin() * 0.5 + 0.5;
@@ -255,8 +278,6 @@ unsafe extern "system" fn procedure(
                         3,
                     );
                 }
-                SelectObject(dc, old_brush);
-                DeleteObject(red as _);
             }
             SelectObject(dc, old_pen);
             SelectObject(dc, old_font);

@@ -24,6 +24,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let recordingStartSoundVolume = NSSlider()
     private let recordingStartSoundValue = NSTextField(labelWithString: "100%")
     private let autoSend = NSButton(checkboxWithTitle: "붙여넣은 뒤 Enter 입력", target: nil, action: nil)
+    private let logButton = NSButton(title: "로그 보기", target: nil, action: nil)
 
     init(settings: Settings) {
         original = settings
@@ -190,6 +191,10 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         autoSend.frame = NSRect(x: 125, y: 78, width: 350, height: 25)
         autoSend.state = original.autoSend ? .on : .off
         form.addSubview(autoSend)
+        logButton.frame = NSRect(x: 125, y: 8, width: 90, height: 25)
+        logButton.target = self
+        logButton.action = #selector(openLog(_:))
+        form.addSubview(logButton)
 
         updateProvider()
         return form
@@ -197,6 +202,11 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     @objc private func recordingStartSoundVolumeChanged(_ sender: NSSlider) {
         recordingStartSoundValue.stringValue = "\(Int(sender.doubleValue.rounded()))%"
+    }
+
+    @objc private func openLog(_ sender: Any?) {
+        DebugLog.shared.record("log opened by user")
+        NSWorkspace.shared.open(DebugLog.shared.fileURL)
     }
 
     private func updateProvider() {
