@@ -266,7 +266,7 @@ unsafe extern "system" fn procedure(
                     );
                     if !spinner_font.is_null() {
                         let previous_font = SelectObject(dc, spinner_font as _);
-                        TextOutW(dc, 17, 13, glyph.as_ptr(), glyph.len() as i32);
+                        TextOutW(dc, 21, 18, glyph.as_ptr(), glyph.len() as i32);
                         SelectObject(dc, previous_font);
                         DeleteObject(spinner_font as _);
                     } else {
