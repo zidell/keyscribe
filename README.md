@@ -57,7 +57,7 @@ API 키 접두사로 공급자를 자동으로 선택합니다. 공급자마다 
 | ElevenLabs | `sk_` | `scribe_v2` |
 | Groq | `gsk_` | `whisper-large-v3-turbo` |
 
-Groq는 OpenAI 호환 전사 API를 사용합니다. 설정 창의 **Groq 키 ↗**에서 API 키를 발급받고 입력하면 모델 목록을 불러올 수 있습니다. 환경변수로 키를 제공할 때는 `GROQ_API_KEY`를 사용합니다.
+Groq는 OpenAI 호환 전사 API를 사용합니다. 설정 창의 **Groq 키 ↗**에서 API 키를 발급받고 입력하면 모델 목록을 불러올 수 있습니다.
 
 ## 문제 확인
 
