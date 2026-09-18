@@ -16,17 +16,17 @@ KeyScribe는 macOS 메뉴 막대와 Windows 트레이에서 실행되는 음성 
 
 | macOS | Windows |
 | --- | --- |
-| ![macOS 메뉴 막대의 KeyScribe 메뉴와 녹음 중 오버레이](assets/screenshots/macos-recording-preview.png) | ![Windows 트레이의 KeyScribe 메뉴와 녹음 중 오버레이](assets/screenshots/windows-recording-preview.png) |
+| ![KeyScribe가 녹음, 변환, 자동 붙여넣기를 수행하는 모습](assets/screenshots/keyscribe-flow.gif) | ![Windows 트레이의 KeyScribe 메뉴와 녹음 중 오버레이](assets/screenshots/windows-recording-preview.png) |
 
 ## 설치
 
-[다운로드 페이지](https://keyscribe.gitools.net)에서 운영체제에 맞는 파일을 받습니다. 최신 `main`의 macOS 설치용 DMG는 [GitHub Releases](https://github.com/zidell/keyscribe/releases)의 사전 릴리스에서도 받을 수 있습니다. Windows Store 배포는 첫 등록과 심사가 완료된 뒤 제공됩니다.
+[다운로드 페이지](https://keyscribe.gitools.net)에서 macOS 설치 파일을 받습니다. 최신 `main`의 macOS 설치용 DMG는 [GitHub Releases](https://github.com/zidell/keyscribe/releases)의 사전 릴리스에서도 받을 수 있습니다. Windows 앱은 GitHub Releases에서 SignPath로 서명된 파일을 받습니다.
 
 | 운영체제 | 파일 | 설치 또는 실행 |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
-| Windows 10/11 x64 | Microsoft Store | 첫 등록·심사 완료 후 Store에서 설치 |
+| Windows 10/11 x64 | `KeyScribe-windows-x64-*.exe` | GitHub Releases에서 SignPath 서명 파일 다운로드 |
 
 ## 처음 사용할 때
 
