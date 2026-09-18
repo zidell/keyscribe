@@ -29,12 +29,17 @@
     .preview { margin: 0; }
     .preview img { display: block; width: 100%; border-radius: 9px; border: 1px solid #dfe3ed; }
     .preview figcaption { margin-top: 8px; color: #62697b; font-size: .9rem; }
+    .benchmarks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .benchmark { padding: 18px 20px; border: 1px solid #dfe3ed; border-radius: 9px; }
+    .benchmark strong { display: block; margin-bottom: 6px; color: #62697b; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .benchmark b { display: block; font-size: 1.15rem; letter-spacing: -.02em; }
+    .benchmark small { display: block; margin-top: 5px; color: #62697b; }
     .platform-only { display: none; }
     html[data-platform="mac"] .platform-only.mac, html[data-platform="windows"] .platform-only.windows, html[data-platform="other"] .platform-only { display: block; }
     ol { padding-left: 1.4rem; }
     li + li { margin-top: 8px; }
-    @media (prefers-color-scheme: dark) { body { background: #171923; color: #f0f2fa; } .note, .preview figcaption { color: #aab0c0; } .warning { background: #3b1d25; color: #ffb9c0; } .preview img { border-color: #34394b; } }
-    @media (max-width: 560px) { .previews { grid-template-columns: 1fr; } }
+    @media (prefers-color-scheme: dark) { body { background: #171923; color: #f0f2fa; } .note, .preview figcaption, .benchmark small { color: #aab0c0; } .warning { background: #3b1d25; color: #ffb9c0; } .preview img, .benchmark { border-color: #34394b; } }
+    @media (max-width: 560px) { .previews, .benchmarks { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -72,6 +77,15 @@
         <li data-en="Put the cursor where you want text, then hold Right Option (macOS) or Right Alt (Windows) while speaking. Release the key to insert the text.">입력할 창에 커서를 놓고 오른쪽 Option(macOS) 또는 오른쪽 Alt(Windows)를 누른 채 말합니다. 키를 놓으면 글이 입력됩니다.</li>
       </ol>
       <p class="note" data-en="In Settings, you can change the shortcut, transcription language, recording behavior, and whether to send automatically after pasting.">설정에서 단축키, 인식 언어, 녹음 종료 방식과 붙여넣기 후 자동 전송 여부를 바꿀 수 있습니다.</p>
+    </section>
+
+    <section aria-labelledby="benchmark-title">
+      <h2 id="benchmark-title" data-en="Memory usage">사용 메모리</h2>
+      <p class="note" data-en="We keep it lightweight by removing unnecessary features and including only the essentials. Idle-state benchmark results may vary with the operating system and configuration.">쓸데없는 기능 다 빼고 최소한의 기능만 넣어서 가볍습니다. 아래는 대기 상태 벤치마크 결과이며, 운영체제와 설정에 따라 달라질 수 있습니다.</p>
+      <div class="benchmarks">
+        <div class="benchmark"><strong>macOS</strong><b>19.6MB</b><small data-en="Idle memory">대기 메모리</small><small data-en="Swift · AppKit">Swift · AppKit</small></div>
+        <div class="benchmark"><strong>Windows</strong><b>12.18MiB</b><small data-en="Idle memory">대기 메모리</small><small data-en="Rust · Win32 API">Rust · Win32 API</small></div>
+      </div>
     </section>
 
     <section aria-labelledby="info-title">
