@@ -27,6 +27,7 @@ final class RecordingOverlay {
     private var bars: [CALayer] = []
     private var phase: CGFloat = 0
     private var volume: CGFloat = 0
+    private var state: State?
 
     init() {
         window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 52),
@@ -64,6 +65,7 @@ final class RecordingOverlay {
     }
 
     func show(_ state: State) {
+        self.state = state
         label.stringValue = state.title
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
@@ -92,6 +94,11 @@ final class RecordingOverlay {
 
     func tick(level: CGFloat?) {
         phase += 0.4
+        if state == .transcribing {
+            let frames = ["\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}",
+                          "\u{283C}", "\u{2834}", "\u{2826}", "\u{2827}"]
+            label.stringValue = "\(frames[Int(phase) % frames.count])  \(State.transcribing.title)"
+        }
         if let level {
             volume = max(0, min(1, level))
         } else {
