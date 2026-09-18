@@ -63,7 +63,6 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         installEventTap()
-        if settings.apiKey.isEmpty { showSettings(nil) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -179,7 +178,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             setStatus("종료음 재생 중")
             return
         }
-        guard !settings.apiKey.isEmpty else { showSettings(nil); return }
+        guard !settings.apiKey.isEmpty else {
+            setStatus("API 설정 필요")
+            showTransientOverlay(.apiSetupRequired)
+            return
+        }
         let authorization = AVCaptureDevice.authorizationStatus(for: .audio)
         if authorization == .notDetermined {
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in

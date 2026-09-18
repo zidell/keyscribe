@@ -8,6 +8,7 @@ final class RecordingOverlay {
         case cancelled
         case failed
         case microphoneError
+        case apiSetupRequired
 
         var title: String {
             switch self {
@@ -16,6 +17,7 @@ final class RecordingOverlay {
             case .cancelled: return "녹음 취소됨"
             case .failed: return "변환 실패"
             case .microphoneError: return "마이크 오류"
+            case .apiSetupRequired: return "API 설정 필요"
             }
         }
     }

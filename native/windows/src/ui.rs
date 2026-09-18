@@ -346,9 +346,6 @@ pub fn run() -> Result<(), String> {
             return Err("전역 단축키를 등록하지 못했습니다".into());
         }
         crate::debug_log::log(|| "keyboard hook installed".into());
-        if app(hwnd).settings.api_key.is_empty() {
-            show_settings(hwnd);
-        }
         let mut message: MSG = mem::zeroed();
         while GetMessageW(&mut message, ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&message);
@@ -890,7 +887,8 @@ unsafe fn start(hwnd: HWND) {
         return;
     }
     if app(hwnd).settings.api_key.is_empty() {
-        show_settings(hwnd);
+        set_status(hwnd, "API 설정 필요");
+        transient_overlay(hwnd, overlay::State::ApiSetupRequired);
         return;
     }
     match Recording::start() {

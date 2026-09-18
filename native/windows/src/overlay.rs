@@ -24,6 +24,7 @@ pub enum State {
     Transcribing,
     Cancelled,
     Failed,
+    ApiSetupRequired,
 }
 
 impl State {
@@ -33,6 +34,7 @@ impl State {
             Self::Transcribing => "변환 중...",
             Self::Cancelled => "녹음 취소됨",
             Self::Failed => "변환 실패",
+            Self::ApiSetupRequired => "API 설정 필요",
         }
     }
 }
@@ -106,7 +108,7 @@ pub unsafe fn show(hwnd: HWND, state: State) {
     let indicator = match state {
         State::Recording => Indicator::Recording,
         State::Transcribing => Indicator::Transcribing,
-        State::Cancelled | State::Failed => Indicator::None,
+        State::Cancelled | State::Failed | State::ApiSetupRequired => Indicator::None,
     };
     show_with_message(hwnd, state.title(), indicator);
 }
