@@ -4,7 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="KeyScribe 음성 받아쓰기 앱 다운로드">
+  <link rel="canonical" href="https://keyscribe.gitools.net/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://keyscribe.gitools.net/">
+  <meta property="og:site_name" content="KeyScribe">
+  <meta property="og:title" content="KeyScribe — 음성으로 타이핑하세요">
+  <meta property="og:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows 음성 입력 앱">
+  <meta property="og:image" content="https://keyscribe.gitools.net/screenshots/keyscribe-flow.gif">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="KeyScribe — 음성으로 타이핑하세요">
+  <meta name="twitter:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows 음성 입력 앱">
+  <meta name="twitter:image" content="https://keyscribe.gitools.net/screenshots/keyscribe-flow.gif">
   <title>KeyScribe — 음성으로 타이핑하세요</title>
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KeyScribe","applicationCategory":"UtilitiesApplication","operatingSystem":"macOS, Windows","description":"A lightweight voice typing app that turns speech into text and inserts it into the focused field.","url":"https://keyscribe.gitools.net/","downloadUrl":"https://github.com/zidell/keyscribe/releases","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+  </script>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
     * { box-sizing: border-box; }
@@ -101,6 +115,10 @@
       document.documentElement.lang = 'en';
       document.title = 'KeyScribe — Type with your voice';
       document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS and Windows';
+      document.querySelector('meta[property="og:title"]').content = 'KeyScribe — Type with your voice';
+      document.querySelector('meta[property="og:description"]').content = 'A lightweight voice typing app for macOS and Windows';
+      document.querySelector('meta[name="twitter:title"]').content = 'KeyScribe — Type with your voice';
+      document.querySelector('meta[name="twitter:description"]').content = 'A lightweight voice typing app for macOS and Windows';
       document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en; });
       document.querySelectorAll('[data-en-alt]').forEach((element) => { element.alt = element.dataset.enAlt; });
       document.querySelectorAll('[data-en-html]').forEach((element) => { element.innerHTML = element.dataset.enHtml; });

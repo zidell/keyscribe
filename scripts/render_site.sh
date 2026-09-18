@@ -25,5 +25,7 @@ cp "$project_root/assets/screenshots/keyscribe-windows-flow.gif" "$output_dir/sc
 cp "$project_root/assets/screenshots/macos-menu-preview.png" "$output_dir/screenshots/macos-menu-preview.png"
 cp "$project_root/assets/screenshots/windows-menu-preview.png" "$output_dir/screenshots/windows-menu-preview.png"
 cp "$project_root/site/CNAME" "$output_dir/CNAME"
+cp "$project_root/site/robots.txt" "$output_dir/robots.txt"
+cp "$project_root/site/sitemap.xml" "$output_dir/sitemap.xml"
 touch "$output_dir/.nojekyll"
 printf '%s\n' "$version" > "$output_dir/version.txt"
