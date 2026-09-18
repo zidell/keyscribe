@@ -31,7 +31,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 
 ## 설치
 
-[다운로드 페이지](https://keyscribe.gitools.net)에서 macOS 설치 파일을 받습니다. 최신 `main`의 macOS 설치용 DMG는 [GitHub Releases](https://github.com/zidell/keyscribe/releases)의 사전 릴리스에서도 받을 수 있습니다. Windows 앱은 GitHub Releases에서 SignPath로 서명된 파일을 받습니다.
+[다운로드 및 설치 방법은 [KeyScribe 다운로드 페이지](https://keyscribe.gitools.net)에서 확인하세요. 모든 설치 파일은 [GitHub Releases](https://github.com/zidell/keyscribe/releases)에서 직접 배포합니다.
 
 | 운영체제 | 파일 | 설치 또는 실행 |
 | --- | --- | --- |

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="KeyScribe 음성 받아쓰기 앱 다운로드">
-  <title>KeyScribe 다운로드</title>
+  <title>KeyScribe — 음성으로 타이핑하세요</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
     * { box-sizing: border-box; }
@@ -17,50 +17,84 @@
     p, li { line-height: 1.7; }
     .intro { font-size: 1.13rem; max-width: 620px; }
     section { margin-top: 52px; }
-    .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 12px; }
+    .downloads { display: block; }
     .download { display: block; border-radius: 12px; padding: 18px 20px; background: #3659e3; color: white; text-decoration: none; font-weight: 700; }
     .download:hover { background: #2747ca; }
     .download small { display: block; font-weight: 400; margin-top: 4px; opacity: .85; }
     .note { font-size: .93rem; color: #62697b; }
     .note a { color: inherit; }
+    .warning { margin: 0 0 20px; padding: 12px 14px; border-left: 3px solid #d92d3a; background: #fff0f1; color: #a31e29; border-radius: 4px; }
+    .warning a { color: inherit; font-weight: 700; }
+    .previews { width: min(100vw - 40px, 1040px); margin-left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .preview { margin: 0; }
+    .preview img { display: block; width: 100%; border-radius: 9px; border: 1px solid #dfe3ed; }
+    .preview figcaption { margin-top: 8px; color: #62697b; font-size: .9rem; }
+    .platform-only { display: none; }
+    html[data-platform="mac"] .platform-only.mac, html[data-platform="windows"] .platform-only.windows, html[data-platform="other"] .platform-only { display: block; }
     ol { padding-left: 1.4rem; }
     li + li { margin-top: 8px; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #171923; color: #f0f2fa; }
-      .note { color: #aab0c0; }
-    }
+    @media (prefers-color-scheme: dark) { body { background: #171923; color: #f0f2fa; } .note, .preview figcaption { color: #aab0c0; } .warning { background: #3b1d25; color: #ffb9c0; } .preview img { border-color: #34394b; } }
+    @media (max-width: 560px) { .previews { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <main>
-    <div class="brand"><img src="/logo.svg" alt="">KeyScribe</div>
-    <h1>말하고, 바로 입력하세요.</h1>
-    <p class="intro">KeyScribe는 단축키를 누르는 동안 말을 듣고, 키를 놓으면 받아쓴 내용을 현재 입력창에 붙여넣습니다. macOS 메뉴바와 Windows 트레이에서 조용히 실행됩니다.</p>
+    <div class="brand"><img src="logo.svg" alt="">KeyScribe</div>
+    <h1 data-en="Type with your voice.">음성으로 타이핑하세요.</h1>
+    <p class="intro" data-en="KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.">KeyScribe는 음성을 텍스트로 변환해주는 보이스 입력 앱입니다. 네이티브 코드로 최소한의 기능만 구현했기에 가볍고 쾌적합니다. 본인이 사용하는 STT API 서비스를 연결하여 사용하세요.</p>
+
+    <section aria-labelledby="preview-title">
+      <h2 id="preview-title" data-en="Preview">화면 미리보기</h2>
+      <div class="previews">
+        <figure class="preview platform-only mac"><img src="screenshots/macos-menu-preview.png" alt="macOS 메뉴 막대에서 열린 KeyScribe 메뉴" data-en-alt="The KeyScribe menu open in the macOS menu bar"><figcaption data-en="macOS menu bar">macOS 메뉴 막대</figcaption></figure>
+        <figure class="preview platform-only windows"><img src="screenshots/windows-menu-preview.png" alt="Windows 트레이에서 열린 KeyScribe 메뉴" data-en-alt="The KeyScribe menu open in the Windows system tray"><figcaption data-en="Windows system tray">Windows 시스템 트레이</figcaption></figure>
+        <figure class="preview platform-only mac"><img src="screenshots/keyscribe-flow.gif" alt="KeyScribe가 녹음하고 텍스트를 입력하는 macOS 화면" data-en-alt="KeyScribe recording and inserting text on macOS"><figcaption data-en="Voice typing flow">음성 입력 흐름</figcaption></figure>
+        <figure class="preview platform-only windows"><img src="screenshots/keyscribe-windows-flow.gif" alt="KeyScribe가 녹음하고 텍스트를 입력하는 Windows 화면" data-en-alt="KeyScribe recording and inserting text on Windows"><figcaption data-en="Voice typing flow">음성 입력 흐름</figcaption></figure>
+      </div>
+    </section>
 
     <section aria-labelledby="download-title">
-      <h2 id="download-title">다운로드</h2>
+      <h2 id="download-title" data-en="Download">다운로드</h2>
       <div class="downloads">
-        <a class="download" href="/downloads/KeyScribe-macos-arm64-__VERSION__.dmg">macOS <small>Apple Silicon · DMG</small></a>
-        <a class="download" href="/downloads/KeyScribe-macos-x64-__VERSION__.dmg">macOS <small>Intel · DMG</small></a>
-        <a class="download" href="/downloads/KeyScribe-windows-x64-__VERSION__.msix">Windows <small>x64 · 설치 파일</small></a>
+        <a class="download platform-only mac" href="https://github.com/zidell/keyscribe/releases/tag/v__VERSION__"><span data-en="Download for macOS">macOS 다운로드</span> <small data-en="Apple Silicon __MACOS_ARM64_SIZE__ or Intel __MACOS_X64_SIZE__ · DMG">Apple Silicon __MACOS_ARM64_SIZE__ 또는 Intel __MACOS_X64_SIZE__ · DMG</small></a>
+        <a class="download platform-only windows" href="https://github.com/zidell/keyscribe/releases/download/v__VERSION__/KeyScribe-windows-x64-__VERSION__.exe"><span>Windows</span> <small data-en="x64 · Installer · __WINDOWS_SIZE__">x64 · 설치 파일 · __WINDOWS_SIZE__</small></a>
       </div>
-      <p class="note">최신 버전 __VERSION__ · Windows 설치 파일은 SignPath 서명을 사용합니다.</p>
+      <p class="note" data-en-template="Latest version {version}">최신 버전 __VERSION__</p>
+      <p class="note platform-only windows" data-en="Windows installers are signed by SignPath.">Windows 설치 파일은 SignPath 서명을 사용합니다.</p>
     </section>
 
     <section aria-labelledby="how-title">
-      <h2 id="how-title">사용 방법</h2>
+      <h2 id="how-title" data-en="How it works">사용 방법</h2>
+      <p class="warning" data-en-html="<strong>An external API key is required.</strong> <a href=&quot;https://platform.openai.com/api-keys&quot;>OpenAI ↗</a> · <a href=&quot;https://elevenlabs.io/app/developers/api-keys&quot;>ElevenLabs ↗</a> · <a href=&quot;https://console.groq.com/keys&quot;>Groq ↗</a>"><strong>외부 API 키가 필수입니다.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a></p>
       <ol>
-        <li>앱을 실행하고 메뉴바 또는 트레이의 <strong>설정...</strong>에서 ElevenLabs, OpenAI 또는 Groq API 키를 입력합니다.</li>
-        <li>마이크 접근을 허용합니다. macOS에서는 손쉬운 사용 권한도 허용합니다.</li>
-        <li>입력할 창에 커서를 놓고 오른쪽 Option(macOS) 또는 오른쪽 Alt(Windows)를 누른 채 말합니다. 키를 놓으면 글이 입력됩니다.</li>
+        <li data-en-html="Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.">앱을 실행하고 메뉴바 또는 트레이의 <strong>설정...</strong>에서 ElevenLabs, OpenAI 또는 Groq API 키를 입력합니다.</li>
+        <li data-en="Allow microphone access. On macOS, also allow Accessibility access.">마이크 접근을 허용합니다. macOS에서는 손쉬운 사용 권한도 허용합니다.</li>
+        <li data-en="Put the cursor where you want text, then hold Right Option (macOS) or Right Alt (Windows) while speaking. Release the key to insert the text.">입력할 창에 커서를 놓고 오른쪽 Option(macOS) 또는 오른쪽 Alt(Windows)를 누른 채 말합니다. 키를 놓으면 글이 입력됩니다.</li>
       </ol>
-      <p class="note">설정에서 단축키, 인식 언어, 녹음 종료 방식과 붙여넣기 후 자동 전송 여부를 바꿀 수 있습니다.</p>
+      <p class="note" data-en="In Settings, you can change the shortcut, transcription language, recording behavior, and whether to send automatically after pasting.">설정에서 단축키, 인식 언어, 녹음 종료 방식과 붙여넣기 후 자동 전송 여부를 바꿀 수 있습니다.</p>
     </section>
 
     <section aria-labelledby="info-title">
-      <h2 id="info-title">배포 정보</h2>
-      <p class="note"><a href="https://github.com/zidell/keyscribe/blob/main/docs/code-signing-policy.md">Code signing policy</a> · <a href="https://github.com/zidell/keyscribe/blob/main/docs/privacy.md">개인정보 안내</a> · <a href="https://github.com/zidell/keyscribe/blob/main/LICENSE">MIT 라이선스</a></p>
+      <h2 id="info-title" data-en="Distribution">배포 정보</h2>
+      <p class="note"><a href="https://github.com/zidell/keyscribe/blob/main/docs/code-signing-policy.md">Code signing policy</a> · <a href="https://github.com/zidell/keyscribe/blob/main/docs/privacy.md" data-en="Privacy">개인정보 안내</a> · <a href="https://github.com/zidell/keyscribe/blob/main/LICENSE">MIT License</a></p>
     </section>
   </main>
+  <script>
+    const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent;
+    const isKorean = navigator.language?.toLowerCase().startsWith('ko');
+    document.documentElement.dataset.platform = /mac/i.test(platform) ? 'mac' : /win/i.test(platform) ? 'windows' : 'other';
+    if (!isKorean) {
+      document.documentElement.lang = 'en';
+      document.title = 'KeyScribe — Type with your voice';
+      document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS and Windows';
+      document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en.replaceAll('출시 후 표시', 'Available after release'); });
+      document.querySelectorAll('[data-en-alt]').forEach((element) => { element.alt = element.dataset.enAlt; });
+      document.querySelectorAll('[data-en-html]').forEach((element) => { element.innerHTML = element.dataset.enHtml; });
+      document.querySelectorAll('[data-en-template]').forEach((element) => {
+        const version = element.textContent.match(/[0-9]+\.[0-9]+\.[0-9]+/)?.[0] || '';
+        element.textContent = element.dataset.enTemplate.replace('{version}', version);
+      });
+    }
+  </script>
 </body>
 </html>

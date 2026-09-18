@@ -1,19 +1,22 @@
-name: Main previews
+name: Release previews
 
 on:
-  push:
+  pull_request:
+    types:
+      - closed
     branches:
-      - main
+      - release
 
 permissions:
   contents: read
 
 concurrency:
-  group: main-macos-${{ github.run_id }}
+  group: release-preview-${{ github.event.pull_request.merge_commit_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   macos:
+    if: github.event.pull_request.merged == true
     name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -41,7 +44,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.KEYSCRIBE_APPLE_APP_PASSWORD }}
           TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
         run: |
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Expected main push' >&2; exit 1; }
+          [[ "$GITHUB_REF" == refs/heads/release ]] || { echo 'Expected merged release pull request' >&2; exit 1; }
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || {
             echo 'Checkout does not match push commit' >&2; exit 1;
           }
@@ -83,7 +86,7 @@ jobs:
           TEAM_ID: ${{ secrets.KEYSCRIBE_APPLE_TEAM_ID }}
           SIGNING_IDENTITY: ${{ secrets.KEYSCRIBE_MAC_SIGNING_IDENTITY }}
         run: |
-          build_id="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          build_id="release-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
           dmg="KeyScribe-macos-${{ matrix.arch }}-$build_id.dmg"
           mkdir -p "$RUNNER_TEMP/dmg-root"
           cp -R dist-native/KeyScribe.app "$RUNNER_TEMP/dmg-root/KeyScribe.app"
@@ -105,7 +108,7 @@ jobs:
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
-          name: main-macos-${{ matrix.arch }}
+          name: release-macos-${{ matrix.arch }}
           path: KeyScribe-macos-*.dmg
           if-no-files-found: error
       - name: Remove signing keychain
@@ -115,6 +118,7 @@ jobs:
           rm -f "$RUNNER_TEMP/keyscribe.p12"
 
   windows:
+    if: github.event.pull_request.merged == true
     name: Windows Store package x64
     runs-on: windows-2022
     env:
@@ -185,19 +189,19 @@ jobs:
               throw 'MSIX identity does not match Partner Center variables.'
             }
           } finally { $archive.Dispose() }
-          $buildId = "main-$env:GITHUB_RUN_NUMBER-$($env:GITHUB_SHA.Substring(0, 12))"
+          $buildId = "release-$env:GITHUB_RUN_NUMBER-$($env:GITHUB_SHA.Substring(0, 12))"
           $artifact = "dist\KeyScribe-windows-store-x64-$buildId.msix"
           Move-Item -LiteralPath $package -Destination $artifact
           "Store submission artifact: $artifact" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: steps.identity.outputs.configured == 'true'
         with:
-          name: main-windows-store-x64
+          name: release-windows-store-x64
           path: dist/KeyScribe-windows-store-x64-*.msix
           if-no-files-found: error
 
   publish:
-    name: Publish macOS main preview
+    name: Publish macOS release preview
     needs: macos
     runs-on: ubuntu-24.04
     permissions:
@@ -207,12 +211,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: main-macos-*
+          pattern: release-macos-*
           path: release-assets
           merge-multiple: true
       - name: Check and publish DMGs
         run: |
-          build_id="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          build_id="release-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
           release_tag="macos-$build_id"
           for arch in arm64 x64; do
             test -s "release-assets/KeyScribe-macos-$arch-$build_id.dmg" || {
@@ -225,6 +229,6 @@ jobs:
           fi
           gh release create "$release_tag" release-assets/*.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "KeyScribe macOS main ${GITHUB_SHA:0:12}" --generate-notes \
+            --title "KeyScribe macOS release ${GITHUB_SHA:0:12}" --generate-notes \
             --prerelease --latest=false
         shell: bash
