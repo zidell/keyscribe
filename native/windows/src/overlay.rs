@@ -216,7 +216,7 @@ unsafe extern "system" fn procedure(
                             if data.time_warning {
                                 0x005959ff
                             } else {
-                                0x00b9b9b9
+                                0x008d8d8d
                             },
                         );
                         TextOutW(

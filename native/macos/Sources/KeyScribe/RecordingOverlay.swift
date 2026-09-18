@@ -85,7 +85,7 @@ final class RecordingOverlay {
                             range: timeRange)
         styled.addAttribute(.foregroundColor, value: warning
                             ? NSColor(calibratedRed: 1, green: 0.35, blue: 0.35, alpha: 1)
-                            : NSColor.white.withAlphaComponent(0.7),
+                            : NSColor.white.withAlphaComponent(0.5),
                             range: timeRange)
         label.attributedStringValue = styled
     }
