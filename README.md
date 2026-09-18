@@ -59,6 +59,36 @@ API 키 접두사로 공급자를 자동으로 선택합니다. 공급자마다 
 
 Groq는 OpenAI 호환 전사 API를 사용합니다. 설정 창의 **Groq 키 ↗**에서 API 키를 발급받고 입력하면 모델 목록을 불러올 수 있습니다.
 
+### API 키 발급 방법
+
+아래 절차로 발급한 키를 KeyScribe의 **설정... → API 키**에 붙여넣고 **새로고침**을 누르세요. 키는 비밀번호와 같으므로 다른 사람에게 공유하거나 공개된 곳에 올리지 마세요.
+
+#### OpenAI
+
+1. [OpenAI API 키 페이지](https://platform.openai.com/api-keys)에 로그인하거나 계정을 만듭니다.
+2. 사용할 프로젝트를 선택합니다. 개인 사용자는 기본 프로젝트를 그대로 써도 됩니다.
+3. **Create new secret key**를 누르고 키 이름을 정한 뒤 생성합니다.
+4. 표시된 `sk-…` 키를 복사해 KeyScribe에 붙여넣습니다.
+
+OpenAI API 키는 프로젝트 단위로 만들며, 프로젝트 설정에서 권한과 사용 한도를 관리할 수 있습니다. [OpenAI 공식 안내](https://help.openai.com/en/articles/9186755)
+
+#### ElevenLabs
+
+1. [ElevenLabs API 키 페이지](https://elevenlabs.io/app/developers/api-keys)에 로그인하거나 계정을 만듭니다.
+2. 개인 API 키 목록에서 새 키를 만들고, 알아보기 쉬운 이름을 정합니다.
+3. 생성된 `sk_…` 키를 복사해 KeyScribe에 붙여넣습니다.
+
+개인용 키는 개인 API 키 설정에서 생성·교체할 수 있습니다. [ElevenLabs 공식 안내](https://elevenlabs.io/docs/overview/administration/workspaces/api-keys)
+
+#### Groq
+
+1. [Groq Console API 키 페이지](https://console.groq.com/keys)에 로그인하거나 계정을 만듭니다.
+2. 처음이라면 프로젝트 선택 메뉴에서 프로젝트를 만들거나 기본 프로젝트를 선택합니다.
+3. **Create API Key**를 누르고 키 이름을 정한 뒤 생성합니다.
+4. 생성된 `gsk_…` 키를 복사해 KeyScribe에 붙여넣습니다.
+
+Groq 키는 선택한 프로젝트에 귀속됩니다. [Groq 공식 안내](https://console.groq.com/docs/projects)
+
 ## 문제 확인
 
 앱의 상태와 오류는 메뉴 막대 또는 트레이 메뉴에서 확인할 수 있습니다. 메뉴의 **로그 보기**는 앱 진단 로그를 엽니다.
