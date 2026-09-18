@@ -63,31 +63,35 @@ Groq는 OpenAI 호환 전사 API를 사용합니다. 설정 창의 **Groq 키 �
 
 아래 절차로 발급한 키를 KeyScribe의 **설정... → API 키**에 붙여넣고 **새로고침**을 누르세요. 키는 비밀번호와 같으므로 다른 사람에게 공유하거나 공개된 곳에 올리지 마세요.
 
+키를 만드는 화면에 도달하는 과정은 서비스마다 다릅니다. 특히 ChatGPT 구독은 OpenAI API 사용료와 별개이며, ElevenLabs는 개인 API 키를 만들려면 Full Seat가 필요합니다. 무료로 가볍게 시작하려면 Groq가 가장 진입 장벽이 낮지만, 무료 한도와 속도 제한이 있습니다.
+
 #### OpenAI
 
 1. [OpenAI API 키 페이지](https://platform.openai.com/api-keys)에 로그인하거나 계정을 만듭니다.
-2. 사용할 프로젝트를 선택합니다. 개인 사용자는 기본 프로젝트를 그대로 써도 됩니다.
-3. **Create new secret key**를 누르고 키 이름을 정한 뒤 생성합니다.
-4. 표시된 `sk-…` 키를 복사해 KeyScribe에 붙여넣습니다.
+2. API Platform의 **Billing**에서 API 결제 수단 또는 크레딧을 설정합니다. ChatGPT Plus·Pro 구독만으로는 API 사용료가 포함되지 않습니다.
+3. 사용할 프로젝트를 선택합니다. 개인 사용자는 기본 프로젝트를 그대로 써도 됩니다.
+4. **Create new secret key**를 누르고 키 이름을 정한 뒤 생성합니다.
+5. 표시된 `sk-…` 키를 복사해 KeyScribe에 붙여넣습니다.
 
 OpenAI API 키는 프로젝트 단위로 만들며, 프로젝트 설정에서 권한과 사용 한도를 관리할 수 있습니다. [OpenAI 공식 안내](https://help.openai.com/en/articles/9186755)
 
 #### ElevenLabs
 
 1. [ElevenLabs API 키 페이지](https://elevenlabs.io/app/developers/api-keys)에 로그인하거나 계정을 만듭니다.
-2. 개인 API 키 목록에서 새 키를 만들고, 알아보기 쉬운 이름을 정합니다.
-3. 생성된 `sk_…` 키를 복사해 KeyScribe에 붙여넣습니다.
+2. 개인 API 키 발급에 필요한 **Full Seat**가 있는지 확인합니다. 권한이 없으면 해당 요금제 또는 워크스페이스 관리자 설정이 필요합니다.
+3. 개인 API 키 목록에서 새 키를 만들고, 알아보기 쉬운 이름을 정합니다.
+4. 생성된 `sk_…` 키를 복사해 KeyScribe에 붙여넣습니다.
 
 개인용 키는 개인 API 키 설정에서 생성·교체할 수 있습니다. [ElevenLabs 공식 안내](https://elevenlabs.io/docs/overview/administration/workspaces/api-keys)
 
 #### Groq
 
-1. [Groq Console API 키 페이지](https://console.groq.com/keys)에 로그인하거나 계정을 만듭니다.
+1. [Groq Console API 키 페이지](https://console.groq.com/keys)에 로그인하거나 계정을 만듭니다. 무료 tier로도 키를 만들 수 있습니다.
 2. 처음이라면 프로젝트 선택 메뉴에서 프로젝트를 만들거나 기본 프로젝트를 선택합니다.
 3. **Create API Key**를 누르고 키 이름을 정한 뒤 생성합니다.
 4. 생성된 `gsk_…` 키를 복사해 KeyScribe에 붙여넣습니다.
 
-Groq 키는 선택한 프로젝트에 귀속됩니다. [Groq 공식 안내](https://console.groq.com/docs/projects)
+Groq 키는 선택한 프로젝트에 귀속되고 무료 tier에는 요청·오디오 처리 한도가 있습니다. 한도를 늘리는 유료 Developer tier로 전환할 때는 결제 수단이 필요합니다. [Groq 공식 안내](https://console.groq.com/docs/projects), [요금제 안내](https://console.groq.com/docs/billing-faqs)
 
 ## 문제 확인
 
