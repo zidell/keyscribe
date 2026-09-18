@@ -152,7 +152,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish release and landing page
+    name: Publish release
     needs: [macos, windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -164,16 +164,8 @@ jobs:
           pattern: '*'
           path: release-assets
           merge-multiple: true
-      - name: Check distribution settings and assets
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.KEYSCRIBE_CLOUDFLARE_API_TOKEN }}
-          R2_ACCESS_KEY_ID: ${{ secrets.KEYSCRIBE_R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.KEYSCRIBE_R2_SECRET_ACCESS_KEY }}
+      - name: Check release assets
         run: |
-          for value in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
-            if [ -z "${!value}" ]; then echo "Missing distribution setting: $value" >&2; exit 1; fi
-          done
           version="${GITHUB_REF_NAME#v}"
           for filename in \
             "KeyScribe-macos-arm64-$version.dmg" \
@@ -195,42 +187,3 @@ jobs:
               --repo "$GITHUB_REPOSITORY" --verify-tag \
               --title "KeyScribe $GITHUB_REF_NAME" --generate-notes
           fi
-      - name: Upload public downloads to R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.KEYSCRIBE_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.KEYSCRIBE_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: 'true'
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
-          R2_BUCKET: ${{ vars.KEYSCRIBE_R2_BUCKET || 'keyscribe-downloads' }}
-        run: |
-          aws --version
-          version="${GITHUB_REF_NAME#v}"
-          for file in release-assets/*; do
-            aws s3 cp "$file" "s3://$R2_BUCKET/releases/$version/$(basename "$file")" \
-              --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
-              --only-show-errors
-          done
-        shell: bash
-      - name: Render and push static branch
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          bash scripts/render_site.sh "$version" "$RUNNER_TEMP/static-site"
-          git worktree add --detach "$RUNNER_TEMP/static-branch"
-          git -C "$RUNNER_TEMP/static-branch" switch --orphan static
-          cp "$RUNNER_TEMP/static-site"/* "$RUNNER_TEMP/static-branch"/
-          git -C "$RUNNER_TEMP/static-branch" add --all
-          git -C "$RUNNER_TEMP/static-branch" -c user.name=github-actions[bot] \
-            -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            commit -m "Publish KeyScribe $version"
-          git -C "$RUNNER_TEMP/static-branch" push --force origin HEAD:static
-        shell: bash
-      - name: Deploy Cloudflare Pages
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.KEYSCRIBE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.KEYSCRIBE_CLOUDFLARE_API_TOKEN }}
-          PAGES_PROJECT: ${{ vars.KEYSCRIBE_PAGES_PROJECT || 'keyscribe' }}
-        run: |
-          npx --yes wrangler@4 pages deploy "$RUNNER_TEMP/static-site" \
-            --project-name "$PAGES_PROJECT" --branch static
-        shell: bash
