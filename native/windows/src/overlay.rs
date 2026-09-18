@@ -2,7 +2,7 @@ use std::{mem, ptr};
 use windows_sys::Win32::{
     Foundation::HWND,
     Graphics::Gdi::{
-        BeginPaint, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect, GetMonitorInfoW,
+        BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect, GetMonitorInfoW,
         GetStockObject, GetTextExtentPoint32W, InvalidateRect, MonitorFromPoint, RoundRect,
         SelectObject, SetBkMode, SetTextColor, TextOutW, DEFAULT_GUI_FONT, MONITORINFO,
         MONITOR_DEFAULTTONEAREST, NULL_PEN, PAINTSTRUCT,
@@ -260,7 +260,18 @@ unsafe extern "system" fn procedure(
                     let frame = frames[(data.phase as usize) % frames.len()];
                     let glyph: Vec<u16> = frame.encode_utf16().collect();
                     SetTextColor(dc, 0x00ff9d47);
-                    TextOutW(dc, 18, 17, glyph.as_ptr(), glyph.len() as i32);
+                    let spinner_font = CreateFontW(
+                        -22, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0,
+                        wide("Segoe UI Symbol").as_ptr(),
+                    );
+                    if !spinner_font.is_null() {
+                        let previous_font = SelectObject(dc, spinner_font as _);
+                        TextOutW(dc, 17, 13, glyph.as_ptr(), glyph.len() as i32);
+                        SelectObject(dc, previous_font);
+                        DeleteObject(spinner_font as _);
+                    } else {
+                        TextOutW(dc, 18, 17, glyph.as_ptr(), glyph.len() as i32);
+                    }
                 }
                 for index in 0..5 {
                     let wave = (data.phase + index as f32 * 1.3).sin() * 0.5 + 0.5;
