@@ -1,0 +1,41 @@
+name: Deploy landing page
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render static site
+        run: |
+          version="$(awk -F'"' '/^version = / { print $2; exit }' native/windows/Cargo.toml)"
+          bash scripts/render_site.sh "$version" "$RUNNER_TEMP/static-site"
+        shell: bash
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/static-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
