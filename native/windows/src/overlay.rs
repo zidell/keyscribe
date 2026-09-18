@@ -259,9 +259,9 @@ unsafe extern "system" fn procedure(
                     let frames = ["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}"];
                     let frame = frames[(data.phase as usize) % frames.len()];
                     let glyph: Vec<u16> = frame.encode_utf16().collect();
-                    SetTextColor(dc, 0x00ff9d47);
+                    SetTextColor(dc, 0x00b0b0b0);
                     let spinner_font = CreateFontW(
-                        -24, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0,
+                        -18, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0,
                         wide("Segoe UI Symbol").as_ptr(),
                     );
                     if !spinner_font.is_null() {
