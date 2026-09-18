@@ -261,7 +261,7 @@ unsafe extern "system" fn procedure(
                     let glyph: Vec<u16> = frame.encode_utf16().collect();
                     SetTextColor(dc, 0x00b0b0b0);
                     let spinner_font = CreateFontW(
-                        -18, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0,
+                        -15, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0,
                         wide("Segoe UI Symbol").as_ptr(),
                     );
                     if !spinner_font.is_null() {
