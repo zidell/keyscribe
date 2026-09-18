@@ -90,6 +90,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "설정 폴더 열기", action: #selector(openSettingsFolder(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "로그 보기", action: #selector(openLog(_:)), keyEquivalent: ""))
         menu.addItem(.separator())
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 버전"
         let versionItem = NSMenuItem(title: "버전 \(version)", action: nil, keyEquivalent: "")
@@ -545,6 +546,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     @objc private func openSettingsFolder(_ sender: Any?) {
         NSWorkspace.shared.open(Settings.directory)
+    }
+
+    @objc private func openLog(_ sender: Any?) {
+        DebugLog.shared.record("log opened by user")
+        NSWorkspace.shared.open(DebugLog.shared.fileURL)
     }
 
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }

@@ -716,6 +716,7 @@ unsafe fn tray_menu(hwnd: HWND) {
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, wide("설정...").as_ptr());
     AppendMenuW(menu, MF_STRING, ID_FOLDER, wide("설정 폴더 열기").as_ptr());
+    AppendMenuW(menu, MF_STRING, ID_LOG, wide("로그 보기").as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(
         menu,
@@ -756,6 +757,7 @@ unsafe fn tray_command(hwnd: HWND, command: usize) {
                 .arg(settings::directory())
                 .spawn();
         }
+        ID_LOG => open_log(hwnd),
         ID_RESTART => {
             match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn()) {
                 Ok(_) => {
@@ -1228,17 +1230,6 @@ unsafe fn show_settings(root: HWND) {
         ID_API_KEY,
     );
     label("API 키 발급", 48);
-    control(
-        dialog,
-        "BUTTON",
-        "로그 보기",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
-        18,
-        610,
-        100,
-        32,
-        ID_LOG,
-    );
     control(
         dialog,
         "BUTTON",
@@ -1766,7 +1757,6 @@ unsafe extern "system" fn dialog_proc(
                     open_api_key_page(hwnd, "https://elevenlabs.io/app/developers/api-keys")
                 }
                 ID_OPENAI_KEY => open_api_key_page(hwnd, "https://platform.openai.com/api-keys"),
-                ID_LOG => open_log(hwnd),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
                     dialog_state(hwnd).pending_key = None;
