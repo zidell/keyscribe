@@ -7,7 +7,10 @@ use crate::{
 use std::{
     collections::HashMap,
     mem, ptr,
-    sync::atomic::{AtomicIsize, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicIsize, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -70,6 +73,7 @@ static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 // 0 = idle, 1 = waiting for a chord, 2 = recording, 3 = passing a chord through.
 static RIGHT_ALT_STATE: AtomicU8 = AtomicU8::new(0);
+static AUTO_STOPPED_ALT_HELD: AtomicBool = AtomicBool::new(false);
 static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
 static LAST_LEFT_CTRL_DOWN: AtomicU32 = AtomicU32::new(0);
 
@@ -187,7 +191,10 @@ struct App {
     dialog: HWND,
     recording: Option<Recording>,
     recording_started_at: Option<Instant>,
+    recording_deadline: Option<Instant>,
     recording_seconds_shown: Option<u64>,
+    limit_sound_playing: Arc<AtomicBool>,
+    transcription_cancelled: Option<Arc<AtomicBool>>,
     mute_before: Option<mute::MuteState>,
     pressed: bool,
     generation: u64,
@@ -211,6 +218,7 @@ struct Dialog {
     language_codes: Vec<String>,
     shortcut: HWND,
     mode: HWND,
+    recording_time_limit: HWND,
     keyterms: HWND,
     no_verbatim: HWND,
     mute: HWND,
@@ -319,7 +327,10 @@ pub fn run() -> Result<(), String> {
             dialog: ptr::null_mut(),
             recording: None,
             recording_started_at: None,
+            recording_deadline: None,
             recording_seconds_shown: None,
+            limit_sound_playing: Arc::new(AtomicBool::new(false)),
+            transcription_cancelled: None,
             mute_before: None,
             pressed: false,
             generation: 0,
@@ -462,6 +473,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     _ => return CallNextHookEx(ptr::null_mut(), code, wparam, lparam),
                 }
                 RIGHT_ALT_STATE.store(0, Ordering::Relaxed);
+                AUTO_STOPPED_ALT_HELD.store(false, Ordering::Relaxed);
                 return 1;
             }
             if down && (alt_state == 1 || alt_state == 2) {
@@ -483,7 +495,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     )
                 });
                 if alt_state == 2 {
-                    PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
+                    if !AUTO_STOPPED_ALT_HELD.swap(false, Ordering::Relaxed) {
+                        PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
+                    }
                     PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
                 }
                 send_keys(&[(VK_RMENU, false)]);
@@ -542,6 +556,7 @@ unsafe extern "system" fn root_proc(
             let result = Box::from_raw(lparam as *mut ResultMessage);
             if result.generation == app(hwnd).generation && app(hwnd).transcribing {
                 app(hwnd).transcribing = false;
+                app(hwnd).transcription_cancelled = None;
                 match result.result {
                     Ok(text) if !text.is_empty() => {
                         crate::debug_log::log(|| {
@@ -621,6 +636,19 @@ unsafe extern "system" fn root_proc(
                     DestroyWindow(hwnd);
                 }
             } else if wparam == 1 {
+                if app(hwnd)
+                    .recording_deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    crate::debug_log::log(|| "recording time limit reached".into());
+                    if TARGET_KEY.load(Ordering::Relaxed) == VK_RMENU
+                        && RIGHT_ALT_STATE.load(Ordering::Relaxed) == 2
+                    {
+                        AUTO_STOPPED_ALT_HELD.store(true, Ordering::Relaxed);
+                    }
+                    stop(hwnd, true);
+                    return 0;
+                }
                 let expires = app(hwnd).overlay_expires;
                 if expires.is_some_and(|when| Instant::now() >= when) {
                     hide_overlay(hwnd);
@@ -661,6 +689,9 @@ unsafe extern "system" fn root_proc(
             }
             if !owned.hook.is_null() {
                 UnhookWindowsHookEx(owned.hook);
+            }
+            if let Some(cancelled) = &owned.transcription_cancelled {
+                cancelled.store(true, Ordering::Relaxed);
             }
             mute::restore(owned.mute_before);
             KillTimer(hwnd, DEV_STOP_TIMER);
@@ -800,7 +831,10 @@ unsafe fn update_recording_elapsed(hwnd: HWND) {
             seconds % 60
         ),
     );
-    overlay::update_recording_time(app(hwnd).overlay, seconds);
+    let warning = app(hwnd).recording_deadline.is_some_and(|deadline| {
+        deadline.saturating_duration_since(Instant::now()) <= Duration::from_secs(60)
+    });
+    overlay::update_recording_time(app(hwnd).overlay, seconds, warning);
 }
 
 unsafe fn transient_overlay(hwnd: HWND, state: overlay::State) {
@@ -857,7 +891,7 @@ unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
             start(hwnd);
         } else if app(hwnd).recording.is_some() && app(hwnd).settings.recording_control == "toggle"
         {
-            stop(hwnd);
+            stop(hwnd, false);
         }
     } else {
         if !app(hwnd).pressed {
@@ -865,13 +899,17 @@ unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
         }
         app(hwnd).pressed = false;
         if app(hwnd).recording.is_some() && app(hwnd).settings.recording_control == "hold" {
-            stop(hwnd);
+            stop(hwnd, false);
         }
     }
 }
 
 unsafe fn start(hwnd: HWND) {
     crate::debug_log::log(|| "recording start requested".into());
+    if app(hwnd).limit_sound_playing.load(Ordering::SeqCst) {
+        set_status(hwnd, "종료음 재생 중");
+        return;
+    }
     if app(hwnd).settings.api_key.is_empty() {
         show_settings(hwnd);
         return;
@@ -881,6 +919,12 @@ unsafe fn start(hwnd: HWND) {
             app(hwnd).generation += 1;
             app(hwnd).recording = Some(recording);
             app(hwnd).recording_started_at = Some(Instant::now());
+            app(hwnd).recording_deadline = Some(
+                Instant::now()
+                    + Duration::from_secs(
+                        u64::from(app(hwnd).settings.recording_time_limit_minutes) * 60,
+                    ),
+            );
             app(hwnd).recording_seconds_shown = None;
             let volume = app(hwnd).settings.recording_start_sound_volume;
             active_overlay(hwnd, overlay::State::Recording);
@@ -942,15 +986,35 @@ fn recording_start_sound(volume: u16) -> Vec<u8> {
     sound
 }
 
-unsafe fn stop(hwnd: HWND) {
+unsafe fn play_recording_limit_sound(hwnd: HWND) {
+    let playing = app(hwnd).limit_sound_playing.clone();
+    playing.store(true, Ordering::SeqCst);
+    std::thread::spawn(move || {
+        let sound = include_bytes!("../../../assets/recording-limit.wav");
+        unsafe {
+            PlaySoundW(
+                sound.as_ptr().cast(),
+                ptr::null_mut(),
+                SND_MEMORY | SND_NODEFAULT | SND_SYNC,
+            );
+        }
+        playing.store(false, Ordering::SeqCst);
+    });
+}
+
+unsafe fn stop(hwnd: HWND, limit_reached: bool) {
     crate::debug_log::log(|| "recording stop requested".into());
     let Some(recording) = app(hwnd).recording.take() else {
         return;
     };
     app(hwnd).recording_started_at = None;
+    app(hwnd).recording_deadline = None;
     app(hwnd).recording_seconds_shown = None;
     let stopped = recording.stop();
     mute::restore(app(hwnd).mute_before.take());
+    if limit_reached {
+        play_recording_limit_sound(hwnd);
+    }
     crate::debug_log::log(|| {
         format!(
             "recording stopped; audio restore attempted; success={}",
@@ -973,14 +1037,23 @@ unsafe fn stop(hwnd: HWND) {
         return;
     }
     app(hwnd).transcribing = true;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    app(hwnd).transcription_cancelled = Some(cancelled.clone());
     app(hwnd).generation += 1;
     let generation = app(hwnd).generation;
     let settings = app(hwnd).settings.clone();
-    set_status(hwnd, "변환 중 · Esc 취소");
+    set_status(
+        hwnd,
+        if limit_reached {
+            "시간 제한 도달 · 변환 중"
+        } else {
+            "변환 중 · Esc 취소"
+        },
+    );
     active_overlay(hwnd, overlay::State::Transcribing);
     let root = hwnd as isize;
     std::thread::spawn(move || {
-        let result = transcriber::transcribe(&wav, &settings);
+        let result = transcriber::transcribe(&wav, &settings, &cancelled);
         let _ = std::fs::remove_file(&wav);
         let message = Box::into_raw(Box::new(ResultMessage { generation, result }));
         unsafe {
@@ -994,8 +1067,12 @@ unsafe fn stop(hwnd: HWND) {
 unsafe fn cancel(hwnd: HWND) {
     crate::debug_log::log(|| "recording cancelled; restoring audio".into());
     app(hwnd).generation += 1;
+    if let Some(cancelled) = app(hwnd).transcription_cancelled.take() {
+        cancelled.store(true, Ordering::Relaxed);
+    }
     app(hwnd).recording = None;
     app(hwnd).recording_started_at = None;
+    app(hwnd).recording_deadline = None;
     app(hwnd).recording_seconds_shown = None;
     mute::restore(app(hwnd).mute_before.take());
     app(hwnd).transcribing = false;
@@ -1115,7 +1192,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        660,
+        700,
         root,
         ptr::null_mut(),
         instance,
@@ -1272,7 +1349,32 @@ unsafe fn show_settings(root: HWND) {
         usize::from(settings.recording_control == "toggle"),
         0,
     );
-    label("고유명사 (한 줄에 하나)", 268);
+    label("녹음 시간 제한", 268);
+    let recording_time_limit = control(
+        dialog,
+        "COMBOBOX",
+        "",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
+        165,
+        266,
+        365,
+        120,
+        0,
+    );
+    for minutes in [10, 20, 30, 60] {
+        SendMessageW(
+            recording_time_limit,
+            CB_ADDSTRING,
+            0,
+            wide(&format!("{minutes}분")).as_ptr() as isize,
+        );
+    }
+    let selected_limit = [10, 20, 30, 60]
+        .iter()
+        .position(|minutes| *minutes == settings.recording_time_limit_minutes)
+        .unwrap_or(2);
+    SendMessageW(recording_time_limit, CB_SETCURSEL, selected_limit, 0);
+    label("고유명사 (한 줄에 하나)", 308);
     let keyterms = control(
         dialog,
         "EDIT",
@@ -1284,7 +1386,7 @@ unsafe fn show_settings(root: HWND) {
             | ES_MULTILINE as u32
             | ES_AUTOVSCROLL as u32,
         165,
-        266,
+        306,
         365,
         100,
         0,
@@ -1295,7 +1397,7 @@ unsafe fn show_settings(root: HWND) {
         "군더더기 말 제거 (ElevenLabs)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        386,
+        426,
         365,
         25,
         0,
@@ -1312,7 +1414,7 @@ unsafe fn show_settings(root: HWND) {
         "녹음 중 시스템 소리 음소거",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        421,
+        461,
         365,
         25,
         0,
@@ -1329,20 +1431,20 @@ unsafe fn show_settings(root: HWND) {
         "붙여넣은 뒤 Enter 입력",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        456,
+        496,
         365,
         25,
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
-    label("녹음 시작 효과음", 491);
+    label("녹음 시작 효과음", 531);
     let recording_start_sound_volume = control(
         dialog,
         "msctls_trackbar32",
         "",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
         165,
-        486,
+        526,
         300,
         36,
         0,
@@ -1361,7 +1463,7 @@ unsafe fn show_settings(root: HWND) {
         &format!("{}%", settings.recording_start_sound_volume),
         WS_CHILD | WS_VISIBLE,
         475,
-        491,
+        531,
         55,
         25,
         0,
@@ -1372,7 +1474,7 @@ unsafe fn show_settings(root: HWND) {
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        530,
+        570,
         365,
         26,
         0,
@@ -1383,7 +1485,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        570,
+        610,
         85,
         32,
         ID_SAVE,
@@ -1394,7 +1496,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        570,
+        610,
         85,
         32,
         ID_CANCEL,
@@ -1414,6 +1516,7 @@ unsafe fn show_settings(root: HWND) {
         language_codes,
         shortcut,
         mode,
+        recording_time_limit,
         keyterms,
         no_verbatim,
         mute,
@@ -1717,6 +1820,10 @@ unsafe fn save_dialog(hwnd: HWND) {
     } else {
         "hold".into()
     };
+    updated.recording_time_limit_minutes = [10, 20, 30, 60]
+        .get(SendMessageW(dialog.recording_time_limit, CB_GETCURSEL, 0, 0) as usize)
+        .copied()
+        .unwrap_or(30);
     updated.keyterms = text(dialog.keyterms)
         .lines()
         .map(str::trim)

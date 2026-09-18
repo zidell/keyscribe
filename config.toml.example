@@ -19,6 +19,10 @@ shortcut = "right_option"
 # hold: 키를 놓으면 녹음 종료 / toggle: 다시 누르면 녹음 종료
 recording_control = "hold"
 
+# 녹음 시간 제한: 10, 20, 30, 60분 중 선택 (기본값: 30분)
+# 시간이 지나면 녹음을 종료하고, 그때까지 녹음된 내용은 전사합니다.
+recording_time_limit_minutes = 30
+
 # 붙여넣기 직후 Enter를 눌러 메시지를 자동 전송할지 여부
 auto_send = true
 

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{env, fs, io, path::PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -6,6 +6,11 @@ use std::{env, fs, io, path::PathBuf};
 pub struct Settings {
     pub shortcut: String,
     pub recording_control: String,
+    #[serde(
+        default = "default_recording_limit",
+        deserialize_with = "deserialize_recording_limit"
+    )]
+    pub recording_time_limit_minutes: u16,
     pub auto_send: bool,
     pub language: String,
     pub keyterms: Vec<String>,
@@ -25,6 +30,7 @@ impl Default for Settings {
         Self {
             shortcut: "right_option".into(),
             recording_control: "hold".into(),
+            recording_time_limit_minutes: default_recording_limit(),
             auto_send: true,
             language: "ko".into(),
             keyterms: Vec::new(),
@@ -94,9 +100,28 @@ impl Settings {
             value.recording_start_sound_volume = 0;
         }
         value.recording_start_sound_volume = value.recording_start_sound_volume.min(200);
+        if !matches!(value.recording_time_limit_minutes, 10 | 20 | 30 | 60) {
+            value.recording_time_limit_minutes = default_recording_limit();
+        }
         value.legacy_play_recording_start_sound = None;
         Some(value)
     }
+}
+
+fn default_recording_limit() -> u16 {
+    30
+}
+
+fn deserialize_recording_limit<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_integer()
+        .and_then(|minutes| u16::try_from(minutes).ok())
+        .filter(|minutes| matches!(minutes, 10 | 20 | 30 | 60))
+        .unwrap_or_else(default_recording_limit))
 }
 
 #[cfg(test)]
@@ -116,5 +141,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.recording_start_sound_volume, 150);
+    }
+
+    #[test]
+    fn recording_limit_defaults_and_rejects_invalid_values() {
+        assert_eq!(
+            Settings::from_config("")
+                .unwrap()
+                .recording_time_limit_minutes,
+            30
+        );
+        assert_eq!(
+            Settings::from_config("recording_time_limit_minutes = 60")
+                .unwrap()
+                .recording_time_limit_minutes,
+            60
+        );
+        assert_eq!(
+            Settings::from_config("recording_time_limit_minutes = 45")
+                .unwrap()
+                .recording_time_limit_minutes,
+            30
+        );
+        assert_eq!(
+            Settings::from_config("recording_time_limit_minutes = \"long\"")
+                .unwrap()
+                .recording_time_limit_minutes,
+            30
+        );
     }
 }

@@ -1,6 +1,14 @@
 use crate::settings::Settings;
 use serde_json::Value;
-use std::{ffi::c_void, fs::File, io::Read, path::Path, ptr, time::Duration};
+use std::{
+    ffi::c_void,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    ptr,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use windows_sys::Win32::Networking::WinHttp::*;
 
 struct Internet(*mut c_void);
@@ -218,14 +226,84 @@ fn multipart(settings: &Settings, boundary: &str) -> (Vec<u8>, Vec<u8>) {
     (result, format!("\r\n--{boundary}--\r\n").into_bytes())
 }
 
-pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
+struct TemporaryChunk(PathBuf);
+
+impl Drop for TemporaryChunk {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+pub fn transcribe(
+    wav: &Path,
+    settings: &Settings,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
     if settings.api_key.is_empty() {
         return Err("API 키를 설정해 주세요".into());
     }
-    let openai = settings.openai();
-    if openai && std::fs::metadata(wav).map_err(|e| e.to_string())?.len() > 24 * 1024 * 1024 {
-        return Err("OpenAI 녹음 크기 제한(24 MB)을 초과했습니다".into());
+    if settings.openai()
+        && std::fs::metadata(wav).map_err(|e| e.to_string())?.len() > 24 * 1024 * 1024
+    {
+        let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
+        let spec = reader.spec();
+        let frames_per_chunk = u64::from(spec.sample_rate) * 9 * 60;
+        let samples_per_chunk = frames_per_chunk * u64::from(spec.channels);
+        let mut samples = reader.samples::<i16>();
+        let mut result = Vec::new();
+        for index in 0.. {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(String::new());
+            }
+            let path = std::env::temp_dir().join(format!(
+                "keyscribe-{}-{}-{index}-part.wav",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_nanos()
+            ));
+            let temporary = TemporaryChunk(path);
+            let mut writer =
+                hound::WavWriter::create(&temporary.0, spec).map_err(|e| e.to_string())?;
+            let mut count = 0u64;
+            while count < samples_per_chunk {
+                match samples.next() {
+                    Some(Ok(sample)) => writer.write_sample(sample).map_err(|e| e.to_string())?,
+                    Some(Err(error)) => return Err(error.to_string()),
+                    None => break,
+                }
+                count += 1;
+            }
+            writer.finalize().map_err(|e| e.to_string())?;
+            if count == 0 {
+                break;
+            }
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(String::new());
+            }
+            let text = transcribe_single(&temporary.0, settings, cancelled)?;
+            if !text.is_empty() {
+                result.push(text);
+            }
+            if count < samples_per_chunk {
+                break;
+            }
+        }
+        return Ok(result.join(" "));
     }
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(String::new());
+    }
+    transcribe_single(wav, settings, cancelled)
+}
+
+fn transcribe_single(
+    wav: &Path,
+    settings: &Settings,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
+    let openai = settings.openai();
     let (host, path) = if openai {
         ("api.openai.com", "/v1/audio/transcriptions")
     } else {
@@ -236,7 +314,20 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
     let content_type = format!("multipart/form-data; boundary={boundary}");
     let mut last_error = String::new();
     for attempt in 0..2 {
-        crate::debug_log::log(|| format!("transcription request provider={} attempt={}", if settings.openai() { "openai" } else { "elevenlabs" }, attempt + 1));
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(String::new());
+        }
+        crate::debug_log::log(|| {
+            format!(
+                "transcription request provider={} attempt={}",
+                if settings.openai() {
+                    "openai"
+                } else {
+                    "elevenlabs"
+                },
+                attempt + 1
+            )
+        });
         match request(
             host,
             path,
@@ -251,7 +342,9 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
             Some(&content_type),
         ) {
             Ok((status, response)) if (200..300).contains(&status) => {
-                crate::debug_log::log(|| format!("transcription HTTP {status} attempt={}", attempt + 1));
+                crate::debug_log::log(|| {
+                    format!("transcription HTTP {status} attempt={}", attempt + 1)
+                });
                 match serde_json::from_slice::<Value>(&response) {
                     Ok(json) => match json.get("text").and_then(Value::as_str) {
                         Some(text) => {
@@ -268,7 +361,9 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
                 }
             }
             Ok((status, response)) => {
-                crate::debug_log::log(|| format!("transcription HTTP {status} attempt={}", attempt + 1));
+                crate::debug_log::log(|| {
+                    format!("transcription HTTP {status} attempt={}", attempt + 1)
+                });
                 let detail = String::from_utf8_lossy(&response);
                 last_error = format!(
                     "전사 실패 (HTTP {status}): {}",
@@ -279,11 +374,19 @@ pub fn transcribe(wav: &Path, settings: &Settings) -> Result<String, String> {
                 }
             }
             Err(error) => {
-                crate::debug_log::log(|| format!("transcription transport failure attempt={} type=network", attempt + 1));
+                crate::debug_log::log(|| {
+                    format!(
+                        "transcription transport failure attempt={} type=network",
+                        attempt + 1
+                    )
+                });
                 last_error = error;
             }
         }
         if attempt == 0 {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(String::new());
+            }
             crate::debug_log::log(|| "transcription retry scheduled after 1s".into());
             std::thread::sleep(Duration::from_secs(1));
         }

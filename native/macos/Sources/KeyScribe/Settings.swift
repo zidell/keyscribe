@@ -4,6 +4,7 @@ struct Settings {
     var apiKey = ""
     var shortcut = "right_command"
     var recordingControl = "hold"
+    var recordingTimeLimitMinutes = 30
     var autoSend = true
     var language = "ko"
     var keyterms: [String] = []
@@ -35,6 +36,10 @@ struct Settings {
             result.shortcut = values["shortcut"] as? String ?? result.shortcut
             if result.shortcut == "right_cmd" { result.shortcut = "right_command" }
             result.recordingControl = values["recording_control"] as? String ?? result.recordingControl
+            if let limit = values["recording_time_limit_minutes"] as? Int,
+               [10, 20, 30, 60].contains(limit) {
+                result.recordingTimeLimitMinutes = limit
+            }
             result.autoSend = values["auto_send"] as? Bool ?? result.autoSend
             result.language = values["language"] as? String ?? result.language
             result.keyterms = values["keyterms"] as? [String] ?? result.keyterms
@@ -68,6 +73,7 @@ struct Settings {
         let fields = [
             "shortcut = \(jsonString(shortcut))",
             "recording_control = \(jsonString(recordingControl))",
+            "recording_time_limit_minutes = \(recordingTimeLimitMinutes)",
             "auto_send = \(autoSend)",
             "language = \(jsonString(language))",
             "keyterms = [\(keyterms.map(jsonString).joined(separator: ", "))]",

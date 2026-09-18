@@ -40,6 +40,7 @@ impl State {
 struct Data {
     title: String,
     recording: bool,
+    time_warning: bool,
     level: f32,
     phase: f32,
 }
@@ -84,6 +85,7 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
         let data = Box::new(Data {
             title: String::new(),
             recording: false,
+            time_warning: false,
             level: 0.0,
             phase: 0.0,
         });
@@ -101,13 +103,14 @@ pub unsafe fn show_message(hwnd: HWND, message: &str) {
     show_with_message(hwnd, message, false);
 }
 
-pub unsafe fn update_recording_time(hwnd: HWND, seconds: u64) {
+pub unsafe fn update_recording_time(hwnd: HWND, seconds: u64, warning: bool) {
     if hwnd.is_null() {
         return;
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
     if data.recording {
         data.title = format!("녹음 중 ({:02}:{:02})", seconds / 60, seconds % 60);
+        data.time_warning = warning;
         InvalidateRect(hwnd, ptr::null(), 0);
     }
 }
@@ -119,6 +122,7 @@ unsafe fn show_with_message(hwnd: HWND, message: &str, recording: bool) {
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
     data.title = message.into();
     data.recording = recording;
+    data.time_warning = false;
     data.level = 0.0;
     data.phase = 0.0;
     let mut pointer = mem::zeroed();
@@ -207,7 +211,14 @@ unsafe extern "system" fn procedure(
                             prefix.len() as i32,
                             &mut prefix_size,
                         );
-                        SetTextColor(dc, 0x00b9b9b9);
+                        SetTextColor(
+                            dc,
+                            if data.time_warning {
+                                0x005959ff
+                            } else {
+                                0x00b9b9b9
+                            },
+                        );
                         TextOutW(
                             dc,
                             40 + prefix_size.cx,

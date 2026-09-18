@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 enum TranscriptionError: LocalizedError {
     case missingKey
@@ -17,6 +18,7 @@ enum TranscriptionError: LocalizedError {
 final class Transcriber {
     private var task: URLSessionUploadTask?
     private var bodyURL: URL?
+    private var chunkURLs: [URL] = []
     private var generation = UUID()
 
     func cancel() {
@@ -25,6 +27,8 @@ final class Transcriber {
         task = nil
         if let bodyURL { try? FileManager.default.removeItem(at: bodyURL) }
         bodyURL = nil
+        chunkURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+        chunkURLs = []
     }
 
     func transcribe(audioURL: URL, settings: Settings,
@@ -34,6 +38,60 @@ final class Transcriber {
             completion(.failure(TranscriptionError.missingKey))
             return
         }
+        let currentGeneration = generation
+        let audioSize = (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if settings.apiKey.hasPrefix("sk-"), audioSize > 24 * 1024 * 1024 {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    let chunks = try splitWAV(audioURL)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.generation == currentGeneration else {
+                            chunks.forEach { try? FileManager.default.removeItem(at: $0) }
+                            return
+                        }
+                        self.chunkURLs = chunks
+                        self.transcribeChunks(chunks, settings: settings, generation: currentGeneration,
+                                              completed: [], completion: completion)
+                    }
+                } catch {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.generation == currentGeneration else { return }
+                        completion(.failure(error))
+                    }
+                }
+            }
+            return
+        }
+        transcribeOne(audioURL: audioURL, settings: settings, generation: currentGeneration,
+                      completion: completion)
+    }
+
+    private func transcribeChunks(_ remaining: [URL], settings: Settings, generation: UUID,
+                                  completed: [String], completion: @escaping (Result<String, Error>) -> Void) {
+        guard self.generation == generation else { return }
+        guard let first = remaining.first else {
+            chunkURLs = []
+            completion(.success(completed.filter { !$0.isEmpty }.joined(separator: " ")))
+            return
+        }
+        transcribeOne(audioURL: first, settings: settings, generation: generation) { [weak self] result in
+            guard let self, self.generation == generation else { return }
+            try? FileManager.default.removeItem(at: first)
+            self.chunkURLs.removeAll { $0 == first }
+            switch result {
+            case .success(let text):
+                self.transcribeChunks(Array(remaining.dropFirst()), settings: settings,
+                                      generation: generation, completed: completed + [text], completion: completion)
+            case .failure(let error):
+                self.chunkURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+                self.chunkURLs = []
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func transcribeOne(audioURL: URL, settings: Settings, generation: UUID,
+                               completion: @escaping (Result<String, Error>) -> Void) {
         let openAI = settings.apiKey.hasPrefix("sk-")
         let endpoint = openAI
             ? "https://api.openai.com/v1/audio/transcriptions"
@@ -48,7 +106,6 @@ final class Transcriber {
             return
         }
         bodyURL = body
-        let currentGeneration = generation
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.timeoutInterval = 60
@@ -58,7 +115,7 @@ final class Transcriber {
         } else {
             request.setValue(settings.apiKey, forHTTPHeaderField: "xi-api-key")
         }
-        perform(request: request, body: body, attempt: 1, generation: currentGeneration,
+        perform(request: request, body: body, attempt: 1, generation: generation,
                 keyterms: openAI ? settings.keyterms : [],
                 completion: completion)
     }
@@ -132,6 +189,38 @@ final class Transcriber {
         bodyURL = nil
         task = nil
         completion(result)
+    }
+}
+
+private func splitWAV(_ audioURL: URL) throws -> [URL] {
+    let source = try AVAudioFile(forReading: audioURL)
+    let framesPerChunk = AVAudioFramePosition(source.processingFormat.sampleRate * 9 * 60)
+    guard framesPerChunk > 0 else { throw TranscriptionError.invalidResponse }
+    var output: [URL] = []
+    do {
+        while source.framePosition < source.length {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("keyscribe-\(UUID().uuidString)-part.wav")
+            output.append(url)
+            let writer = try AVAudioFile(forWriting: url, settings: source.fileFormat.settings,
+                                         commonFormat: source.processingFormat.commonFormat,
+                                         interleaved: source.processingFormat.isInterleaved)
+            let end = min(source.length, source.framePosition + framesPerChunk)
+            while source.framePosition < end {
+                let count = AVAudioFrameCount(min(160_000, end - source.framePosition))
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat,
+                                                    frameCapacity: count) else {
+                    throw TranscriptionError.invalidResponse
+                }
+                try source.read(into: buffer, frameCount: count)
+                guard buffer.frameLength > 0 else { throw TranscriptionError.invalidResponse }
+                try writer.write(from: buffer)
+            }
+        }
+        return output
+    } catch {
+        output.forEach { try? FileManager.default.removeItem(at: $0) }
+        throw error
     }
 }
 

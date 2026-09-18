@@ -43,8 +43,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var lastLine: NSMenuItem!
     private var recorder: AVAudioRecorder?
     private var recordingStartSound: AVAudioPlayer?
+    private var recordingLimitSound: AVAudioPlayer?
+    private var recordingLimitTimer: Timer?
     private var recordingURL: URL?
     private var recordingStartedAt: TimeInterval?
+    private var recordingLimitMinutes = 30
     private var recordingSecondsShown: Int?
     private var eventTap: CFMachPort?
     private var keyDown = false
@@ -171,6 +174,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func startRecording() {
         DebugLog.shared.record("recording start requested")
+        guard recordingLimitSound?.isPlaying != true else {
+            setStatus("종료음 재생 중")
+            return
+        }
         guard !settings.apiKey.isEmpty else { showSettings(nil); return }
         let authorization = AVCaptureDevice.authorizationStatus(for: .audio)
         if authorization == .notDetermined {
@@ -209,7 +216,18 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             recordingURL = url
             phase = .recording
             recordingStartedAt = ProcessInfo.processInfo.systemUptime
+            recordingLimitMinutes = settings.recordingTimeLimitMinutes
             recordingSecondsShown = nil
+            let currentSession = session
+            let timer = Timer(timeInterval: TimeInterval(recordingLimitMinutes * 60),
+                              repeats: false) { [weak self] _ in
+                guard let self, self.phase == .recording, self.session == currentSession else { return }
+                DebugLog.shared.record("recording time limit reached")
+                self.stopRecording(limitReached: true)
+                self.playRecordingLimitSound()
+            }
+            recordingLimitTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
             DebugLog.shared.record("recording started")
             showActiveOverlay(.recording)
             updateRecordingElapsed()
@@ -264,8 +282,18 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         return try? AVAudioPlayer(data: data)
     }
 
-    private func stopRecording() {
+    private func playRecordingLimitSound() {
+        guard let url = Bundle.main.url(forResource: "recording-limit", withExtension: "wav"),
+              let sound = try? AVAudioPlayer(contentsOf: url) else { return }
+        recordingLimitSound = sound
+        sound.prepareToPlay()
+        sound.play()
+    }
+
+    private func stopRecording(limitReached: Bool = false) {
         guard phase == .recording, let url = recordingURL else { return }
+        recordingLimitTimer?.invalidate()
+        recordingLimitTimer = nil
         recordingStartedAt = nil
         recordingSecondsShown = nil
         DebugLog.shared.record("recording stop requested")
@@ -279,16 +307,9 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         restoreSystemAudio()
         DebugLog.shared.record("recording stopped; audio restore attempted")
         phase = .transcribing
-        setStatus("변환 중 · Esc 취소")
+        setStatus(limitReached ? "시간 제한 도달 · 변환 중" : "변환 중 · Esc 취소")
         showActiveOverlay(.transcribing)
         let currentSession = session
-        let byteCount = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        if settings.apiKey.hasPrefix("sk-") && byteCount > 24 * 1024 * 1024 {
-            finish(.failure(NSError(domain: "KeyScribe", code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "OpenAI 녹음 크기 제한(24 MB)을 초과했습니다."])),
-                   url: url, session: currentSession)
-            return
-        }
         transcriber.transcribe(audioURL: url, settings: settings) { [weak self] result in
             DispatchQueue.main.async { self?.finish(result, url: url, session: currentSession) }
         }
@@ -317,6 +338,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private func cancelRecording() {
         DebugLog.shared.record("recording/transcription cancelled phase=\(phase)")
         session = UUID()
+        recordingLimitTimer?.invalidate()
+        recordingLimitTimer = nil
+        recordingLimitSound?.stop()
+        recordingLimitSound = nil
         recordingStartedAt = nil
         recordingSecondsShown = nil
         transcriber.cancel()
@@ -360,7 +385,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         recordingSecondsShown = seconds
         let elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
         setStatus("녹음 중 (\(elapsed)) · Esc 취소")
-        overlay?.updateRecordingTime(seconds)
+        overlay?.updateRecordingTime(seconds, warning: seconds >= recordingLimitMinutes * 60 - 60)
     }
 
     private func showTransientOverlay(_ state: RecordingOverlay.State) {

@@ -73,7 +73,7 @@ final class RecordingOverlay {
         window.orderFrontRegardless()
     }
 
-    func updateRecordingTime(_ seconds: Int) {
+    func updateRecordingTime(_ seconds: Int, warning: Bool) {
         let elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
         let title = "🔴  녹음 중 (\(elapsed))"
         let styled = NSMutableAttributedString(string: title, attributes: [
@@ -83,7 +83,9 @@ final class RecordingOverlay {
         let timeRange = (title as NSString).range(of: "(\(elapsed))")
         styled.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .regular),
                             range: timeRange)
-        styled.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(0.7),
+        styled.addAttribute(.foregroundColor, value: warning
+                            ? NSColor(calibratedRed: 1, green: 0.35, blue: 0.35, alpha: 1)
+                            : NSColor.white.withAlphaComponent(0.7),
                             range: timeRange)
         label.attributedStringValue = styled
     }
