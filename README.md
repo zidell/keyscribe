@@ -7,7 +7,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 - 누르고 말하기와 토글 녹음, Esc 취소, 녹음 시간 제한을 지원합니다.
 - 녹음과 변환 상태, 실시간 입력 음량을 화면 중앙 하단에 표시합니다.
 - 설정에서 단축키, 언어, 모델, 효과음 음량, 자동 Enter 입력을 바꿀 수 있습니다.
-- 설정 창의 **로그 보기**에서 최근 24시간의 진단 로그를 열 수 있습니다. API 키와 녹음·변환 내용은 로그에 남기지 않습니다.
+- 메뉴의 **로그 보기**에서 최근 24시간의 진단 로그를 열 수 있습니다. API 키와 녹음·변환 내용은 로그에 남기지 않습니다.
 
 ## 만든 이유
 
@@ -29,7 +29,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.exe` | GitHub Releases에서 SignPath 서명 파일 다운로드 |
+| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | GitHub Releases에서 SignPath 서명 설치 파일 다운로드 |
 
 ## 처음 사용할 때
 
@@ -41,7 +41,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 
 ## 문제 확인
 
-앱의 상태와 오류는 메뉴 막대 또는 트레이 메뉴에서 확인할 수 있습니다. 설정 창의 **로그 보기**는 앱 진단 로그를 엽니다.
+앱의 상태와 오류는 메뉴 막대 또는 트레이 메뉴에서 확인할 수 있습니다. 메뉴의 **로그 보기**는 앱 진단 로그를 엽니다.
 
 - macOS: `~/Library/Application Support/keyscribe/debug.log`
 - Windows: `%APPDATA%\keyscribe\debug.log`
