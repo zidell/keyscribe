@@ -252,7 +252,7 @@ unsafe extern "system" fn procedure(
                 if data.indicator == Indicator::Recording {
                     let brush = CreateSolidBrush(0x004747ff);
                     SelectObject(dc, brush as _);
-                    Ellipse(dc, 19, 20, 31, 32);
+                    Ellipse(dc, 19, 19, 31, 31);
                     SelectObject(dc, old_brush);
                     DeleteObject(brush as _);
                 } else if data.indicator == Indicator::Transcribing {
@@ -276,7 +276,7 @@ unsafe extern "system" fn procedure(
                         TextOutW(
                             dc,
                             25 - glyph_size.cx / 2,
-                            26 - glyph_size.cy / 2,
+                            24 - glyph_size.cy / 2,
                             glyph.as_ptr(),
                             glyph.len() as i32,
                         );
