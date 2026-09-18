@@ -3,10 +3,12 @@ import Foundation
 enum TranscriptionProvider {
     case openAI
     case elevenLabs
+    case groq
 
     init?(apiKey: String) {
         if apiKey.hasPrefix("sk-") { self = .openAI }
         else if apiKey.hasPrefix("sk_") { self = .elevenLabs }
+        else if apiKey.hasPrefix("gsk_") { self = .groq }
         else { return nil }
     }
 }
@@ -19,7 +21,7 @@ enum ModelCatalogError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidKey: return "OpenAI(sk-) 또는 ElevenLabs(sk_) API 키를 입력해 주세요."
+        case .invalidKey: return "OpenAI(sk-), ElevenLabs(sk_) 또는 Groq(gsk_) API 키를 입력해 주세요."
         case .noModels: return "사용 가능한 전사 모델이 없습니다."
         case .invalidResponse: return "모델 목록 응답을 읽을 수 없습니다."
         case .server(let status): return "모델 목록 요청에 실패했습니다 (HTTP \(status)). API 키를 확인해 주세요."
@@ -33,12 +35,15 @@ enum ModelCatalog {
             completion(.failure(ModelCatalogError.invalidKey))
             return
         }
-        let endpoint = provider == .openAI
-            ? "https://api.openai.com/v1/models"
-            : "https://api.elevenlabs.io/v1/models"
+        let endpoint: String
+        switch provider {
+        case .openAI: endpoint = "https://api.openai.com/v1/models"
+        case .elevenLabs: endpoint = "https://api.elevenlabs.io/v1/models"
+        case .groq: endpoint = "https://api.groq.com/openai/v1/models"
+        }
         var request = URLRequest(url: URL(string: endpoint)!)
         request.timeoutInterval = 10
-        if provider == .openAI {
+        if provider == .openAI || provider == .groq {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         } else {
             request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
@@ -61,7 +66,7 @@ enum ModelCatalog {
 
     static func parse(data: Data, provider: TranscriptionProvider) -> [String]? {
         let objects: [[String: Any]]
-        if provider == .openAI {
+        if provider == .openAI || provider == .groq {
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = root["data"] as? [[String: Any]] else { return nil }
             objects = items
@@ -69,11 +74,14 @@ enum ModelCatalog {
             guard let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
             objects = items
         }
-        let key = provider == .openAI ? "id" : "model_id"
+        let key = provider == .elevenLabs ? "model_id" : "id"
         return Array(Set(objects.compactMap { $0[key] as? String }.filter { id in
-            let supported = provider == .openAI
-                ? (id.contains("transcribe") || id == "whisper-1")
-                : id.hasPrefix("scribe")
+            let supported: Bool
+            switch provider {
+            case .openAI: supported = id.contains("transcribe") || id == "whisper-1"
+            case .elevenLabs: supported = id.hasPrefix("scribe")
+            case .groq: supported = id.hasPrefix("whisper-")
+            }
             return supported && id.range(of: "-[0-9]{4}-[0-9]{2}-[0-9]{2}$",
                                          options: .regularExpression) == nil
         })).sorted()

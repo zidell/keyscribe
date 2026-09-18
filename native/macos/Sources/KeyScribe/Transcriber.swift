@@ -40,7 +40,8 @@ final class Transcriber {
         }
         let currentGeneration = generation
         let audioSize = (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        if settings.apiKey.hasPrefix("sk-"), audioSize > 24 * 1024 * 1024 {
+        if let provider = TranscriptionProvider(apiKey: settings.apiKey),
+           provider != .elevenLabs, audioSize > 24 * 1024 * 1024 {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let chunks = try splitWAV(audioURL)
@@ -92,12 +93,19 @@ final class Transcriber {
 
     private func transcribeOne(audioURL: URL, settings: Settings, generation: UUID,
                                completion: @escaping (Result<String, Error>) -> Void) {
-        let openAI = settings.apiKey.hasPrefix("sk-")
-        let endpoint = openAI
-            ? "https://api.openai.com/v1/audio/transcriptions"
-            : "https://api.elevenlabs.io/v1/speech-to-text"
+        guard let provider = TranscriptionProvider(apiKey: settings.apiKey) else {
+            completion(.failure(TranscriptionError.missingKey))
+            return
+        }
+        let openAICompatible = provider == .openAI || provider == .groq
+        let endpoint: String
+        switch provider {
+        case .openAI: endpoint = "https://api.openai.com/v1/audio/transcriptions"
+        case .elevenLabs: endpoint = "https://api.elevenlabs.io/v1/speech-to-text"
+        case .groq: endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+        }
         let boundary = "KeyScribe-\(UUID().uuidString)"
-        let fields = makeFields(settings: settings, openAI: openAI)
+        let fields = makeFields(settings: settings, provider: provider)
         let body: URL
         do {
             body = try makeMultipartBody(audioURL: audioURL, boundary: boundary, fields: fields)
@@ -110,13 +118,13 @@ final class Transcriber {
         request.httpMethod = "POST"
         request.timeoutInterval = 60
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        if openAI {
+        if openAICompatible {
             request.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
         } else {
             request.setValue(settings.apiKey, forHTTPHeaderField: "xi-api-key")
         }
         perform(request: request, body: body, attempt: 1, generation: generation,
-                keyterms: openAI ? settings.keyterms : [],
+                keyterms: openAICompatible ? settings.keyterms : [],
                 completion: completion)
     }
 
@@ -224,9 +232,10 @@ private func splitWAV(_ audioURL: URL) throws -> [URL] {
     }
 }
 
-private func makeFields(settings: Settings, openAI: Bool) -> [(String, String)] {
-    if openAI {
-        var fields = [("model", settings.openAIModel), ("language", settings.language)]
+private func makeFields(settings: Settings, provider: TranscriptionProvider) -> [(String, String)] {
+    if provider == .openAI || provider == .groq {
+        let model = provider == .groq ? settings.groqModel : settings.openAIModel
+        var fields = [("model", model), ("language", settings.language)]
         if !settings.keyterms.isEmpty {
             fields.append(("prompt", "고유명사 표기 참고: \(settings.keyterms.joined(separator: ", "))"))
         }

@@ -1,6 +1,31 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{env, fs, io, path::PathBuf};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Provider {
+    OpenAi,
+    ElevenLabs,
+    Groq,
+}
+
+impl Provider {
+    pub fn from_api_key(key: &str) -> Option<Self> {
+        if key.starts_with("sk-") {
+            Some(Self::OpenAi)
+        } else if key.starts_with("sk_") {
+            Some(Self::ElevenLabs)
+        } else if key.starts_with("gsk_") {
+            Some(Self::Groq)
+        } else {
+            None
+        }
+    }
+
+    pub fn openai_compatible(self) -> bool {
+        matches!(self, Self::OpenAi | Self::Groq)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -21,6 +46,7 @@ pub struct Settings {
     pub legacy_play_recording_start_sound: Option<bool>,
     pub openai_model: String,
     pub elevenlabs_model: String,
+    pub groq_model: String,
     #[serde(skip)]
     pub api_key: String,
 }
@@ -40,6 +66,7 @@ impl Default for Settings {
             legacy_play_recording_start_sound: None,
             openai_model: "gpt-transcribe".into(),
             elevenlabs_model: "scribe_v2".into(),
+            groq_model: "whisper-large-v3-turbo".into(),
             api_key: String::new(),
         }
     }
@@ -69,7 +96,10 @@ impl Settings {
             }
         }
         if value.api_key.is_empty() {
-            value.api_key = env::var("ELEVENLABS_API_KEY").unwrap_or_default();
+            value.api_key = env::var("ELEVENLABS_API_KEY")
+                .or_else(|_| env::var("GROQ_API_KEY"))
+                .or_else(|_| env::var("OPENAI_API_KEY"))
+                .unwrap_or_default();
         }
         value
     }
@@ -87,8 +117,8 @@ impl Settings {
         Ok(())
     }
 
-    pub fn openai(&self) -> bool {
-        self.api_key.starts_with("sk-")
+    pub fn provider(&self) -> Option<Provider> {
+        Provider::from_api_key(&self.api_key)
     }
 
     fn from_config(text: &str) -> Option<Self> {

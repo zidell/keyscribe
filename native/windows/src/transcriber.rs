@@ -1,4 +1,4 @@
-use crate::settings::Settings;
+use crate::settings::{Provider, Settings};
 use serde_json::Value;
 use std::{
     ffi::c_void,
@@ -68,7 +68,7 @@ fn request(
     path: &str,
     method: &str,
     key: &str,
-    openai: bool,
+    openai_compatible: bool,
     body: Body<'_>,
     content_type: Option<&str>,
 ) -> Result<(u32, Vec<u8>), String> {
@@ -96,7 +96,7 @@ fn request(
             ptr::null(),
             WINHTTP_FLAG_SECURE,
         ))?;
-        let mut headers = if openai {
+        let mut headers = if openai_compatible {
             format!("Authorization: Bearer {key}\r\n")
         } else {
             format!("xi-api-key: {key}\r\n")
@@ -188,13 +188,18 @@ fn request(
     }
 }
 
-fn multipart(settings: &Settings, boundary: &str) -> (Vec<u8>, Vec<u8>) {
+fn multipart(settings: &Settings, provider: Provider, boundary: &str) -> (Vec<u8>, Vec<u8>) {
     let mut result = Vec::with_capacity(1024);
     let mut field = |name: &str, value: &str| {
         result.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
     };
-    if settings.openai() {
-        field("model", &settings.openai_model);
+    if provider.openai_compatible() {
+        let model = if provider == Provider::Groq {
+            &settings.groq_model
+        } else {
+            &settings.openai_model
+        };
+        field("model", model);
         field("language", &settings.language);
         if !settings.keyterms.is_empty() {
             field(
@@ -242,7 +247,7 @@ pub fn transcribe(
     if settings.api_key.is_empty() {
         return Err("API 키를 설정해 주세요".into());
     }
-    if settings.openai()
+    if settings.provider().is_some_and(Provider::openai_compatible)
         && std::fs::metadata(wav).map_err(|e| e.to_string())?.len() > 24 * 1024 * 1024
     {
         let mut reader = hound::WavReader::open(wav).map_err(|e| e.to_string())?;
@@ -303,14 +308,14 @@ fn transcribe_single(
     settings: &Settings,
     cancelled: &AtomicBool,
 ) -> Result<String, String> {
-    let openai = settings.openai();
-    let (host, path) = if openai {
-        ("api.openai.com", "/v1/audio/transcriptions")
-    } else {
-        ("api.elevenlabs.io", "/v1/speech-to-text")
+    let provider = settings.provider().ok_or("API 키 형식을 확인해 주세요")?;
+    let (host, path) = match provider {
+        Provider::OpenAi => ("api.openai.com", "/v1/audio/transcriptions"),
+        Provider::ElevenLabs => ("api.elevenlabs.io", "/v1/speech-to-text"),
+        Provider::Groq => ("api.groq.com", "/openai/v1/audio/transcriptions"),
     };
     let boundary = format!("KeyScribe-{}", std::process::id());
-    let (prefix, suffix) = multipart(settings, &boundary);
+    let (prefix, suffix) = multipart(settings, provider, &boundary);
     let content_type = format!("multipart/form-data; boundary={boundary}");
     let mut last_error = String::new();
     for attempt in 0..2 {
@@ -320,10 +325,10 @@ fn transcribe_single(
         crate::debug_log::log(|| {
             format!(
                 "transcription request provider={} attempt={}",
-                if settings.openai() {
-                    "openai"
-                } else {
-                    "elevenlabs"
+                match provider {
+                    Provider::OpenAi => "openai",
+                    Provider::ElevenLabs => "elevenlabs",
+                    Provider::Groq => "groq",
                 },
                 attempt + 1
             )
@@ -333,7 +338,7 @@ fn transcribe_single(
             path,
             "POST",
             &settings.api_key,
-            openai,
+            provider.openai_compatible(),
             Body::File {
                 prefix: &prefix,
                 path: wav,
@@ -349,11 +354,15 @@ fn transcribe_single(
                     Ok(json) => match json.get("text").and_then(Value::as_str) {
                         Some(text) => {
                             let cleaned = clean_text(text);
-                            return Ok(if openai && is_prompt_echo(&cleaned, &settings.keyterms) {
-                                String::new()
-                            } else {
-                                cleaned
-                            });
+                            return Ok(
+                                if provider.openai_compatible()
+                                    && is_prompt_echo(&cleaned, &settings.keyterms)
+                                {
+                                    String::new()
+                                } else {
+                                    cleaned
+                                },
+                            );
                         }
                         None => last_error = "전사 응답에 텍스트가 없습니다".into(),
                     },
@@ -395,17 +404,18 @@ fn transcribe_single(
 }
 
 pub fn models(settings: &Settings) -> Result<Vec<String>, String> {
-    let (host, path) = if settings.openai() {
-        ("api.openai.com", "/v1/models")
-    } else {
-        ("api.elevenlabs.io", "/v1/models")
+    let provider = settings.provider().ok_or("API 키 형식을 확인해 주세요")?;
+    let (host, path) = match provider {
+        Provider::OpenAi => ("api.openai.com", "/v1/models"),
+        Provider::ElevenLabs => ("api.elevenlabs.io", "/v1/models"),
+        Provider::Groq => ("api.groq.com", "/openai/v1/models"),
     };
     let (status, response) = request(
         host,
         path,
         "GET",
         &settings.api_key,
-        settings.openai(),
+        provider.openai_compatible(),
         Body::Empty,
         None,
     )?;
@@ -413,21 +423,25 @@ pub fn models(settings: &Settings) -> Result<Vec<String>, String> {
         return Err(format!("모델 목록 요청 실패 (HTTP {status})"));
     }
     let json: Value = serde_json::from_slice(&response).map_err(|e| e.to_string())?;
-    let items = if settings.openai() {
+    let items = if provider.openai_compatible() {
         json.get("data").and_then(Value::as_array)
     } else {
         json.as_array()
     }
     .ok_or("모델 목록을 읽을 수 없습니다")?;
-    let key = if settings.openai() { "id" } else { "model_id" };
+    let key = if provider.openai_compatible() {
+        "id"
+    } else {
+        "model_id"
+    };
     let mut result: Vec<String> = items
         .iter()
         .filter_map(|item| item.get(key).and_then(Value::as_str))
         .filter(|name| {
-            let supported = if settings.openai() {
-                name.contains("transcribe") || *name == "whisper-1"
-            } else {
-                name.starts_with("scribe")
+            let supported = match provider {
+                Provider::OpenAi => name.contains("transcribe") || *name == "whisper-1",
+                Provider::ElevenLabs => name.starts_with("scribe"),
+                Provider::Groq => name.starts_with("whisper-"),
             };
             supported && !has_date_suffix(name)
         })
@@ -498,7 +512,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.api_key = "sk-openai-example".into();
         settings.keyterms = vec!["KeyScribe".into()];
-        let (openai, suffix) = multipart(&settings, "boundary");
+        let (openai, suffix) = multipart(&settings, Provider::OpenAi, "boundary");
         let openai = String::from_utf8(openai).unwrap();
         assert!(openai.contains("name=\"model\"\r\n\r\ngpt-transcribe"));
         assert!(openai.contains("name=\"prompt\""));
@@ -508,11 +522,17 @@ mod tests {
         assert_eq!(suffix, b"\r\n--boundary--\r\n");
 
         settings.api_key = "sk_elevenlabs_example".into();
-        let (elevenlabs, _) = multipart(&settings, "boundary");
+        let (elevenlabs, _) = multipart(&settings, Provider::ElevenLabs, "boundary");
         let elevenlabs = String::from_utf8(elevenlabs).unwrap();
         assert!(elevenlabs.contains("name=\"model_id\"\r\n\r\nscribe_v2"));
         assert!(elevenlabs.contains("name=\"no_verbatim\""));
         assert!(!elevenlabs.contains("name=\"prompt\""));
+
+        let (groq, _) = multipart(&settings, Provider::Groq, "boundary");
+        let groq = String::from_utf8(groq).unwrap();
+        assert!(groq.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo"));
+        assert!(groq.contains("name=\"prompt\""));
+        assert!(!groq.contains("name=\"model_id\""));
     }
 
     #[test]

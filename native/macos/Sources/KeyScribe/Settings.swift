@@ -13,6 +13,7 @@ struct Settings {
     var recordingStartSoundVolume = 100
     var openAIModel = "gpt-transcribe"
     var elevenLabsModel = "scribe_v2"
+    var groqModel = "whisper-large-v3-turbo"
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/keyscribe", isDirectory: true)
@@ -52,6 +53,7 @@ struct Settings {
             }
             result.openAIModel = values["openai_model"] as? String ?? result.openAIModel
             result.elevenLabsModel = values["elevenlabs_model"] as? String ?? result.elevenLabsModel
+            result.groqModel = values["groq_model"] as? String ?? result.groqModel
         }
         if !FileManager.default.fileExists(atPath: userURL.path),
            FileManager.default.fileExists(atPath: legacyUserURL.path),
@@ -63,7 +65,11 @@ struct Settings {
             result.apiKey = json["api_key"] as? String ?? ""
         }
         if result.apiKey.isEmpty {
-            result.apiKey = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"] ?? ""
+            let environment = ProcessInfo.processInfo.environment
+            result.apiKey = environment["ELEVENLABS_API_KEY"]
+                ?? environment["GROQ_API_KEY"]
+                ?? environment["OPENAI_API_KEY"]
+                ?? ""
         }
         return result
     }
@@ -82,6 +88,7 @@ struct Settings {
             "recording_start_sound_volume = \(recordingStartSoundVolume)",
             "openai_model = \(jsonString(openAIModel))",
             "elevenlabs_model = \(jsonString(elevenLabsModel))",
+            "groq_model = \(jsonString(groqModel))",
         ]
         try (fields.joined(separator: "\n") + "\n").write(to: Self.configURL, atomically: true, encoding: .utf8)
         var user = ((try? Data(contentsOf: Self.userURL))

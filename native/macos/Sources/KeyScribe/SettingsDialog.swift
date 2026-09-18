@@ -4,6 +4,7 @@ import Foundation
 final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private static let elevenLabsAPIKeysURL = URL(string: "https://elevenlabs.io/app/developers/api-keys")!
     private static let openAIAPIKeysURL = URL(string: "https://platform.openai.com/api-keys")!
+    private static let groqAPIKeysURL = URL(string: "https://console.groq.com/keys")!
     private let original: Settings
     private var selectedModels: [TranscriptionProvider: String]
     private var shownProvider: TranscriptionProvider?
@@ -27,7 +28,8 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     init(settings: Settings) {
         original = settings
-        selectedModels = [.openAI: settings.openAIModel, .elevenLabs: settings.elevenLabsModel]
+        selectedModels = [.openAI: settings.openAIModel, .elevenLabs: settings.elevenLabsModel,
+                          .groq: settings.groqModel]
         super.init()
     }
 
@@ -52,6 +54,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         updated.apiKey = apiKey.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.openAIModel = selectedModels[.openAI] ?? original.openAIModel
         updated.elevenLabsModel = selectedModels[.elevenLabs] ?? original.elevenLabsModel
+        updated.groqModel = selectedModels[.groq] ?? original.groqModel
         updated.language = language.selectedItem?.representedObject as? String ?? original.language
         updated.shortcut = shortcut.selectedItem?.representedObject as? String ?? original.shortcut
         updated.recordingControl = recordingControl.selectedItem?.representedObject as? String ?? original.recordingControl
@@ -93,7 +96,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         addLabel("API 키", y: 452)
         apiKey.frame = NSRect(x: 125, y: 452, width: 350, height: 24)
         apiKey.stringValue = original.apiKey
-        apiKey.placeholderString = "sk_… (ElevenLabs) 또는 sk-… (OpenAI)"
+        apiKey.placeholderString = "sk_… (ElevenLabs), sk-… (OpenAI), gsk_… (Groq)"
         apiKey.delegate = self
         form.addSubview(apiKey)
         addLabel("API 키 발급", y: 431, height: 18)
@@ -105,8 +108,9 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
             button.font = .systemFont(ofSize: 11)
             form.addSubview(button)
         }
-        addKeyLink("ElevenLabs 키 받기 ↗", x: 125, width: 170, action: #selector(openElevenLabsAPIKeys(_:)))
-        addKeyLink("OpenAI 키 받기 ↗", x: 305, width: 170, action: #selector(openOpenAIAPIKeys(_:)))
+        addKeyLink("ElevenLabs 키 ↗", x: 125, width: 115, action: #selector(openElevenLabsAPIKeys(_:)))
+        addKeyLink("OpenAI 키 ↗", x: 245, width: 105, action: #selector(openOpenAIAPIKeys(_:)))
+        addKeyLink("Groq 키 ↗", x: 355, width: 100, action: #selector(openGroqAPIKeys(_:)))
 
         addLabel("전사 모델", y: 399)
         addPicker(model, y: 398, width: 255)
@@ -293,5 +297,9 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     @objc private func openOpenAIAPIKeys(_ sender: Any?) {
         NSWorkspace.shared.open(Self.openAIAPIKeysURL)
+    }
+
+    @objc private func openGroqAPIKeys(_ sender: Any?) {
+        NSWorkspace.shared.open(Self.groqAPIKeysURL)
     }
 }

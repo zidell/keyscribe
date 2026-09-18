@@ -1,7 +1,7 @@
 use crate::{
     audio::Recording,
     mute, overlay,
-    settings::{self, Settings},
+    settings::{self, Provider, Settings},
     transcriber,
 };
 use std::{
@@ -59,6 +59,7 @@ const ID_API_KEY: usize = 204;
 const ID_MODEL: usize = 205;
 const ID_ELEVENLABS_KEY: usize = 206;
 const ID_OPENAI_KEY: usize = 207;
+const ID_GROQ_KEY: usize = 209;
 const ID_LOG: usize = 208;
 const SHORTCUTS: [(&str, &str, u16); 6] = [
     ("right_alt", "오른쪽 Alt", VK_RMENU),
@@ -193,9 +194,10 @@ struct Dialog {
     model: HWND,
     model_hint: HWND,
     refresh: HWND,
-    shown_provider: Option<bool>,
+    shown_provider: Option<Provider>,
     openai_model: String,
     elevenlabs_model: String,
+    groq_model: String,
     request_id: u64,
     pending_key: Option<String>,
     language: HWND,
@@ -1231,24 +1233,35 @@ unsafe fn show_settings(root: HWND) {
     control(
         dialog,
         "BUTTON",
-        "ElevenLabs 키 받기 ↗",
+        "ElevenLabs 키 ↗",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         165,
         47,
-        175,
+        115,
         20,
         ID_ELEVENLABS_KEY,
     );
     control(
         dialog,
         "BUTTON",
-        "OpenAI 키 받기 ↗",
+        "OpenAI 키 ↗",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
-        350,
+        285,
         47,
-        180,
+        105,
         20,
         ID_OPENAI_KEY,
+    );
+    control(
+        dialog,
+        "BUTTON",
+        "Groq 키 ↗",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+        400,
+        47,
+        100,
+        20,
+        ID_GROQ_KEY,
     );
     label("전사 모델", 80);
     let model = control(
@@ -1509,6 +1522,7 @@ unsafe fn show_settings(root: HWND) {
         shown_provider: None,
         openai_model: settings.openai_model,
         elevenlabs_model: settings.elevenlabs_model,
+        groq_model: settings.groq_model,
         request_id: 0,
         pending_key: None,
         language,
@@ -1575,14 +1589,8 @@ unsafe fn text(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buffer[..actual as usize])
 }
 
-fn provider(key: &str) -> Option<bool> {
-    if key.starts_with("sk-") {
-        Some(true)
-    } else if key.starts_with("sk_") {
-        Some(false)
-    } else {
-        None
-    }
+fn provider(key: &str) -> Option<Provider> {
+    Provider::from_api_key(key)
 }
 
 unsafe fn selected_model(hwnd: HWND) -> String {
@@ -1649,7 +1657,7 @@ unsafe fn cached_or_refresh_models(hwnd: HWND) {
     if provider(&key).is_none() {
         SetWindowTextW(
             controls.model_hint,
-            wide("OpenAI(sk-) 또는 ElevenLabs(sk_) API 키를 입력해 주세요.").as_ptr(),
+            wide("OpenAI(sk-), ElevenLabs(sk_) 또는 Groq(gsk_) API 키를 입력해 주세요.").as_ptr(),
         );
         return;
     }
@@ -1666,7 +1674,7 @@ unsafe fn cached_or_refresh_models(hwnd: HWND) {
 unsafe fn update_no_verbatim(dialog: HWND) {
     let state = dialog_state(dialog);
     let model = selected_model(state.model);
-    let enabled = state.shown_provider == Some(false)
+    let enabled = state.shown_provider == Some(Provider::ElevenLabs)
         && matches!(model.as_str(), "scribe_v2" | "scribe_v2_medical");
     EnableWindow(state.no_verbatim, i32::from(enabled));
 }
@@ -1679,8 +1687,9 @@ unsafe fn model_changed(dialog: HWND) {
         return;
     }
     match state.shown_provider {
-        Some(true) => state.openai_model = selected,
-        Some(false) => state.elevenlabs_model = selected,
+        Some(Provider::OpenAi) => state.openai_model = selected,
+        Some(Provider::ElevenLabs) => state.elevenlabs_model = selected,
+        Some(Provider::Groq) => state.groq_model = selected,
         None => {}
     }
     update_no_verbatim(dialog);
@@ -1693,18 +1702,20 @@ unsafe fn update_provider(dialog: HWND) {
         if state.shown_provider.is_some() {
             let selected = selected_model(state.model);
             if !selected.is_empty() {
-                if state.shown_provider == Some(true) {
-                    state.openai_model = selected;
-                } else {
-                    state.elevenlabs_model = selected;
+                match state.shown_provider {
+                    Some(Provider::OpenAi) => state.openai_model = selected,
+                    Some(Provider::ElevenLabs) => state.elevenlabs_model = selected,
+                    Some(Provider::Groq) => state.groq_model = selected,
+                    None => {}
                 }
             }
         }
         state.shown_provider = next;
         SendMessageW(state.model, CB_RESETCONTENT, 0, 0);
         let saved = match next {
-            Some(true) => &state.openai_model,
-            Some(false) => &state.elevenlabs_model,
+            Some(Provider::OpenAi) => &state.openai_model,
+            Some(Provider::ElevenLabs) => &state.elevenlabs_model,
+            Some(Provider::Groq) => &state.groq_model,
             None => "",
         };
         if !saved.is_empty() {
@@ -1755,6 +1766,7 @@ unsafe extern "system" fn dialog_proc(
                     open_api_key_page(hwnd, "https://elevenlabs.io/app/developers/api-keys")
                 }
                 ID_OPENAI_KEY => open_api_key_page(hwnd, "https://platform.openai.com/api-keys"),
+                ID_GROQ_KEY => open_api_key_page(hwnd, "https://console.groq.com/keys"),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
                     dialog_state(hwnd).pending_key = None;
@@ -1804,6 +1816,7 @@ unsafe fn save_dialog(hwnd: HWND) {
     updated.api_key = text(dialog.api_key).trim().into();
     updated.openai_model = dialog.openai_model.clone();
     updated.elevenlabs_model = dialog.elevenlabs_model.clone();
+    updated.groq_model = dialog.groq_model.clone();
     updated.language = dialog
         .language_codes
         .get(SendMessageW(dialog.language, CB_GETCURSEL, 0, 0) as usize)
@@ -1860,7 +1873,7 @@ unsafe fn refresh_models(hwnd: HWND, preserve: bool) {
     if provider(&settings.api_key).is_none() {
         SetWindowTextW(
             dialog.model_hint,
-            wide("OpenAI(sk-) 또는 ElevenLabs(sk_) API 키를 입력해 주세요.").as_ptr(),
+            wide("OpenAI(sk-), ElevenLabs(sk_) 또는 Groq(gsk_) API 키를 입력해 주세요.").as_ptr(),
         );
         return;
     }

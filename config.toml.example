@@ -47,6 +47,14 @@ keyterms = ["비디오스튜","후잉"]
 # false → 발화 그대로 받아쓰기 (회의록·인터뷰 등 원문이 필요한 경우)
 no_verbatim = true
 
+# ── 전사 모델 ────────────────────────────────────────────────────────────────
+
+# API 키 접두사에 따라 서비스가 자동 선택됩니다.
+# OpenAI: sk-..., ElevenLabs: sk_..., Groq: gsk_...
+openai_model = "gpt-transcribe"
+elevenlabs_model = "scribe_v2"
+groq_model = "whisper-large-v3-turbo"
+
 
 # ── 오디오 ────────────────────────────────────────────────────────────────────
 
