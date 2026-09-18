@@ -78,7 +78,7 @@ static AUTO_STOPPED_ALT_HELD: AtomicBool = AtomicBool::new(false);
 static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
 
 fn is_recording_key(physical: u32, target: u32) -> bool {
-    physical == target || (target == VK_RMENU as u32 && physical == VK_HANGUL as u32)
+    physical == target
 }
 
 fn summarize_recent(text: &str) -> String {
@@ -97,9 +97,9 @@ mod shortcut_tests {
     use super::*;
 
     #[test]
-    fn right_alt_accepts_hangul_key_but_not_left_alt() {
+    fn right_alt_does_not_accept_other_modifier_keys() {
         assert!(is_recording_key(VK_RMENU as u32, VK_RMENU as u32));
-        assert!(is_recording_key(VK_HANGUL as u32, VK_RMENU as u32));
+        assert!(!is_recording_key(VK_HANGUL as u32, VK_RMENU as u32));
         assert!(!is_recording_key(VK_LMENU as u32, VK_RMENU as u32));
     }
 }
