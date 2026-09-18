@@ -87,7 +87,7 @@
       document.documentElement.lang = 'en';
       document.title = 'KeyScribe — Type with your voice';
       document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS and Windows';
-      document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en.replaceAll('출시 후 표시', 'Available after release'); });
+      document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en; });
       document.querySelectorAll('[data-en-alt]').forEach((element) => { element.alt = element.dataset.enAlt; });
       document.querySelectorAll('[data-en-html]').forEach((element) => { element.innerHTML = element.dataset.enHtml; });
       document.querySelectorAll('[data-en-template]').forEach((element) => {

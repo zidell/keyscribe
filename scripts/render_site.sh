@@ -8,9 +8,9 @@ fi
 
 version="$1"
 output_dir="$2"
-macos_arm64_size="${3:-출시 후 표시}"
-macos_x64_size="${4:-출시 후 표시}"
-windows_size="${5:-출시 후 표시}"
+macos_arm64_size="${3:-~0.3 MB}"
+macos_x64_size="${4:-~0.3 MB}"
+windows_size="${5:-~2 MB}"
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$output_dir"
 sed -e "s/__VERSION__/$version/g" \
