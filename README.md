@@ -1,10 +1,9 @@
 # KeyScribe
 
-KeyScribe는 macOS 메뉴 막대와 Windows 트레이에서 실행되는 음성 받아쓰기 앱입니다. 단축키를 누르고 말하면 음성을 텍스트로 변환해 현재 입력창에 붙여넣습니다. 기본값은 키를 누르는 동안 녹음하는 방식이며, 설정에서 다시 누를 때 종료하는 방식으로 바꿀 수 있습니다.
+KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입력창에 붙여넣는 보이스 입력 앱입니다. 가장 단순한 형태로 최소한의 기능만 제공하며, 네이티브로 구현해 대기 메모리 20MB 안팎을 목표로 합니다. 자체 모델은 포함하지 않으므로 OpenAI 또는 ElevenLabs API 키가 필요합니다.
 
 ## 특징
 
-- OpenAI 또는 ElevenLabs 음성 인식 API를 선택할 수 있습니다.
 - 누르고 말하기와 토글 녹음, Esc 취소, 녹음 시간 제한을 지원합니다.
 - 녹음과 변환 상태, 실시간 입력 음량을 화면 중앙 하단에 표시합니다.
 - 설정에서 단축키, 언어, 모델, 효과음 음량, 자동 Enter 입력을 바꿀 수 있습니다.
@@ -16,7 +15,7 @@ KeyScribe는 macOS 메뉴 막대와 Windows 트레이에서 실행되는 음성 
 
 | macOS | Windows |
 | --- | --- |
-| ![KeyScribe가 녹음, 변환, 자동 붙여넣기를 수행하는 모습](assets/screenshots/keyscribe-flow.gif) | ![Windows 트레이의 KeyScribe 메뉴와 녹음 중 오버레이](assets/screenshots/windows-recording-preview.png) |
+| ![KeyScribe가 녹음, 변환, 자동 붙여넣기를 수행하는 macOS 흐름](assets/screenshots/keyscribe-flow.gif) | ![KeyScribe가 녹음, 변환, 자동 붙여넣기를 수행하는 Windows 흐름](assets/screenshots/keyscribe-windows-flow.gif) |
 
 ## 설치
 
