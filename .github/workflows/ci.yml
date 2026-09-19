@@ -30,7 +30,9 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Run tests and create LCOV report
         shell: pwsh
-        run: cargo llvm-cov --manifest-path native/windows/Cargo.toml --lcov --output-path coverage/lcov.info
+        run: |
+          New-Item -ItemType Directory -Path coverage -Force | Out-Null
+          cargo llvm-cov --manifest-path native/windows/Cargo.toml --lcov --output-path coverage/lcov.info
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@v5
