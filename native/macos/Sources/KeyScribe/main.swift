@@ -38,7 +38,12 @@ private func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var settings = Settings.load()
     private let transcriber = Transcriber()
-    private var phase: Phase = .idle
+    private var phase: Phase = .idle {
+        didSet {
+            guard (oldValue == .recording) != (phase == .recording) else { return }
+            if phase == .recording { registerEscapeHotKeys() } else { unregisterEscapeHotKeys() }
+        }
+    }
     private var statusItem: NSStatusItem!
     private var statusLine: NSMenuItem!
     private var lastLine: NSMenuItem!
@@ -77,8 +82,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(escapeMonitor)
             self.escapeMonitor = nil
         }
-        escapeHotKeys.forEach { _ = UnregisterEventHotKey($0) }
-        escapeHotKeys = []
+        unregisterEscapeHotKeys()
         if let escapeHotKeyHandler {
             RemoveEventHandler(escapeHotKeyHandler)
             self.escapeHotKeyHandler = nil
@@ -174,11 +178,16 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             }
             return noErr
         }, 1, &eventType, context, &escapeHotKeyHandler)
-        guard handlerStatus == noErr else {
+        if handlerStatus != noErr {
             DebugLog.shared.record("global escape hot key handler failed status=\(handlerStatus)")
-            return
+            escapeHotKeyHandler = nil
         }
+    }
 
+    // A registered hot key swallows Escape for every other application, so it
+    // must only exist while recording.
+    private func registerEscapeHotKeys() {
+        guard escapeHotKeyHandler != nil, escapeHotKeys.isEmpty else { return }
         // A hold-to-record shortcut is commonly still held when Escape is
         // pressed. Carbon hot keys match modifiers exactly, so register every
         // combination of the standard modifier keys as an Escape cancellation.
@@ -201,14 +210,14 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 DebugLog.shared.record("global escape hot key registration failed modifiers=0x\(String(modifiers, radix: 16)) status=\(status)")
             }
         }
-        if escapeHotKeys.isEmpty {
-            if let escapeHotKeyHandler {
-                RemoveEventHandler(escapeHotKeyHandler)
-                self.escapeHotKeyHandler = nil
-            }
-            return
-        }
-        DebugLog.shared.record("global escape hot keys enabled count=\(escapeHotKeys.count)")
+        DebugLog.shared.record("global escape hot keys registered count=\(escapeHotKeys.count)")
+    }
+
+    private func unregisterEscapeHotKeys() {
+        guard !escapeHotKeys.isEmpty else { return }
+        escapeHotKeys.forEach { _ = UnregisterEventHotKey($0) }
+        escapeHotKeys = []
+        DebugLog.shared.record("global escape hot keys unregistered")
     }
 
     func enableEventTap() {
