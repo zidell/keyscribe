@@ -96,11 +96,6 @@ final class RecordingOverlay {
 
     func tick(level: CGFloat?) {
         phase += 0.4
-        if state == .transcribing {
-            let frames = ["\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}",
-                          "\u{283C}", "\u{2834}", "\u{2826}", "\u{2827}"]
-            label.stringValue = "\(frames[Int(phase) % frames.count])  \(State.transcribing.title)"
-        }
         if let level {
             volume = max(0, min(1, level))
         } else {
