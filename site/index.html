@@ -26,6 +26,9 @@
     main { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0 80px; }
     .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 40px; font-size: 1.1rem; font-weight: 800; }
     .brand img { width: 40px; height: 40px; }
+    .languages { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; font-size: .78rem; font-weight: 500; }
+    .languages a { color: #62697b; text-decoration: none; }
+    .languages a[aria-current="true"] { color: inherit; font-weight: 800; text-decoration: underline; }
     h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.2; margin: 0 0 18px; letter-spacing: -.04em; }
     h2 { font-size: 1.3rem; margin: 0 0 18px; }
     p, li { line-height: 1.7; }
@@ -58,7 +61,7 @@
 </head>
 <body>
   <main>
-    <div class="brand"><img src="logo.svg" alt="">KeyScribe</div>
+    <div class="brand"><img src="logo.svg" alt="">KeyScribe <nav class="languages" aria-label="Language"><a href="?lang=en" data-language="en">English</a><a href="?lang=ko" data-language="ko">한국어</a><a href="?lang=zh-CN" data-language="zh-CN">中文</a><a href="?lang=ja" data-language="ja">日本語</a><a href="?lang=es" data-language="es">Español</a></nav></div>
     <h1 data-en="Type with your voice.">음성으로 타이핑하세요.</h1>
     <p class="intro" data-en="KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.">KeyScribe는 음성을 텍스트로 변환해주는 보이스 입력 앱입니다. 네이티브 코드로 최소한의 기능만 구현했기에 가볍고 쾌적합니다. 본인이 사용하는 STT API 서비스를 연결하여 사용하세요.</p>
 
@@ -109,15 +112,59 @@
   </main>
   <script>
     const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent;
-    const isKorean = navigator.language?.toLowerCase().startsWith('ko');
+    const requestedLanguage = new URLSearchParams(location.search).get('lang');
+    const normalizeLanguage = (value) => {
+      const language = (value || '').toLowerCase();
+      if (language.startsWith('ko')) return 'ko';
+      if (language.startsWith('ja')) return 'ja';
+      if (language.startsWith('zh')) return 'zh-CN';
+      if (language.startsWith('es')) return 'es';
+      return 'en';
+    };
+    const locale = normalizeLanguage(requestedLanguage || navigator.language);
+    const copy = {
+      en: {},
+      ko: {},
+      ja: {
+        'Type with your voice.': '声で入力しよう。',
+        'KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.': 'KeyScribeは、音声をテキストに変換する音声入力アプリです。必要な機能だけをネイティブで実装しているため、軽快に動作します。お使いのSTT APIサービスを接続して、すぐに入力を始められます。',
+        'Preview': 'プレビュー', 'macOS menu bar': 'macOSメニューバー', 'Windows system tray': 'Windowsシステムトレイ', 'Voice typing flow': '音声入力の流れ',
+        'Download': 'ダウンロード', 'Download for macOS': 'macOS版をダウンロード', 'Apple Silicon __MACOS_ARM64_SIZE__ or Intel __MACOS_X64_SIZE__ · DMG': 'Apple Silicon __MACOS_ARM64_SIZE__ または Intel __MACOS_X64_SIZE__ · DMG', 'x64 · Installer · __WINDOWS_SIZE__': 'x64 · インストーラー · __WINDOWS_SIZE__', 'Latest version {version}': '最新バージョン {version}', 'Windows installers are signed by SignPath.': 'WindowsインストーラーはSignPathで署名されています。',
+        'How it works': '使い方', 'Allow microphone access. On macOS, also allow Accessibility access.': 'マイクへのアクセスを許可してください。macOSではアクセシビリティへのアクセスも許可します。', 'Put the cursor where you want text, then hold Right Option (macOS) or Right Alt (Windows) while speaking. Release the key to insert the text.': '入力したい位置にカーソルを置き、右Option（macOS）または右Alt（Windows）を押したまま話します。キーを離すとテキストが入力されます。', 'In Settings, you can change the shortcut, transcription language, recording behavior, and whether to send automatically after pasting.': '設定では、ショートカット、文字起こし言語、録音方法、貼り付け後の自動送信を変更できます。',
+        'Memory usage': 'メモリ使用量', 'We keep it lightweight by removing unnecessary features and including only the essentials. Idle-state benchmark results may vary with the operating system and configuration.': '不要な機能を省き、必要な機能だけに絞ることで軽量にしています。待機時のベンチマーク結果はOSや設定によって異なる場合があります。', 'Idle memory': '待機時メモリ', 'Distribution': '配布情報', 'Privacy': 'プライバシー'
+      },
+      'zh-CN': {
+        'Type with your voice.': '用语音输入。',
+        'KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.': 'KeyScribe 是一款将语音转换为文字的语音输入应用。它以原生方式实现了必要功能，因而轻量、响应迅速。连接您使用的 STT API 服务即可开始输入。',
+        'Preview': '预览', 'macOS menu bar': 'macOS 菜单栏', 'Windows system tray': 'Windows 系统托盘', 'Voice typing flow': '语音输入流程',
+        'Download': '下载', 'Download for macOS': '下载 macOS 版', 'Apple Silicon __MACOS_ARM64_SIZE__ or Intel __MACOS_X64_SIZE__ · DMG': 'Apple Silicon __MACOS_ARM64_SIZE__ 或 Intel __MACOS_X64_SIZE__ · DMG', 'x64 · Installer · __WINDOWS_SIZE__': 'x64 · 安装程序 · __WINDOWS_SIZE__', 'Latest version {version}': '最新版本 {version}', 'Windows installers are signed by SignPath.': 'Windows 安装程序由 SignPath 签名。',
+        'How it works': '使用方法', 'Allow microphone access. On macOS, also allow Accessibility access.': '请允许访问麦克风。在 macOS 上，还需允许“辅助功能”访问。', 'Put the cursor where you want text, then hold Right Option (macOS) or Right Alt (Windows) while speaking. Release the key to insert the text.': '将光标放在要输入文字的位置，按住右 Option（macOS）或右 Alt（Windows）说话。松开按键即可插入文字。', 'In Settings, you can change the shortcut, transcription language, recording behavior, and whether to send automatically after pasting.': '您可在设置中更改快捷键、转写语言、录音方式，以及粘贴后是否自动发送。',
+        'Memory usage': '内存占用', 'We keep it lightweight by removing unnecessary features and including only the essentials. Idle-state benchmark results may vary with the operating system and configuration.': '我们去除了不必要的功能，只保留核心功能，因此应用十分轻量。待机内存测试结果可能因操作系统和配置而异。', 'Idle memory': '待机内存', 'Distribution': '发布信息', 'Privacy': '隐私说明'
+      },
+      es: {
+        'Type with your voice.': 'Escribe con tu voz.',
+        'KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.': 'KeyScribe es una aplicación de dictado que convierte la voz en texto. Es ligera y ágil porque está desarrollada de forma nativa con solo lo esencial. Conecta el servicio de API STT que uses y empieza a escribir.',
+        'Preview': 'Vista previa', 'macOS menu bar': 'Barra de menús de macOS', 'Windows system tray': 'Bandeja del sistema de Windows', 'Voice typing flow': 'Flujo de dictado por voz',
+        'Download': 'Descargar', 'Download for macOS': 'Descargar para macOS', 'Apple Silicon __MACOS_ARM64_SIZE__ or Intel __MACOS_X64_SIZE__ · DMG': 'Apple Silicon __MACOS_ARM64_SIZE__ o Intel __MACOS_X64_SIZE__ · DMG', 'x64 · Installer · __WINDOWS_SIZE__': 'x64 · Instalador · __WINDOWS_SIZE__', 'Latest version {version}': 'Última versión {version}', 'Windows installers are signed by SignPath.': 'Los instaladores de Windows están firmados por SignPath.',
+        'How it works': 'Cómo funciona', 'Allow microphone access. On macOS, also allow Accessibility access.': 'Permite el acceso al micrófono. En macOS, permite también el acceso de Accesibilidad.', 'Put the cursor where you want text, then hold Right Option (macOS) or Right Alt (Windows) while speaking. Release the key to insert the text.': 'Coloca el cursor donde quieras escribir y mantén pulsada la tecla Opción derecha (macOS) o Alt derecha (Windows) mientras hablas. Suéltala para insertar el texto.', 'In Settings, you can change the shortcut, transcription language, recording behavior, and whether to send automatically after pasting.': 'En Configuración puedes cambiar el atajo, el idioma de transcripción, el comportamiento de grabación y el envío automático tras pegar.',
+        'Memory usage': 'Uso de memoria', 'We keep it lightweight by removing unnecessary features and including only the essentials. Idle-state benchmark results may vary with the operating system and configuration.': 'Mantenemos la aplicación ligera eliminando funciones innecesarias e incluyendo solo lo esencial. Los resultados de memoria en reposo pueden variar según el sistema operativo y la configuración.', 'Idle memory': 'Memoria en reposo', 'Distribution': 'Distribución', 'Privacy': 'Privacidad'
+      }
+    };
+    const htmlCopy = {
+      en: {},
+      ja: {'<strong>An external API key is required.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>': '<strong>外部APIキーが必要です。</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>', 'Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.': 'アプリを開き、メニューバーまたはシステムトレイの<strong>設定...</strong>でElevenLabs、OpenAI、またはGroqのAPIキーを入力します。'},
+      'zh-CN': {'<strong>An external API key is required.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>': '<strong>需要外部 API 密钥。</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>', 'Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.': '打开应用，在菜单栏或系统托盘的<strong>设置...</strong>中输入 ElevenLabs、OpenAI 或 Groq API 密钥。'},
+      es: {'<strong>An external API key is required.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>': '<strong>Se requiere una clave de API externa.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>', 'Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.': 'Abre la aplicación e introduce una clave de API de ElevenLabs, OpenAI o Groq en <strong>Configuración...</strong>, desde la barra de menús o la bandeja del sistema.'}
+    };
     document.documentElement.dataset.platform = /mac/i.test(platform) ? 'mac' : /win/i.test(platform) ? 'windows' : 'other';
-    if (!isKorean) {
-      document.documentElement.lang = 'en';
-      document.title = 'KeyScribe — Type with your voice';
+    document.documentElement.lang = locale;
+    document.querySelectorAll('.languages a').forEach((link) => { link.setAttribute('aria-current', String(link.dataset.language === locale)); });
+    if (locale !== 'ko') {
+      document.title = 'KeyScribe — ' + (copy[locale]['Type with your voice.'] || 'Type with your voice.');
       document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS and Windows';
-      document.querySelector('meta[property="og:title"]').content = 'KeyScribe — Type with your voice';
+      document.querySelector('meta[property="og:title"]').content = document.title;
       document.querySelector('meta[property="og:description"]').content = 'A lightweight voice typing app for macOS and Windows';
-      document.querySelector('meta[name="twitter:title"]').content = 'KeyScribe — Type with your voice';
+      document.querySelector('meta[name="twitter:title"]').content = document.title;
       document.querySelector('meta[name="twitter:description"]').content = 'A lightweight voice typing app for macOS and Windows';
       document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en; });
       document.querySelectorAll('[data-en-alt]').forEach((element) => { element.alt = element.dataset.enAlt; });
@@ -125,6 +172,12 @@
       document.querySelectorAll('[data-en-template]').forEach((element) => {
         const version = element.textContent.match(/[0-9]+\.[0-9]+\.[0-9]+/)?.[0] || '';
         element.textContent = element.dataset.enTemplate.replace('{version}', version);
+      });
+      document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = copy[locale][element.dataset.en] || element.dataset.en; });
+      document.querySelectorAll('[data-en-html]').forEach((element) => { element.innerHTML = htmlCopy[locale][element.dataset.enHtml] || element.dataset.enHtml; });
+      document.querySelectorAll('[data-en-template]').forEach((element) => {
+        const version = element.textContent.match(/[0-9]+\.[0-9]+\.[0-9]+/)?.[0] || '';
+        element.textContent = (copy[locale][element.dataset.enTemplate] || element.dataset.enTemplate).replace('{version}', version);
       });
     }
   </script>
