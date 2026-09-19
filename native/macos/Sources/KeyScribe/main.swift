@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
@@ -50,6 +51,9 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var recordingLimitMinutes = 30
     private var recordingSecondsShown: Int?
     private var eventTap: CFMachPort?
+    private var escapeMonitor: Any?
+    private var escapeHotKeys: [EventHotKeyRef] = []
+    private var escapeHotKeyHandler: EventHandlerRef?
     private var keyDown = false
     private var session = UUID()
     private var audioOutput: SystemAudioOutput.Snapshot?
@@ -63,10 +67,22 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         installEventTap()
+        installEscapeMonitor()
+        installEscapeHotKey()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.shared.record("app terminate; cancelling and restoring audio")
+        if let escapeMonitor {
+            NSEvent.removeMonitor(escapeMonitor)
+            self.escapeMonitor = nil
+        }
+        escapeHotKeys.forEach { _ = UnregisterEventHotKey($0) }
+        escapeHotKeys = []
+        if let escapeHotKeyHandler {
+            RemoveEventHandler(escapeHotKeyHandler)
+            self.escapeHotKeyHandler = nil
+        }
         cancelRecording()
     }
 
@@ -95,6 +111,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         let versionItem = NSMenuItem(title: "버전 \(version)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
+        menu.addItem(NSMenuItem(title: "재실행", action: #selector(restart(_:)), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "종료", action: #selector(quit(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil { item.target = self }
         statusItem.menu = menu
@@ -123,6 +140,75 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         DebugLog.shared.record("event tap enabled")
+    }
+
+    // Some focused applications do not forward Escape to the session event tap,
+    // even though modifier changes for the recording shortcut still arrive.
+    // Keep a dedicated global monitor as a fallback so the visible recording
+    // overlay can always be cancelled.
+    private func installEscapeMonitor() {
+        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            DispatchQueue.main.async {
+                guard let self, self.phase != .idle else { return }
+                DebugLog.shared.record("escape received by global monitor; cancelling recording/transcription")
+                self.cancelRecording()
+            }
+        }
+        DebugLog.shared.record("global escape monitor \(escapeMonitor == nil ? "unavailable" : "enabled")")
+    }
+
+    // Registering Escape as a hot key provides a separate delivery path from
+    // event taps and event monitors, including for keyboard remappers.
+    private func installEscapeHotKey() {
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                      eventKind: UInt32(kEventHotKeyPressed))
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { _, _, userInfo in
+            guard let userInfo else { return noErr }
+            let app = Unmanaged<KeyScribeApp>.fromOpaque(userInfo).takeUnretainedValue()
+            DispatchQueue.main.async {
+                guard app.phase != .idle else { return }
+                DebugLog.shared.record("escape received by global hot key; cancelling recording/transcription")
+                app.cancelRecording()
+            }
+            return noErr
+        }, 1, &eventType, context, &escapeHotKeyHandler)
+        guard handlerStatus == noErr else {
+            DebugLog.shared.record("global escape hot key handler failed status=\(handlerStatus)")
+            return
+        }
+
+        // A hold-to-record shortcut is commonly still held when Escape is
+        // pressed. Carbon hot keys match modifiers exactly, so register every
+        // combination of the standard modifier keys as an Escape cancellation.
+        let modifierSets: [UInt32] = (0..<16).map { mask in
+            var modifiers: UInt32 = 0
+            if mask & 1 != 0 { modifiers |= UInt32(cmdKey) }
+            if mask & 2 != 0 { modifiers |= UInt32(optionKey) }
+            if mask & 4 != 0 { modifiers |= UInt32(controlKey) }
+            if mask & 8 != 0 { modifiers |= UInt32(shiftKey) }
+            return modifiers
+        }
+        for (index, modifiers) in modifierSets.enumerated() {
+            let hotKeyID = EventHotKeyID(signature: OSType(0x4B534553), id: UInt32(index + 1)) // "KSES"
+            var hotKey: EventHotKeyRef?
+            let status = RegisterEventHotKey(UInt32(kVK_Escape), modifiers, hotKeyID,
+                                              GetApplicationEventTarget(), 0, &hotKey)
+            if status == noErr, let hotKey {
+                escapeHotKeys.append(hotKey)
+            } else {
+                DebugLog.shared.record("global escape hot key registration failed modifiers=0x\(String(modifiers, radix: 16)) status=\(status)")
+            }
+        }
+        if escapeHotKeys.isEmpty {
+            if let escapeHotKeyHandler {
+                RemoveEventHandler(escapeHotKeyHandler)
+                self.escapeHotKeyHandler = nil
+            }
+            return
+        }
+        DebugLog.shared.record("global escape hot keys enabled count=\(escapeHotKeys.count)")
     }
 
     func enableEventTap() {
@@ -554,6 +640,33 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     @objc private func openLog(_ sender: Any?) {
         DebugLog.shared.record("log opened by user")
         NSWorkspace.shared.open(DebugLog.shared.fileURL)
+    }
+
+    @objc private func restart(_ sender: Any?) {
+        // The development LaunchAgent has KeepAlive enabled. Starting a second
+        // process here would leave two keyboard hooks alive, so let it perform
+        // the relaunch when it owns this process.
+        if ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == "net.gitools.keyscribe.dev" {
+            DebugLog.shared.record("app restart requested through LaunchAgent")
+            NSApp.terminate(nil)
+            return
+        }
+        guard let executable = ProcessInfo.processInfo.arguments.first, !executable.isEmpty else {
+            setStatus("재실행할 실행 파일을 찾을 수 없습니다")
+            return
+        }
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // Relaunch after this instance releases its global keyboard hooks.
+        relauncher.arguments = ["-c", "sleep 0.3; exec \"$1\"", "--", executable]
+        do {
+            try relauncher.run()
+            DebugLog.shared.record("app restart requested")
+            NSApp.terminate(nil)
+        } catch {
+            DebugLog.shared.record("app restart failed type=\(type(of: error))")
+            setStatus("재실행 실패: \(error.localizedDescription)")
+        }
     }
 
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }

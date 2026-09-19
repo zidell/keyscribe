@@ -369,11 +369,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             || wparam == WM_SYSKEYUP as usize)
     {
         let key = &*(lparam as *const KBDLLHOOKSTRUCT);
-        if key.flags & LLKHF_INJECTED != 0 {
-            if key.vkCode == VK_RMENU as u32
-                || key.vkCode == VK_MENU as u32
-                || key.vkCode == VK_ESCAPE as u32
-            {
+        let injected = key.flags & LLKHF_INJECTED != 0;
+        if injected && key.vkCode != VK_ESCAPE as u32 {
+            if key.vkCode == VK_RMENU as u32 || key.vkCode == VK_MENU as u32 {
                 crate::debug_log::log(|| {
                     format!(
                         "key injected vk={} scan={} flags=0x{:x} ignored",
@@ -382,6 +380,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 });
             }
             return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
+        }
+        if injected {
+            // Remappers such as AutoHotkey send Escape as an injected key. Let
+            // it share the physical Escape path so pending right-Alt state is
+            // also resolved instead of starting another recording after cancel.
+            crate::debug_log::log(|| "injected escape accepted".into());
         }
         let physical = match key.vkCode as u16 {
             VK_MENU => {
@@ -471,10 +475,18 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     )
                 });
                 if alt_state == 2 {
-                    if !AUTO_STOPPED_ALT_HELD.swap(false, Ordering::Relaxed) {
+                    let auto_stopped = AUTO_STOPPED_ALT_HELD.swap(false, Ordering::Relaxed);
+                    // Explicit Escape must always cancel. Other keys retain the
+                    // auto-stop guard so an Alt chord cannot cancel a timed-out
+                    // recording's transcription by accident.
+                    if physical == VK_ESCAPE as u32 || !auto_stopped {
                         PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
                     }
                     PostMessageW(root, KEY_MESSAGE, VK_RMENU as usize, 0);
+                } else if physical == VK_ESCAPE as u32 {
+                    // A quick right-Alt+Escape chord is still an explicit
+                    // cancellation, even before the hold timer starts recording.
+                    PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
                 }
                 send_keys(&[(VK_RMENU, false)]);
                 return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
