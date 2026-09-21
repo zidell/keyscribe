@@ -25,14 +25,18 @@ private func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                               event: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
     guard let userInfo else { return Unmanaged.passUnretained(event) }
     let app = Unmanaged<KeyScribeApp>.fromOpaque(userInfo).takeUnretainedValue()
+    var consumed = false
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         DispatchQueue.main.async { app.enableEventTap() }
     } else if type == .flagsChanged || type == .keyDown || type == .keyUp {
         let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
+        // The tap source runs on the main run loop, so the phase behind this
+        // decision is the same one the handler below will act on.
+        consumed = app.consumesEscape(type: type, code: code)
         DispatchQueue.main.async { app.handleKeyEvent(type: type, code: code, flags: flags) }
     }
-    return Unmanaged.passUnretained(event)
+    return consumed ? nil : Unmanaged.passUnretained(event)
 }
 
 final class KeyScribeApp: NSObject, NSApplicationDelegate {
@@ -40,8 +44,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private let transcriber = Transcriber()
     private var phase: Phase = .idle {
         didSet {
-            guard (oldValue == .recording) != (phase == .recording) else { return }
-            if phase == .recording { registerEscapeHotKeys() } else { unregisterEscapeHotKeys() }
+            guard (oldValue == .idle) != (phase == .idle) else { return }
+            if phase == .idle { unregisterEscapeHotKeys() } else { registerEscapeHotKeys() }
         }
     }
     private var statusItem: NSStatusItem!
@@ -60,6 +64,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var escapeHotKeys: [EventHotKeyRef] = []
     private var escapeHotKeyHandler: EventHandlerRef?
     private var keyDown = false
+    private var escapeKeyDownConsumed = false
     private var session = UUID()
     private var audioOutput: SystemAudioOutput.Snapshot?
     private var wasMuted: Bool?
@@ -185,7 +190,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     // A registered hot key swallows Escape for every other application, so it
-    // must only exist while recording.
+    // must only exist while a recording or a transcription is cancellable.
     private func registerEscapeHotKeys() {
         guard escapeHotKeyHandler != nil, escapeHotKeys.isEmpty else { return }
         // A hold-to-record shortcut is commonly still held when Escape is
@@ -218,6 +223,25 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         escapeHotKeys.forEach { _ = UnregisterEventHotKey($0) }
         escapeHotKeys = []
         DebugLog.shared.record("global escape hot keys unregistered")
+    }
+
+    // Escape belongs to KeyScribe alone while the overlay is up: cancelling a
+    // recording or a transcription must not also close a sheet or drop an
+    // editor out of insert mode in the focused application. Consuming the key
+    // down keeps it from ever reaching another process, and the matching key up
+    // follows it so nothing sees an unpaired release.
+    func consumesEscape(type: CGEventType, code: CGKeyCode) -> Bool {
+        guard code == 53 else { return false }
+        switch type {
+        case .keyDown:
+            escapeKeyDownConsumed = phase != .idle
+            return escapeKeyDownConsumed
+        case .keyUp where escapeKeyDownConsumed:
+            escapeKeyDownConsumed = false
+            return true
+        default:
+            return false
+        }
     }
 
     func enableEventTap() {

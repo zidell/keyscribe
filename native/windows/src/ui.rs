@@ -77,6 +77,8 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static RIGHT_ALT_STATE: AtomicU8 = AtomicU8::new(0);
 static AUTO_STOPPED_ALT_HELD: AtomicBool = AtomicBool::new(false);
 static RIGHT_ALT_DOWN_TIME: AtomicU32 = AtomicU32::new(0);
+static ESCAPE_CAPTURE: AtomicBool = AtomicBool::new(false);
+static ESCAPE_DOWN_CAPTURED: AtomicBool = AtomicBool::new(false);
 
 fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target
@@ -359,6 +361,28 @@ pub fn run() -> Result<(), String> {
     }
 }
 
+// Escape belongs to KeyScribe alone while the overlay is up: cancelling a
+// recording or a transcription must not also close a dialog or drop an editor
+// out of insert mode in the foreground window. Swallowing the key down keeps it
+// from reaching any other process, and the matching key up follows it so
+// nothing sees an unpaired release.
+fn capture_escape(down: bool) -> bool {
+    if down {
+        let capture = ESCAPE_CAPTURE.load(Ordering::Relaxed);
+        ESCAPE_DOWN_CAPTURED.store(capture, Ordering::Relaxed);
+        capture
+    } else {
+        ESCAPE_DOWN_CAPTURED.swap(false, Ordering::Relaxed)
+    }
+}
+
+unsafe fn refresh_escape_capture(hwnd: HWND) {
+    ESCAPE_CAPTURE.store(
+        app(hwnd).recording.is_some() || app(hwnd).transcribing,
+        Ordering::Relaxed,
+    );
+}
+
 unsafe fn app(hwnd: HWND) -> &'static mut App {
     &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App)
 }
@@ -491,6 +515,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     PostMessageW(root, KEY_MESSAGE, VK_ESCAPE as usize, 1);
                 }
                 send_keys(&[(VK_RMENU, false)]);
+                if physical == VK_ESCAPE as u32 && capture_escape(down) {
+                    return 1;
+                }
                 return CallNextHookEx(ptr::null_mut(), code, wparam, lparam);
             }
         }
@@ -499,6 +526,10 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 crate::debug_log::log(|| format!("key queued physical={physical} down={down}"));
                 PostMessageW(root, KEY_MESSAGE, physical as usize, down as isize);
             }
+        }
+        if physical == VK_ESCAPE as u32 && capture_escape(down) {
+            crate::debug_log::log(|| format!("escape captured down={down}"));
+            return 1;
         }
     }
     CallNextHookEx(ptr::null_mut(), code, wparam, lparam)
@@ -546,6 +577,7 @@ unsafe extern "system" fn root_proc(
             let result = Box::from_raw(lparam as *mut ResultMessage);
             if result.generation == app(hwnd).generation && app(hwnd).transcribing {
                 app(hwnd).transcribing = false;
+                refresh_escape_capture(hwnd);
                 app(hwnd).transcription_cancelled = None;
                 match result.result {
                     Ok(text) if !text.is_empty() => {
@@ -637,6 +669,7 @@ unsafe extern "system" fn root_proc(
                         AUTO_STOPPED_ALT_HELD.store(true, Ordering::Relaxed);
                     }
                     stop(hwnd, true);
+                    refresh_escape_capture(hwnd);
                     return 0;
                 }
                 let expires = app(hwnd).overlay_expires;
@@ -856,6 +889,11 @@ fn shortcut_key(value: &str) -> u16 {
 }
 
 unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
+    handle_key_inner(hwnd, key, down);
+    refresh_escape_capture(hwnd);
+}
+
+unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
     crate::debug_log::log(|| {
         format!(
             "handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}",
