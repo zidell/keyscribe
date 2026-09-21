@@ -14,6 +14,8 @@ mkdir -p "$(dirname "$agent")" "$project_root/dist-native"
 if [[ ! -f "$project_root/dist-native/source.sha" ]]; then
     bash "$project_root/scripts/macos_source_hash.sh" > "$project_root/dist-native/source.sha"
 fi
+pending="$agent.new"
+trap 'rm -f "$pending"' EXIT
 
 xml_escape() {
     local value="$1"
@@ -37,6 +39,9 @@ xml_escape() {
     <key>WorkingDirectory</key><string>$(xml_escape "$project_root")</string>
     <key>RunAtLoad</key><true/>
     <key>StartInterval</key><integer>10</integer>
+    <key>EnvironmentVariables</key><dict>
+        <key>KEYSCRIBE_SOURCE_WATCH</key><string>1</string>
+    </dict>
     <key>WatchPaths</key><array>
 EOF
     for path in "$project_root/native/macos/Package.swift" \
@@ -55,9 +60,23 @@ EOF
     <key>StandardErrorPath</key><string>$(xml_escape "$project_root/dist-native/watch.log")</string>
 </dict></plist>
 EOF
-} > "$agent"
+} > "$pending"
 
+plutil -lint "$pending" > /dev/null
+if launchctl print "$domain/$label" >/dev/null 2>&1 && cmp -s "$pending" "$agent"; then
+    echo "macOS 소스 변경 자동 빌드가 이미 최신 상태입니다: $agent"
+    exit 0
+fi
+mv "$pending" "$agent"
 plutil -lint "$agent"
+
+# 이 스크립트가 소스 감시 작업 안에서 실행 중이면 bootout이 자기 자신을 죽여
+# bootstrap까지 가지 못한다. 그 경우 plist만 갱신하고 등록은 다음 기회로 미룬다.
+if [[ -n "${KEYSCRIBE_SOURCE_WATCH:-}" ]]; then
+    echo "소스 감시 작업 안에서 실행 중이라 재등록을 건너뜁니다. 다음 로그인 또는 scripts/install_macos_source_watch.sh 직접 실행 시 반영됩니다: $agent"
+    exit 0
+fi
+
 launchctl bootout "$domain/$label" 2>/dev/null || true
 for ((attempt = 0; attempt < 5; attempt++)); do
     if launchctl bootstrap "$domain" "$agent" 2>/dev/null; then
