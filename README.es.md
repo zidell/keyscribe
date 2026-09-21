@@ -9,8 +9,8 @@ KeyScribe es una aplicación de dictado que transcribe las grabaciones del micr�
 ## Funciones
 
 - Admite pulsar para hablar, grabación conmutada, Escape para cancelar y límite de tiempo de grabación.
-- Muestra el estado de grabación y transcripción, además del nivel de entrada en directo, en la parte central inferior de la pantalla.
-- Permite cambiar el atajo, el idioma, el modelo, el volumen del sonido y la pulsación automática de Enter en Configuración.
+- Muestra el estado de grabación y transcripción, además del nivel de entrada en directo, en un pequeño widget situado por defecto en la parte central inferior de la pantalla.
+- Permite cambiar el atajo, el idioma, el modelo, el volumen del sonido, la posición del widget de grabación y la pulsación automática de Enter en Configuración.
 - **Ver registros** en el menú abre los registros de diagnóstico de las últimas 24 horas. Las claves de API y el contenido grabado o transcrito nunca se escriben en ellos.
 
 ## Por qué lo hice

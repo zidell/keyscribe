@@ -11,6 +11,7 @@ struct Settings {
     var noVerbatim = true
     var muteDuringRecording = true
     var recordingStartSoundVolume = 100
+    var overlayPosition = "bottom_center"
     var openAIModel = "gpt-transcribe"
     var elevenLabsModel = "scribe_v2"
     var groqModel = "whisper-large-v3-turbo"
@@ -51,6 +52,10 @@ struct Settings {
             } else if values["play_recording_start_sound"] as? Bool == false {
                 result.recordingStartSoundVolume = 0
             }
+            if let position = values["overlay_position"] as? String,
+               OverlayPosition(rawValue: position) != nil {
+                result.overlayPosition = position
+            }
             result.openAIModel = values["openai_model"] as? String ?? result.openAIModel
             result.elevenLabsModel = values["elevenlabs_model"] as? String ?? result.elevenLabsModel
             result.groqModel = values["groq_model"] as? String ?? result.groqModel
@@ -86,6 +91,7 @@ struct Settings {
             "no_verbatim = \(noVerbatim)",
             "mute_during_recording = \(muteDuringRecording)",
             "recording_start_sound_volume = \(recordingStartSoundVolume)",
+            "overlay_position = \(jsonString(overlayPosition))",
             "openai_model = \(jsonString(openAIModel))",
             "elevenlabs_model = \(jsonString(elevenLabsModel))",
             "groq_model = \(jsonString(groqModel))",

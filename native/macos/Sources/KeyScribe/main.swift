@@ -458,7 +458,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func showActiveOverlay(_ state: RecordingOverlay.State) {
         if overlay == nil { overlay = RecordingOverlay() }
-        overlay?.show(state)
+        overlay?.show(state, position: overlayPosition)
         overlayTimer?.invalidate()
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -491,12 +491,16 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         overlayTimer?.invalidate()
         overlayTimer = nil
         if overlay == nil { overlay = RecordingOverlay() }
-        overlay?.show(state)
+        overlay?.show(state, position: overlayPosition)
         let currentSession = session
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             guard let self, self.session == currentSession, self.phase == .idle else { return }
             self.overlay?.hide()
         }
+    }
+
+    private var overlayPosition: OverlayPosition {
+        OverlayPosition(rawValue: settings.overlayPosition) ?? .bottomCenter
     }
 
     private func hideOverlay() {

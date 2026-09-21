@@ -67,3 +67,12 @@ mute_during_recording = true
 
 # 녹음 시작 효과음 음량: 0은 끔, 100은 기본, 최대 200 (%)
 recording_start_sound_volume = 100
+
+
+# ── 녹음 위젯 ─────────────────────────────────────────────────────────────────
+
+# 녹음/변환 상태를 보여주는 위젯이 화면 어디에 뜰지 선택합니다.
+# 기본값: "bottom_center"
+# top_left, top_center, top_right, center, bottom_left, bottom_center, bottom_right
+# 마우스 커서가 있는 화면(모니터)의 작업 영역을 기준으로 배치합니다.
+overlay_position = "bottom_center"

@@ -19,6 +19,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let shortcut = NSPopUpButton()
     private let recordingControl = NSPopUpButton()
     private let recordingTimeLimit = NSPopUpButton()
+    private let overlayPosition = NSPopUpButton()
     private let keyterms = NSTextView()
     private let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거 (ElevenLabs)", target: nil, action: nil)
     private let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
@@ -59,6 +60,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         updated.shortcut = shortcut.selectedItem?.representedObject as? String ?? original.shortcut
         updated.recordingControl = recordingControl.selectedItem?.representedObject as? String ?? original.recordingControl
         updated.recordingTimeLimitMinutes = Int(recordingTimeLimit.selectedItem?.representedObject as? String ?? "30") ?? 30
+        updated.overlayPosition = overlayPosition.selectedItem?.representedObject as? String ?? original.overlayPosition
         updated.keyterms = keyterms.string.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         updated.noVerbatim = noVerbatim.state == .on
@@ -70,7 +72,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     private func makeForm() -> NSView {
         let width: CGFloat = 480
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 530))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 570))
         func addLabel(_ title: String, y: CGFloat, height: CGFloat = 24) {
             let label = NSTextField(labelWithString: title)
             label.frame = NSRect(x: 0, y: y, width: 124, height: height)
@@ -161,6 +163,17 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
             ("10", "10분"), ("20", "20분"), ("30", "30분"), ("60", "60분"),
         ], selected: String(original.recordingTimeLimitMinutes))
         addPicker(recordingTimeLimit, y: 266)
+
+        for view in form.subviews {
+            var frame = view.frame
+            frame.origin.y += 40
+            view.frame = frame
+        }
+        addLabel("녹음 위젯 위치", y: 268)
+        populate(overlayPosition,
+                 options: OverlayPosition.allCases.map { ($0.rawValue, $0.title) },
+                 selected: original.overlayPosition)
+        addPicker(overlayPosition, y: 266)
 
         addLabel("고유명사\n(한 줄에 하나)", y: 195, height: 52)
         let scroll = NSScrollView(frame: NSRect(x: 125, y: 193, width: 350, height: 69))

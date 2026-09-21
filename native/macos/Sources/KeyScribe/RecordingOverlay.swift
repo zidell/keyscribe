@@ -1,6 +1,45 @@
 import AppKit
 import QuartzCore
 
+enum OverlayPosition: String, CaseIterable {
+    case topLeft = "top_left"
+    case topCenter = "top_center"
+    case topRight = "top_right"
+    case center = "center"
+    case bottomLeft = "bottom_left"
+    case bottomCenter = "bottom_center"
+    case bottomRight = "bottom_right"
+
+    var title: String {
+        switch self {
+        case .topLeft: return "상단 왼쪽"
+        case .topCenter: return "상단 중앙"
+        case .topRight: return "상단 오른쪽"
+        case .center: return "정중앙"
+        case .bottomLeft: return "하단 왼쪽"
+        case .bottomCenter: return "하단 중앙"
+        case .bottomRight: return "하단 오른쪽"
+        }
+    }
+
+    /// 화면 여백(visibleFrame) 안에서 주어진 크기의 창이 놓일 왼쪽 아래 좌표.
+    func origin(in frame: NSRect, size: NSSize, margin: CGFloat = 40) -> NSPoint {
+        let x: CGFloat
+        switch self {
+        case .topLeft, .bottomLeft: x = frame.minX + margin
+        case .topCenter, .center, .bottomCenter: x = frame.midX - size.width / 2
+        case .topRight, .bottomRight: x = frame.maxX - size.width - margin
+        }
+        let y: CGFloat
+        switch self {
+        case .topLeft, .topCenter, .topRight: y = frame.maxY - size.height - margin
+        case .center: y = frame.midY - size.height / 2
+        case .bottomLeft, .bottomCenter, .bottomRight: y = frame.minY + margin
+        }
+        return NSPoint(x: x, y: y)
+    }
+}
+
 final class RecordingOverlay {
     enum State {
         case recording
@@ -66,13 +105,13 @@ final class RecordingOverlay {
         }
     }
 
-    func show(_ state: State) {
+    func show(_ state: State, position: OverlayPosition = .bottomCenter) {
         self.state = state
         label.stringValue = state.title
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
-            window.setFrameOrigin(NSPoint(x: frame.midX - width / 2, y: frame.minY + 40))
+            window.setFrameOrigin(position.origin(in: frame, size: NSSize(width: width, height: height)))
         }
         window.orderFrontRegardless()
     }

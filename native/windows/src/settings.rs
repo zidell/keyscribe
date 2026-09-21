@@ -42,6 +42,7 @@ pub struct Settings {
     pub no_verbatim: bool,
     pub mute_during_recording: bool,
     pub recording_start_sound_volume: u16,
+    pub overlay_position: String,
     #[serde(rename = "play_recording_start_sound", skip_serializing)]
     pub legacy_play_recording_start_sound: Option<bool>,
     pub openai_model: String,
@@ -63,6 +64,7 @@ impl Default for Settings {
             no_verbatim: true,
             mute_during_recording: true,
             recording_start_sound_volume: 100,
+            overlay_position: crate::overlay::DEFAULT_POSITION.into(),
             legacy_play_recording_start_sound: None,
             openai_model: "gpt-transcribe".into(),
             elevenlabs_model: "scribe_v2".into(),
@@ -133,6 +135,12 @@ impl Settings {
         if !matches!(value.recording_time_limit_minutes, 10 | 20 | 30 | 60) {
             value.recording_time_limit_minutes = default_recording_limit();
         }
+        if !crate::overlay::POSITIONS
+            .iter()
+            .any(|(code, _)| *code == value.overlay_position)
+        {
+            value.overlay_position = crate::overlay::DEFAULT_POSITION.into();
+        }
         value.legacy_play_recording_start_sound = None;
         Some(value)
     }
@@ -171,6 +179,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.recording_start_sound_volume, 150);
+    }
+
+    #[test]
+    fn overlay_position_defaults_and_rejects_unknown_values() {
+        assert_eq!(
+            Settings::from_config("").unwrap().overlay_position,
+            "bottom_center"
+        );
+        assert_eq!(
+            Settings::from_config("overlay_position = \"top_right\"")
+                .unwrap()
+                .overlay_position,
+            "top_right"
+        );
+        assert_eq!(
+            Settings::from_config("overlay_position = \"somewhere\"")
+                .unwrap()
+                .overlay_position,
+            "bottom_center"
+        );
     }
 
     #[test]

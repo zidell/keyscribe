@@ -205,6 +205,7 @@ struct Dialog {
     shortcut: HWND,
     mode: HWND,
     recording_time_limit: HWND,
+    overlay_position: HWND,
     keyterms: HWND,
     no_verbatim: HWND,
     mute: HWND,
@@ -302,6 +303,7 @@ pub fn run() -> Result<(), String> {
         tray.hIcon = icon;
         write_wide(&mut tray.szTip, "KeyScribe · 준비됨");
         let overlay = overlay::create(instance, hwnd);
+        overlay::set_position(overlay, &settings.overlay_position);
         let state = Box::new(App {
             tray,
             owned_icon,
@@ -1205,7 +1207,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        700,
+        742,
         root,
         ptr::null_mut(),
         instance,
@@ -1398,7 +1400,37 @@ unsafe fn show_settings(root: HWND) {
         .position(|minutes| *minutes == settings.recording_time_limit_minutes)
         .unwrap_or(2);
     SendMessageW(recording_time_limit, CB_SETCURSEL, selected_limit, 0);
-    label("고유명사 (한 줄에 하나)", 308);
+    label("녹음 위젯 위치", 310);
+    let overlay_position = control(
+        dialog,
+        "COMBOBOX",
+        "",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
+        165,
+        308,
+        365,
+        200,
+        0,
+    );
+    for (_, title) in overlay::POSITIONS {
+        SendMessageW(
+            overlay_position,
+            CB_ADDSTRING,
+            0,
+            wide(title).as_ptr() as isize,
+        );
+    }
+    let selected_position = overlay::POSITIONS
+        .iter()
+        .position(|(code, _)| *code == settings.overlay_position)
+        .or_else(|| {
+            overlay::POSITIONS
+                .iter()
+                .position(|(code, _)| *code == overlay::DEFAULT_POSITION)
+        })
+        .unwrap_or(0);
+    SendMessageW(overlay_position, CB_SETCURSEL, selected_position, 0);
+    label("고유명사 (한 줄에 하나)", 350);
     let keyterms = control(
         dialog,
         "EDIT",
@@ -1410,7 +1442,7 @@ unsafe fn show_settings(root: HWND) {
             | ES_MULTILINE as u32
             | ES_AUTOVSCROLL as u32,
         165,
-        306,
+        348,
         365,
         100,
         0,
@@ -1421,7 +1453,7 @@ unsafe fn show_settings(root: HWND) {
         "군더더기 말 제거 (ElevenLabs)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        426,
+        468,
         365,
         25,
         0,
@@ -1438,7 +1470,7 @@ unsafe fn show_settings(root: HWND) {
         "녹음 중 시스템 소리 음소거",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        461,
+        503,
         365,
         25,
         0,
@@ -1455,20 +1487,20 @@ unsafe fn show_settings(root: HWND) {
         "붙여넣은 뒤 Enter 입력",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        496,
+        538,
         365,
         25,
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
-    label("녹음 시작 효과음", 531);
+    label("녹음 시작 효과음", 573);
     let recording_start_sound_volume = control(
         dialog,
         "msctls_trackbar32",
         "",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
         165,
-        526,
+        568,
         300,
         36,
         0,
@@ -1487,7 +1519,7 @@ unsafe fn show_settings(root: HWND) {
         &format!("{}%", settings.recording_start_sound_volume),
         WS_CHILD | WS_VISIBLE,
         475,
-        531,
+        573,
         55,
         25,
         0,
@@ -1498,7 +1530,7 @@ unsafe fn show_settings(root: HWND) {
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        570,
+        612,
         365,
         26,
         0,
@@ -1509,7 +1541,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        610,
+        652,
         85,
         32,
         ID_SAVE,
@@ -1520,7 +1552,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        610,
+        652,
         85,
         32,
         ID_CANCEL,
@@ -1542,6 +1574,7 @@ unsafe fn show_settings(root: HWND) {
         shortcut,
         mode,
         recording_time_limit,
+        overlay_position,
         keyterms,
         no_verbatim,
         mute,
@@ -1848,6 +1881,11 @@ unsafe fn save_dialog(hwnd: HWND) {
         .get(SendMessageW(dialog.recording_time_limit, CB_GETCURSEL, 0, 0) as usize)
         .copied()
         .unwrap_or(30);
+    updated.overlay_position = overlay::POSITIONS
+        .get(SendMessageW(dialog.overlay_position, CB_GETCURSEL, 0, 0) as usize)
+        .map(|(code, _)| *code)
+        .unwrap_or(overlay::DEFAULT_POSITION)
+        .into();
     updated.keyterms = text(dialog.keyterms)
         .lines()
         .map(str::trim)
@@ -1868,6 +1906,7 @@ unsafe fn save_dialog(hwnd: HWND) {
     match updated.save() {
         Ok(()) => {
             TARGET_KEY.store(shortcut_key(&updated.shortcut), Ordering::SeqCst);
+            overlay::set_position(app(root).overlay, &updated.overlay_position);
             app(root).settings = updated;
             app(root).pressed = false;
             set_status(root, "설정 저장됨");

@@ -1,6 +1,6 @@
 use std::{mem, ptr};
 use windows_sys::Win32::{
-    Foundation::HWND,
+    Foundation::{HWND, RECT},
     Graphics::Gdi::{
         BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect, GetMonitorInfoW,
         GetStockObject, GetTextExtentPoint32W, InvalidateRect, MonitorFromPoint, RoundRect,
@@ -18,6 +18,55 @@ use windows_sys::Win32::{
 
 const WIDTH: i32 = 260;
 const HEIGHT: i32 = 52;
+const MARGIN: i32 = 40;
+
+/// 설정에 저장되는 값과 설정 창에 표시할 이름.
+pub const POSITIONS: [(&str, &str); 7] = [
+    ("top_left", "상단 왼쪽"),
+    ("top_center", "상단 중앙"),
+    ("top_right", "상단 오른쪽"),
+    ("center", "정중앙"),
+    ("bottom_left", "하단 왼쪽"),
+    ("bottom_center", "하단 중앙"),
+    ("bottom_right", "하단 오른쪽"),
+];
+
+pub const DEFAULT_POSITION: &str = "bottom_center";
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct Position(&'static str);
+
+impl Position {
+    pub fn parse(value: &str) -> Self {
+        Self(
+            POSITIONS
+                .iter()
+                .find(|(code, _)| *code == value)
+                .map_or(DEFAULT_POSITION, |(code, _)| *code),
+        )
+    }
+
+    /// 작업 표시줄을 제외한 화면 영역(rcWork) 안에서 위젯이 놓일 왼쪽 위 좌표.
+    fn origin(self, work: RECT) -> (i32, i32) {
+        let x = match self.0 {
+            "top_left" | "bottom_left" => work.left + MARGIN,
+            "top_right" | "bottom_right" => work.right - WIDTH - MARGIN,
+            _ => (work.left + work.right - WIDTH) / 2,
+        };
+        let y = match self.0 {
+            "top_left" | "top_center" | "top_right" => work.top + MARGIN,
+            "center" => (work.top + work.bottom - HEIGHT) / 2,
+            _ => work.bottom - HEIGHT - MARGIN,
+        };
+        (x, y)
+    }
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self(DEFAULT_POSITION)
+    }
+}
 
 pub enum State {
     Recording,
@@ -45,6 +94,7 @@ struct Data {
     time_warning: bool,
     level: f32,
     phase: f32,
+    position: Position,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -97,11 +147,20 @@ pub unsafe fn create(instance: *mut std::ffi::c_void, owner: HWND) -> HWND {
             time_warning: false,
             level: 0.0,
             phase: 0.0,
+            position: Position::default(),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as isize);
         SetLayeredWindowAttributes(hwnd, 0x00ff00ff, 235, LWA_ALPHA | LWA_COLORKEY);
     }
     hwnd
+}
+
+pub unsafe fn set_position(hwnd: HWND, position: &str) {
+    if hwnd.is_null() {
+        return;
+    }
+    let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
+    data.position = Position::parse(position);
 }
 
 pub unsafe fn show(hwnd: HWND, state: State) {
@@ -149,8 +208,7 @@ unsafe fn show_with_message(hwnd: HWND, message: &str, indicator: Indicator) {
         dwFlags: 0,
     };
     if GetMonitorInfoW(monitor, &mut info) != 0 {
-        let x = (info.rcWork.left + info.rcWork.right - WIDTH) / 2;
-        let y = info.rcWork.bottom - HEIGHT - 40;
+        let (x, y) = data.position.origin(info.rcWork);
         SetWindowPos(hwnd, HWND_TOPMOST, x, y, WIDTH, HEIGHT, SWP_NOACTIVATE);
     }
     InvalidateRect(hwnd, ptr::null(), 1);
@@ -319,5 +377,73 @@ unsafe extern "system" fn procedure(
             0
         }
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Position, HEIGHT, MARGIN, WIDTH};
+    use windows_sys::Win32::Foundation::RECT;
+
+    const WORK: RECT = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+
+    #[test]
+    fn places_widget_at_the_requested_corner() {
+        assert_eq!(Position::parse("top_left").origin(WORK), (MARGIN, MARGIN));
+        assert_eq!(
+            Position::parse("top_right").origin(WORK),
+            (1920 - WIDTH - MARGIN, MARGIN)
+        );
+        assert_eq!(
+            Position::parse("bottom_left").origin(WORK),
+            (MARGIN, 1080 - HEIGHT - MARGIN)
+        );
+        assert_eq!(
+            Position::parse("bottom_right").origin(WORK),
+            (1920 - WIDTH - MARGIN, 1080 - HEIGHT - MARGIN)
+        );
+        assert_eq!(
+            Position::parse("center").origin(WORK),
+            ((1920 - WIDTH) / 2, (1080 - HEIGHT) / 2)
+        );
+        assert_eq!(
+            Position::parse("top_center").origin(WORK),
+            ((1920 - WIDTH) / 2, MARGIN)
+        );
+    }
+
+    /// 보조 모니터처럼 원점이 0이 아닌 작업 영역에서도 그 화면 안에 놓인다.
+    fn offset_work() -> RECT {
+        RECT {
+            left: 1920,
+            top: -200,
+            right: 3840,
+            bottom: 880,
+        }
+    }
+
+    #[test]
+    fn honours_work_area_offset() {
+        assert_eq!(
+            Position::parse("top_left").origin(offset_work()),
+            (1920 + MARGIN, -200 + MARGIN)
+        );
+        assert_eq!(
+            Position::parse("bottom_center").origin(offset_work()),
+            ((1920 + 3840 - WIDTH) / 2, 880 - HEIGHT - MARGIN)
+        );
+    }
+
+    #[test]
+    fn unknown_position_falls_back_to_the_default() {
+        assert_eq!(
+            Position::parse("nowhere").origin(WORK),
+            Position::default().origin(WORK)
+        );
     }
 }
