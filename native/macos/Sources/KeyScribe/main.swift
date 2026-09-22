@@ -44,13 +44,14 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private let transcriber = Transcriber()
     private var phase: Phase = .idle {
         didSet {
+            guard oldValue != phase else { return }
+            updateStatusIcon()
             guard (oldValue == .idle) != (phase == .idle) else { return }
             if phase == .idle { unregisterEscapeHotKeys() } else { registerEscapeHotKeys() }
         }
     }
     private var statusItem: NSStatusItem!
     private var statusLine: NSMenuItem!
-    private var lastLine: NSMenuItem!
     private var recorder: AVAudioRecorder?
     private var recordingStartSound: AVAudioPlayer?
     private var recordingLimitSound: AVAudioPlayer?
@@ -108,9 +109,6 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         statusLine = NSMenuItem(title: "준비됨", action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
         menu.addItem(statusLine)
-        lastLine = NSMenuItem(title: "최근 변환: 없음", action: nil, keyEquivalent: "")
-        lastLine.isEnabled = false
-        menu.addItem(lastLine)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "설정 폴더 열기", action: #selector(openSettingsFolder(_:)), keyEquivalent: ""))
@@ -128,6 +126,17 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func setStatus(_ message: String) {
         statusLine.title = message
+    }
+
+    /// 메뉴 막대 아이콘을 현재 상태에 맞춰 물들인다. 녹음 위젯을 "표시 안 함"으로
+    /// 둔 사용자에게는 이 색이 녹음 중인지 알 수 있는 유일한 단서다.
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        switch phase {
+        case .idle: button.contentTintColor = nil
+        case .recording: button.contentTintColor = .systemRed
+        case .transcribing: button.contentTintColor = .systemOrange
+        }
     }
 
     private func installEventTap() {
@@ -444,11 +453,11 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         recordingURL = nil
         phase = .idle
         switch result {
-        case .success(let text):
-            DebugLog.shared.record("transcription completed characters=\(text.count)")
+        case .success(let transcript):
+            DebugLog.shared.record("transcription completed characters=\(transcript.count)")
             hideOverlay()
+            let text = settings.applyingReplacements(to: transcript)
             guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
-            lastLine.title = "최근 변환: \(String(text.prefix(60)))"
             paste(text)
             setStatus("완료")
         case .failure(let error):
@@ -481,8 +490,13 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func showActiveOverlay(_ state: RecordingOverlay.State) {
-        if overlay == nil { overlay = RecordingOverlay() }
-        overlay?.show(state, position: overlayPosition)
+        // 위젯을 꺼 두었어도 타이머는 계속 돌려서 메뉴 막대의 경과 시간을 갱신한다.
+        if overlayPosition.showsWidget {
+            if overlay == nil { overlay = RecordingOverlay() }
+            overlay?.show(state, position: overlayPosition)
+        } else {
+            overlay?.hide()
+        }
         overlayTimer?.invalidate()
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -514,6 +528,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private func showTransientOverlay(_ state: RecordingOverlay.State) {
         overlayTimer?.invalidate()
         overlayTimer = nil
+        guard overlayPosition.showsWidget else {
+            overlay?.hide()
+            return
+        }
         if overlay == nil { overlay = RecordingOverlay() }
         overlay?.show(state, position: overlayPosition)
         let currentSession = session
@@ -534,29 +552,48 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     private func paste(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        if settings.autoSend {
-            // Some editors apply pasted text asynchronously. Give them time to finish
-            // before sending Return, and hold the key briefly like a physical press.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                guard let enterDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true),
-                      let enterUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false) else { return }
-                enterDown.flags = []
-                enterUp.flags = []
-                enterDown.post(tap: .cghidEventTap)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                    enterUp.post(tap: .cghidEventTap)
-                }
-            }
+        var segments = KeyToken.segments(of: text)
+        // 자동 Enter도 마지막 키 조각일 뿐이라, 키 토큰과 같은 경로로 내보낸다.
+        if settings.autoSend { segments.append(.key(flags: [], code: 36)) }
+        runPaste(segments, session: session)
+    }
+
+    /// 조각을 하나씩 내보낸다. 붙여넣기를 비동기로 반영하는 편집기가 있어
+    /// 텍스트 뒤에는 조금 더 오래 기다렸다가 다음 조각으로 넘어간다.
+    private func runPaste(_ segments: [PasteSegment], session pasteSession: UUID) {
+        guard session == pasteSession, let segment = segments.first,
+              let source = CGEventSource(stateID: .hidSystemState) else { return }
+        let delay: TimeInterval
+        switch segment {
+        case .text(let value):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+            postKey(source: source, code: 9, flags: .maskCommand, hold: 0)
+            delay = 0.4
+        case .key(let flags, let code):
+            postKey(source: source, code: code, flags: flags, hold: 0.04)
+            delay = 0.12
         }
+        let rest = Array(segments.dropFirst())
+        guard !rest.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.runPaste(rest, session: pasteSession)
+        }
+    }
+
+    private func postKey(source: CGEventSource, code: CGKeyCode, flags: CGEventFlags,
+                         hold: TimeInterval) {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        guard hold > 0 else {
+            up.post(tap: .cghidEventTap)
+            return
+        }
+        // 물리 키를 누른 것처럼 잠깐 붙잡고 있어야 받아들이는 앱이 있다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { up.post(tap: .cghidEventTap) }
     }
 
     private func runAppleScript(_ script: String) -> String? {

@@ -8,6 +8,7 @@ struct Settings {
     var autoSend = true
     var language = "ko"
     var keyterms: [String] = []
+    var replacements: [String] = []
     var noVerbatim = true
     var muteDuringRecording = true
     var recordingStartSoundVolume = 100
@@ -45,6 +46,7 @@ struct Settings {
             result.autoSend = values["auto_send"] as? Bool ?? result.autoSend
             result.language = values["language"] as? String ?? result.language
             result.keyterms = values["keyterms"] as? [String] ?? result.keyterms
+            result.replacements = values["replacements"] as? [String] ?? result.replacements
             result.noVerbatim = values["no_verbatim"] as? Bool ?? result.noVerbatim
             result.muteDuringRecording = values["mute_during_recording"] as? Bool ?? result.muteDuringRecording
             if let volume = values["recording_start_sound_volume"] as? Int {
@@ -88,6 +90,7 @@ struct Settings {
             "auto_send = \(autoSend)",
             "language = \(jsonString(language))",
             "keyterms = [\(keyterms.map(jsonString).joined(separator: ", "))]",
+            "replacements = [\(replacements.map(jsonString).joined(separator: ", "))]",
             "no_verbatim = \(noVerbatim)",
             "mute_during_recording = \(muteDuringRecording)",
             "recording_start_sound_volume = \(recordingStartSoundVolume)",
@@ -103,6 +106,29 @@ struct Settings {
         let data = try JSONSerialization.data(withJSONObject: user, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: Self.userURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.userURL.path)
+    }
+}
+
+extension Settings {
+    /// 설정 화면에 보이는 `찾을 말 => 바꿀 말` 한 줄을 좌우 쌍으로 나눈다.
+    /// 사용자가 화살표를 `->`로 쓰는 경우도 같은 뜻으로 받아 준다.
+    static func parseReplacement(_ line: String) -> (from: String, to: String)? {
+        for separator in ["=>", "->"] {
+            guard let range = line.range(of: separator) else { continue }
+            let from = line[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let to = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            guard !from.isEmpty else { return nil }
+            return (from, to)
+        }
+        return nil
+    }
+
+    /// 전사 결과를 붙여넣기 직전에 치환 규칙대로 고친다. 규칙은 적힌 순서대로 적용된다.
+    func applyingReplacements(to text: String) -> String {
+        replacements.reduce(text) { result, rule in
+            guard let (from, to) = Settings.parseReplacement(rule) else { return result }
+            return result.replacingOccurrences(of: from, with: to)
+        }
     }
 }
 

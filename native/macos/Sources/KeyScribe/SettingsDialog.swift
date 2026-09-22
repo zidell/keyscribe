@@ -21,6 +21,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let recordingTimeLimit = NSPopUpButton()
     private let overlayPosition = NSPopUpButton()
     private let keyterms = NSTextView()
+    private let replacements = NSTextView()
     private let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거 (ElevenLabs)", target: nil, action: nil)
     private let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
     private let recordingStartSoundVolume = NSSlider()
@@ -63,6 +64,10 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         updated.overlayPosition = overlayPosition.selectedItem?.representedObject as? String ?? original.overlayPosition
         updated.keyterms = keyterms.string.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        updated.replacements = replacements.string.components(separatedBy: .newlines)
+            .compactMap(Settings.parseReplacement)
+            .prefix(100)
+            .map { "\($0.from) => \($0.to)" }
         updated.noVerbatim = noVerbatim.state == .on
         updated.muteDuringRecording = mute.state == .on
         updated.recordingStartSoundVolume = Int(recordingStartSoundVolume.doubleValue.rounded())
@@ -72,7 +77,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     private func makeForm() -> NSView {
         let width: CGFloat = 480
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 570))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 620))
         func addLabel(_ title: String, y: CGFloat, height: CGFloat = 24) {
             let label = NSTextField(labelWithString: title)
             label.frame = NSRect(x: 0, y: y, width: 124, height: height)
@@ -175,17 +180,36 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
                  selected: original.overlayPosition)
         addPicker(overlayPosition, y: 266)
 
-        addLabel("고유명사\n(한 줄에 하나)", y: 195, height: 52)
-        let scroll = NSScrollView(frame: NSRect(x: 125, y: 193, width: 350, height: 69))
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        keyterms.frame = NSRect(x: 0, y: 0, width: 350, height: 69)
-        keyterms.isVerticallyResizable = true
-        keyterms.autoresizingMask = [.width]
-        keyterms.string = original.keyterms.joined(separator: "\n")
-        keyterms.isRichText = false
-        scroll.documentView = keyterms
-        form.addSubview(scroll)
+        for view in form.subviews {
+            var frame = view.frame
+            frame.origin.y += 50
+            view.frame = frame
+        }
+        func addTextArea(_ view: NSTextView, title: String, lines: [String], y: CGFloat,
+                         labelY: CGFloat? = nil, labelHeight: CGFloat = 52) {
+            addLabel(title, y: labelY ?? (y + 2), height: labelHeight)
+            let scroll = NSScrollView(frame: NSRect(x: 125, y: y, width: 350, height: 58))
+            scroll.hasVerticalScroller = true
+            scroll.borderType = .bezelBorder
+            view.frame = NSRect(x: 0, y: 0, width: 350, height: 58)
+            view.isVerticallyResizable = true
+            view.autoresizingMask = [.width]
+            view.string = lines.joined(separator: "\n")
+            view.isRichText = false
+            scroll.documentView = view
+            form.addSubview(scroll)
+        }
+        addTextArea(keyterms, title: "인식 단어\n(한 줄에 하나)", lines: original.keyterms, y: 249)
+        addTextArea(replacements, title: "치환 단어\n(찾을 말 => 바꿀 말)",
+                    lines: original.replacements, y: 185, labelY: 205, labelHeight: 40)
+        let help = NSButton(title: "사용법", target: self,
+                            action: #selector(showReplacementHelp(_:)))
+        help.frame = NSRect(x: 0, y: 186, width: 124, height: 18)
+        help.isBordered = false
+        help.contentTintColor = .linkColor
+        help.font = .systemFont(ofSize: 11)
+        help.alignment = .left
+        form.addSubview(help)
 
         noVerbatim.frame = NSRect(x: 125, y: 154, width: 350, height: 25)
         noVerbatim.state = original.noVerbatim ? .on : .off
@@ -303,6 +327,45 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         guard notification.object as? NSTextField === apiKey else { return }
         refreshModels(nil)
     }
+
+    @objc private func showReplacementHelp(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "치환 단어 사용법"
+        alert.informativeText = Self.replacementHelp
+        alert.addButton(withTitle: "닫기")
+        alert.runModal()
+    }
+
+    private static let replacementHelp = """
+        인식된 문장을 붙여넣기 직전에 고칩니다. 한 줄에 규칙 하나씩, \
+        "찾을 말 => 바꿀 말" 형식으로 적습니다. => 대신 ->도 됩니다.
+
+            비디오 스튜 => VideoStew
+            지피티 => GPT
+            음 =>                      (바꿀 말을 비우면 그 말을 지웁니다)
+
+        • => 앞뒤 공백은 알아서 정리합니다.
+        • 규칙은 적힌 순서대로 차례로 적용됩니다.
+
+        ■ 키 입력 넣기
+
+        바꿀 말에 대괄호로 키 이름을 적으면, 그 자리에서 실제로 그 키를 누릅니다.
+
+            전송해줘 => [enter]
+            검색창 => [cmd+k]
+            목록으로 => 첫째[enter]둘째[enter]셋째
+
+        쓸 수 있는 키
+            \(KeyToken.keyNames)
+
+        조합키
+            cmd, ctrl, alt, shift 를 +로 이어 씁니다. 예) [cmd+shift+p]
+
+        • 대소문자와 공백은 따지지 않습니다. [Cmd + K], [cmd-k], [Page Up] 모두 됩니다.
+        • a~z, 0~9은 조합키와 같이 쓸 때만 키로 봅니다. [k]는 그냥 글자로 붙습니다.
+        • 모르는 이름이면 키로 보지 않고 대괄호째 그대로 붙여넣습니다.
+        • 키를 섞으면 조각마다 잠깐 기다렸다 이어서 붙이므로, 길면 조금 느립니다.
+        """
 
     @objc private func openElevenLabsAPIKeys(_ sender: Any?) {
         NSWorkspace.shared.open(Self.elevenLabsAPIKeysURL)

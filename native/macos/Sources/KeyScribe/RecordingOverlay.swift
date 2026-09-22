@@ -2,6 +2,7 @@ import AppKit
 import QuartzCore
 
 enum OverlayPosition: String, CaseIterable {
+    case hidden = "hidden"
     case topLeft = "top_left"
     case topCenter = "top_center"
     case topRight = "top_right"
@@ -12,6 +13,7 @@ enum OverlayPosition: String, CaseIterable {
 
     var title: String {
         switch self {
+        case .hidden: return "표시 안 함"
         case .topLeft: return "상단 왼쪽"
         case .topCenter: return "상단 중앙"
         case .topRight: return "상단 오른쪽"
@@ -22,18 +24,21 @@ enum OverlayPosition: String, CaseIterable {
         }
     }
 
+    /// 위젯을 아예 띄우지 않는 설정인지 여부.
+    var showsWidget: Bool { self != .hidden }
+
     /// 화면 여백(visibleFrame) 안에서 주어진 크기의 창이 놓일 왼쪽 아래 좌표.
     func origin(in frame: NSRect, size: NSSize, margin: CGFloat = 40) -> NSPoint {
         let x: CGFloat
         switch self {
         case .topLeft, .bottomLeft: x = frame.minX + margin
-        case .topCenter, .center, .bottomCenter: x = frame.midX - size.width / 2
+        case .hidden, .topCenter, .center, .bottomCenter: x = frame.midX - size.width / 2
         case .topRight, .bottomRight: x = frame.maxX - size.width - margin
         }
         let y: CGFloat
         switch self {
         case .topLeft, .topCenter, .topRight: y = frame.maxY - size.height - margin
-        case .center: y = frame.midY - size.height / 2
+        case .hidden, .center: y = frame.midY - size.height / 2
         case .bottomLeft, .bottomCenter, .bottomRight: y = frame.minY + margin
         }
         return NSPoint(x: x, y: y)

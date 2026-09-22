@@ -21,7 +21,8 @@ const HEIGHT: i32 = 52;
 const MARGIN: i32 = 40;
 
 /// 설정에 저장되는 값과 설정 창에 표시할 이름.
-pub const POSITIONS: [(&str, &str); 7] = [
+pub const POSITIONS: [(&str, &str); 8] = [
+    (HIDDEN_POSITION, "표시 안 함"),
     ("top_left", "상단 왼쪽"),
     ("top_center", "상단 중앙"),
     ("top_right", "상단 오른쪽"),
@@ -32,6 +33,8 @@ pub const POSITIONS: [(&str, &str); 7] = [
 ];
 
 pub const DEFAULT_POSITION: &str = "bottom_center";
+/// 위젯을 아예 띄우지 않는 설정.
+pub const HIDDEN_POSITION: &str = "hidden";
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Position(&'static str);
@@ -44,6 +47,10 @@ impl Position {
                 .find(|(code, _)| *code == value)
                 .map_or(DEFAULT_POSITION, |(code, _)| *code),
         )
+    }
+
+    fn is_hidden(self) -> bool {
+        self.0 == HIDDEN_POSITION
     }
 
     /// 작업 표시줄을 제외한 화면 영역(rcWork) 안에서 위젯이 놓일 왼쪽 위 좌표.
@@ -161,6 +168,9 @@ pub unsafe fn set_position(hwnd: HWND, position: &str) {
     }
     let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data);
     data.position = Position::parse(position);
+    if data.position.is_hidden() {
+        ShowWindow(hwnd, SW_HIDE);
+    }
 }
 
 pub unsafe fn show(hwnd: HWND, state: State) {
@@ -198,6 +208,11 @@ unsafe fn show_with_message(hwnd: HWND, message: &str, indicator: Indicator) {
     data.time_warning = false;
     data.level = 0.0;
     data.phase = 0.0;
+    // "표시 안 함"이면 상태만 기억하고 창은 띄우지 않는다.
+    if data.position.is_hidden() {
+        ShowWindow(hwnd, SW_HIDE);
+        return;
+    }
     let mut pointer = mem::zeroed();
     GetCursorPos(&mut pointer);
     let monitor = MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST);
@@ -437,6 +452,14 @@ mod tests {
             Position::parse("bottom_center").origin(offset_work()),
             ((1920 + 3840 - WIDTH) / 2, 880 - HEIGHT - MARGIN)
         );
+    }
+
+    #[test]
+    fn hidden_is_the_first_choice_and_reports_itself() {
+        assert_eq!(super::POSITIONS[0].0, super::HIDDEN_POSITION);
+        assert!(Position::parse(super::HIDDEN_POSITION).is_hidden());
+        assert!(!Position::parse("bottom_center").is_hidden());
+        assert!(!Position::default().is_hidden());
     }
 
     #[test]

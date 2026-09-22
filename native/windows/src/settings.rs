@@ -39,6 +39,7 @@ pub struct Settings {
     pub auto_send: bool,
     pub language: String,
     pub keyterms: Vec<String>,
+    pub replacements: Vec<String>,
     pub no_verbatim: bool,
     pub mute_during_recording: bool,
     pub recording_start_sound_volume: u16,
@@ -61,6 +62,7 @@ impl Default for Settings {
             auto_send: true,
             language: "ko".into(),
             keyterms: Vec::new(),
+            replacements: Vec::new(),
             no_verbatim: true,
             mute_during_recording: true,
             recording_start_sound_volume: 100,
@@ -123,6 +125,16 @@ impl Settings {
         Provider::from_api_key(&self.api_key)
     }
 
+    /// 전사 결과를 붙여넣기 직전에 치환 규칙대로 고친다. 규칙은 적힌 순서대로 적용된다.
+    pub fn apply_replacements(&self, text: &str) -> String {
+        self.replacements
+            .iter()
+            .filter_map(|rule| parse_replacement(rule))
+            .fold(text.to_owned(), |result, (from, to)| {
+                result.replace(from, to)
+            })
+    }
+
     fn from_config(text: &str) -> Option<Self> {
         let mut value = toml::from_str::<Self>(text).ok()?;
         let has_volume = toml::from_str::<toml::Table>(text)
@@ -146,6 +158,16 @@ impl Settings {
     }
 }
 
+/// 설정 화면에 보이는 `찾을 말 => 바꿀 말` 한 줄을 좌우 쌍으로 나눈다.
+/// 사용자가 화살표를 `->`로 쓰는 경우도 같은 뜻으로 받아 준다.
+pub fn parse_replacement(line: &str) -> Option<(&str, &str)> {
+    let (from, to) = ["=>", "->"]
+        .iter()
+        .find_map(|separator| line.split_once(separator))?;
+    let from = from.trim();
+    (!from.is_empty()).then(|| (from, to.trim()))
+}
+
 fn default_recording_limit() -> u16 {
     30
 }
@@ -164,7 +186,32 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::Settings;
+    use super::{parse_replacement, Settings};
+
+    #[test]
+    fn replacement_lines_accept_both_arrows_and_drop_broken_ones() {
+        assert_eq!(
+            parse_replacement("비디오 스튜 => VideoStew"),
+            Some(("비디오 스튜", "VideoStew"))
+        );
+        assert_eq!(parse_replacement("지피티->GPT"), Some(("지피티", "GPT")));
+        assert_eq!(parse_replacement("지울 말 =>"), Some(("지울 말", "")));
+        assert_eq!(parse_replacement("=> 바꿀 말"), None);
+        assert_eq!(parse_replacement("화살표 없음"), None);
+    }
+
+    #[test]
+    fn replacements_apply_in_order_before_pasting() {
+        let settings = Settings::from_config(
+            "replacements = [\"비디오 스튜 => VideoStew\", \"VideoStew => 비디오스튜\"]",
+        )
+        .unwrap();
+        assert_eq!(
+            settings.apply_replacements("오늘 비디오 스튜 소식"),
+            "오늘 비디오스튜 소식"
+        );
+        assert_eq!(settings.apply_replacements("고칠 게 없다"), "고칠 게 없다");
+    }
 
     #[test]
     fn migrates_disabled_start_sound_to_zero_volume() {

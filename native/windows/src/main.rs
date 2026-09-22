@@ -2,6 +2,7 @@
 
 mod audio;
 mod debug_log;
+mod keys;
 mod mute;
 mod overlay;
 mod settings;

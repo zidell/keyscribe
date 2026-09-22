@@ -1,11 +1,11 @@
 use crate::{
     audio::Recording,
-    mute, overlay,
+    keys, mute, overlay,
     settings::{self, Provider, Settings},
     transcriber,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     mem, ptr,
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
@@ -45,8 +45,7 @@ const RESULT_MESSAGE: u32 = WM_APP + 3;
 const MODELS_MESSAGE: u32 = WM_APP + 4;
 const RIGHT_ALT_TIMER: usize = 3;
 const CHIME_FINISHED_MESSAGE: u32 = WM_APP + 5;
-const AUTO_SEND_DOWN_TIMER: usize = 4;
-const AUTO_SEND_UP_TIMER: usize = 5;
+const PASTE_TIMER: usize = 4;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
 const ID_SETTINGS: usize = 101;
 const ID_FOLDER: usize = 102;
@@ -61,6 +60,7 @@ const ID_ELEVENLABS_KEY: usize = 206;
 const ID_OPENAI_KEY: usize = 207;
 const ID_GROQ_KEY: usize = 209;
 const ID_LOG: usize = 208;
+const ID_REPLACEMENT_HELP: usize = 210;
 const SHORTCUTS: [(&str, &str, u16); 6] = [
     ("right_alt", "오른쪽 Alt", VK_RMENU),
     ("left_alt", "왼쪽 Alt", VK_LMENU),
@@ -84,17 +84,6 @@ fn is_recording_key(physical: u32, target: u32) -> bool {
     physical == target
 }
 
-fn summarize_recent(text: &str) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let length = normalized.chars().count();
-    if length <= 30 {
-        return normalized;
-    }
-    let start: String = normalized.chars().take(15).collect();
-    let end: String = normalized.chars().skip(length - 15).collect();
-    format!("{start}…{end}")
-}
-
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
@@ -107,9 +96,27 @@ mod shortcut_tests {
     }
 }
 
-unsafe fn tray_icon() -> (HICON, bool) {
-    let png = include_bytes!(concat!(env!("OUT_DIR"), "/keyscribe-tray.png"));
-    let custom = CreateIconFromResourceEx(
+/// 트레이 아이콘은 같은 그림을 상태별 색으로만 나눠 둔 것이다. 녹음 위젯을
+/// "표시 안 함"으로 둔 사용자에게는 이 색이 유일한 상태 표시다.
+struct TrayIcons {
+    idle: HICON,
+    recording: HICON,
+    transcribing: HICON,
+    owned: bool,
+}
+
+impl TrayIcons {
+    unsafe fn destroy(&self) {
+        if self.owned {
+            DestroyIcon(self.idle);
+            DestroyIcon(self.recording);
+            DestroyIcon(self.transcribing);
+        }
+    }
+}
+
+unsafe fn decode_icon(png: &[u8]) -> HICON {
+    CreateIconFromResourceEx(
         png.as_ptr(),
         png.len() as u32,
         1,
@@ -117,11 +124,35 @@ unsafe fn tray_icon() -> (HICON, bool) {
         32,
         32,
         LR_DEFAULTCOLOR,
-    );
-    if custom.is_null() {
-        (LoadIconW(ptr::null_mut(), IDI_APPLICATION), false)
-    } else {
-        (custom, true)
+    )
+}
+
+unsafe fn tray_icons() -> TrayIcons {
+    let decoded = [
+        include_bytes!(concat!(env!("OUT_DIR"), "/keyscribe-tray.png")).as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/keyscribe-tray-recording.png")).as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/keyscribe-tray-transcribing.png")).as_slice(),
+    ]
+    .map(|png| decode_icon(png));
+    if decoded.iter().all(|icon| !icon.is_null()) {
+        return TrayIcons {
+            idle: decoded[0],
+            recording: decoded[1],
+            transcribing: decoded[2],
+            owned: true,
+        };
+    }
+    for icon in decoded {
+        if !icon.is_null() {
+            DestroyIcon(icon);
+        }
+    }
+    let fallback = LoadIconW(ptr::null_mut(), IDI_APPLICATION);
+    TrayIcons {
+        idle: fallback,
+        recording: fallback,
+        transcribing: fallback,
+        owned: false,
     }
 }
 
@@ -132,10 +163,15 @@ mod icon_tests {
     #[test]
     fn custom_icon_loads() {
         unsafe {
-            let (icon, owned) = tray_icon();
-            assert!(!icon.is_null());
-            assert!(owned, "Windows did not decode the KeyScribe PNG icon");
-            DestroyIcon(icon);
+            let icons = tray_icons();
+            assert!(
+                icons.owned,
+                "Windows did not decode the KeyScribe PNG icons"
+            );
+            assert!(!icons.idle.is_null());
+            assert_ne!(icons.idle, icons.recording);
+            assert_ne!(icons.idle, icons.transcribing);
+            icons.destroy();
         }
     }
 }
@@ -169,7 +205,7 @@ fn language_options(selected: &str) -> Vec<(String, String)> {
 
 struct App {
     tray: NOTIFYICONDATAW,
-    owned_icon: bool,
+    icons: TrayIcons,
     hook: HHOOK,
     overlay: HWND,
     overlay_expires: Option<Instant>,
@@ -183,11 +219,13 @@ struct App {
     limit_sound_playing: Arc<AtomicBool>,
     transcription_cancelled: Option<Arc<AtomicBool>>,
     mute_before: Option<mute::MuteState>,
+    paste_steps: VecDeque<PasteStep>,
+    /// 누른 채로 대기 중인 키. 중간에 멈추면 이걸 되돌려 떼 준다.
+    paste_held: Vec<u16>,
     pressed: bool,
     generation: u64,
     transcribing: bool,
     status: String,
-    last_text: String,
 }
 
 struct Dialog {
@@ -209,6 +247,7 @@ struct Dialog {
     recording_time_limit: HWND,
     overlay_position: HWND,
     keyterms: HWND,
+    replacements: HWND,
     no_verbatim: HWND,
     mute: HWND,
     recording_start_sound_volume: HWND,
@@ -246,7 +285,7 @@ pub fn run() -> Result<(), String> {
         }
         let root_class = wide("KeyScribeNativeRoot");
         let settings_class = wide("KeyScribeNativeSettings");
-        let (icon, owned_icon) = tray_icon();
+        let icons = tray_icons();
         TASKBAR_CREATED.store(
             RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
             Ordering::Relaxed,
@@ -257,7 +296,7 @@ pub fn run() -> Result<(), String> {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: instance,
-            hIcon: icon,
+            hIcon: icons.idle,
             hCursor: LoadCursorW(ptr::null_mut(), IDC_ARROW),
             hbrBackground: ptr::null_mut(),
             lpszMenuName: ptr::null(),
@@ -302,13 +341,13 @@ pub fn run() -> Result<(), String> {
         tray.uID = 1;
         tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         tray.uCallbackMessage = TRAY_MESSAGE;
-        tray.hIcon = icon;
+        tray.hIcon = icons.idle;
         write_wide(&mut tray.szTip, "KeyScribe · 준비됨");
         let overlay = overlay::create(instance, hwnd);
         overlay::set_position(overlay, &settings.overlay_position);
         let state = Box::new(App {
             tray,
-            owned_icon,
+            icons,
             hook: ptr::null_mut(),
             overlay,
             overlay_expires: None,
@@ -322,11 +361,12 @@ pub fn run() -> Result<(), String> {
             limit_sound_playing: Arc::new(AtomicBool::new(false)),
             transcription_cancelled: None,
             mute_before: None,
+            paste_steps: VecDeque::new(),
+            paste_held: Vec::new(),
             pressed: false,
             generation: 0,
             transcribing: false,
             status: "준비됨".into(),
-            last_text: "없음".into(),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
         ROOT.store(hwnd as isize, Ordering::SeqCst);
@@ -580,27 +620,31 @@ unsafe extern "system" fn root_proc(
                 refresh_escape_capture(hwnd);
                 app(hwnd).transcription_cancelled = None;
                 match result.result {
-                    Ok(text) if !text.is_empty() => {
-                        crate::debug_log::log(|| {
-                            format!(
-                                "transcription completed characters={}",
-                                text.chars().count()
-                            )
-                        });
-                        hide_overlay(hwnd);
-                        app(hwnd).last_text = summarize_recent(&text);
-                        match paste(hwnd, &text, app(hwnd).settings.auto_send) {
-                            Ok(()) => set_status(hwnd, "완료"),
-                            Err(error) => {
-                                crate::debug_log::log(|| "paste failed".into());
-                                set_status(hwnd, &format!("붙여넣기 실패: {error}"));
+                    // 치환 규칙은 붙여넣기 직전, 전사 결과에 마지막으로 적용한다.
+                    Ok(transcript) => {
+                        let text = app(hwnd).settings.apply_replacements(&transcript);
+                        if text.is_empty() {
+                            crate::debug_log::log(|| {
+                                "transcription completed with empty text".into()
+                            });
+                            hide_overlay(hwnd);
+                            set_status(hwnd, "인식된 음성이 없습니다");
+                        } else {
+                            crate::debug_log::log(|| {
+                                format!(
+                                    "transcription completed characters={}",
+                                    text.chars().count()
+                                )
+                            });
+                            hide_overlay(hwnd);
+                            match paste(hwnd, &text, app(hwnd).settings.auto_send) {
+                                Ok(()) => set_status(hwnd, "완료"),
+                                Err(error) => {
+                                    crate::debug_log::log(|| "paste failed".into());
+                                    set_status(hwnd, &format!("붙여넣기 실패: {error}"));
+                                }
                             }
                         }
-                    }
-                    Ok(_) => {
-                        crate::debug_log::log(|| "transcription completed with empty text".into());
-                        hide_overlay(hwnd);
-                        set_status(hwnd, "인식된 음성이 없습니다");
                     }
                     Err(error) => {
                         crate::debug_log::log(|| "transcription failed after retries".into());
@@ -689,15 +733,12 @@ unsafe extern "system" fn root_proc(
                     crate::debug_log::log(|| "right_alt hold threshold: queue down".into());
                     PostMessageW(hwnd, KEY_MESSAGE, VK_RMENU as usize, 1);
                 }
-            } else if wparam == AUTO_SEND_DOWN_TIMER {
-                KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
-                send_keys(&[(VK_RETURN, false)]);
-                if SetTimer(hwnd, AUTO_SEND_UP_TIMER, 40, None) == 0 {
-                    send_keys(&[(VK_RETURN, true)]);
+            } else if wparam == PASTE_TIMER {
+                KillTimer(hwnd, PASTE_TIMER);
+                if let Err(error) = run_paste_step(hwnd) {
+                    crate::debug_log::log(|| "paste step failed".into());
+                    set_status(hwnd, &format!("붙여넣기 실패: {error}"));
                 }
-            } else if wparam == AUTO_SEND_UP_TIMER {
-                KillTimer(hwnd, AUTO_SEND_UP_TIMER);
-                send_keys(&[(VK_RETURN, true)]);
             }
             0
         }
@@ -707,9 +748,7 @@ unsafe extern "system" fn root_proc(
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             ROOT.store(0, Ordering::SeqCst);
             Shell_NotifyIconW(NIM_DELETE, &owned.tray);
-            if owned.owned_icon {
-                DestroyIcon(owned.tray.hIcon);
-            }
+            owned.icons.destroy();
             if !owned.hook.is_null() {
                 UnhookWindowsHookEx(owned.hook);
             }
@@ -724,9 +763,15 @@ unsafe extern "system" fn root_proc(
             }
             KillTimer(hwnd, 1);
             KillTimer(hwnd, RIGHT_ALT_TIMER);
-            KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
-            if KillTimer(hwnd, AUTO_SEND_UP_TIMER) != 0 {
-                send_keys(&[(VK_RETURN, true)]);
+            KillTimer(hwnd, PASTE_TIMER);
+            if !owned.paste_held.is_empty() {
+                let release: Vec<(u16, bool)> = owned
+                    .paste_held
+                    .iter()
+                    .rev()
+                    .map(|key| (*key, true))
+                    .collect();
+                send_keys(&release);
             }
             if RIGHT_ALT_STATE.swap(0, Ordering::Relaxed) == 3 {
                 send_keys(&[(VK_RMENU, true)]);
@@ -752,12 +797,6 @@ unsafe fn tray_menu(hwnd: HWND) {
         MF_STRING | MF_GRAYED,
         0,
         wide(&format!("상태: {}", app(hwnd).status)).as_ptr(),
-    );
-    AppendMenuW(
-        menu,
-        MF_STRING | MF_GRAYED,
-        0,
-        wide(&format!("최근 변환: {}", app(hwnd).last_text)).as_ptr(),
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, wide("설정...").as_ptr());
@@ -829,6 +868,13 @@ unsafe fn write_wide<const N: usize>(buffer: &mut [u16; N], text: &str) {
 unsafe fn set_status(hwnd: HWND, status: &str) {
     let state = app(hwnd);
     state.status = status.into();
+    state.tray.hIcon = if state.recording.is_some() {
+        state.icons.recording
+    } else if state.transcribing {
+        state.icons.transcribing
+    } else {
+        state.icons.idle
+    };
     write_wide(&mut state.tray.szTip, &format!("KeyScribe · {status}"));
     Shell_NotifyIconW(NIM_MODIFY, &state.tray);
 }
@@ -936,6 +982,7 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
 
 unsafe fn start(hwnd: HWND) {
     crate::debug_log::log(|| "recording start requested".into());
+    abort_paste(hwnd);
     if app(hwnd).limit_sound_playing.load(Ordering::SeqCst) {
         set_status(hwnd, "종료음 재생 중");
         return;
@@ -1111,8 +1158,86 @@ unsafe fn cancel(hwnd: HWND) {
     transient_overlay(hwnd, overlay::State::Cancelled);
 }
 
+/// 붙여넣기 한 번을 이루는 동작 하나. 물리 키처럼 잠깐 눌렀다 떼야 받아들이는
+/// 앱이 있어서 누르기와 떼기를 나눠 둔다.
+enum PasteStep {
+    Text(String),
+    KeyDown(Vec<u16>),
+    KeyUp(Vec<u16>),
+}
+
+impl PasteStep {
+    /// 다음 동작까지 기다릴 시간(ms).
+    fn delay(&self) -> u32 {
+        match self {
+            Self::Text(_) => 400,
+            Self::KeyDown(_) => 40,
+            Self::KeyUp(_) => 120,
+        }
+    }
+}
+
+/// 진행 중인 붙여넣기를 멈추고, 누른 채였던 키를 되돌려 떼 준다.
+unsafe fn abort_paste(hwnd: HWND) {
+    KillTimer(hwnd, PASTE_TIMER);
+    app(hwnd).paste_steps.clear();
+    let held = mem::take(&mut app(hwnd).paste_held);
+    if !held.is_empty() {
+        let release: Vec<(u16, bool)> = held.iter().rev().map(|key| (*key, true)).collect();
+        send_keys(&release);
+    }
+}
+
 unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
-    KillTimer(hwnd, AUTO_SEND_DOWN_TIMER);
+    abort_paste(hwnd);
+    let mut steps = VecDeque::new();
+    for segment in keys::segments(text) {
+        match segment {
+            keys::Segment::Text(value) => steps.push_back(PasteStep::Text(value)),
+            keys::Segment::Key { down, up } => {
+                steps.push_back(PasteStep::KeyDown(down));
+                steps.push_back(PasteStep::KeyUp(up));
+            }
+        }
+    }
+    // 자동 Enter도 마지막 키 조각일 뿐이라 키 토큰과 같은 경로로 내보낸다.
+    if auto_send {
+        steps.push_back(PasteStep::KeyDown(vec![VK_RETURN]));
+        steps.push_back(PasteStep::KeyUp(vec![VK_RETURN]));
+    }
+    app(hwnd).paste_steps = steps;
+    run_paste_step(hwnd)
+}
+
+unsafe fn run_paste_step(hwnd: HWND) -> Result<(), String> {
+    let Some(step) = app(hwnd).paste_steps.pop_front() else {
+        return Ok(());
+    };
+    match &step {
+        PasteStep::Text(value) => paste_text(value)?,
+        PasteStep::KeyDown(codes) => {
+            app(hwnd).paste_held = codes.clone();
+            let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, false)).collect();
+            send_keys(&events);
+        }
+        PasteStep::KeyUp(codes) => {
+            let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, true)).collect();
+            send_keys(&events);
+            app(hwnd).paste_held.clear();
+        }
+    }
+    if app(hwnd).paste_steps.is_empty() {
+        return Ok(());
+    }
+    // 붙여넣기를 비동기로 반영하는 편집기가 있어, 다음 조각 전에 잠시 기다린다.
+    if SetTimer(hwnd, PASTE_TIMER, step.delay(), None) == 0 {
+        app(hwnd).paste_steps.clear();
+        return Err("다음 붙여넣기를 예약할 수 없습니다".into());
+    }
+    Ok(())
+}
+
+unsafe fn paste_text(text: &str) -> Result<(), String> {
     if OpenClipboard(ptr::null_mut()) == 0 {
         return Err("클립보드를 열 수 없습니다".into());
     }
@@ -1150,13 +1275,6 @@ unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
             (b'V' as u16, true),
             (VK_CONTROL, true),
         ]);
-        if auto_send {
-            // Editors can apply pasted text asynchronously. Keep the UI responsive
-            // while waiting, then hold Return briefly like a physical key press.
-            if SetTimer(hwnd, AUTO_SEND_DOWN_TIMER, 400, None) == 0 {
-                return Err("Enter 입력을 예약할 수 없습니다".into());
-            }
-        }
     }
     Ok(())
 }
@@ -1182,6 +1300,42 @@ unsafe fn send_keys(keys: &[(u16, bool)]) {
         inputs.as_ptr(),
         mem::size_of::<INPUT>() as i32,
     );
+}
+
+/// 설정 창의 "사용법" 버튼이 띄우는 안내. 메시지 상자는 줄바꿈을 CRLF로 받는다.
+fn replacement_help() -> String {
+    [
+        "인식된 문장을 붙여넣기 직전에 고칩니다. 한 줄에 규칙 하나씩,",
+        "\"찾을 말 => 바꿀 말\" 형식으로 적습니다. => 대신 ->도 됩니다.",
+        "",
+        "        비디오 스튜 => VideoStew",
+        "        지피티 => GPT",
+        "        음 =>            (바꿀 말을 비우면 그 말을 지웁니다)",
+        "",
+        "· => 앞뒤 공백은 알아서 정리합니다.",
+        "· 규칙은 적힌 순서대로 차례로 적용됩니다.",
+        "",
+        "■ 키 입력 넣기",
+        "",
+        "바꿀 말에 대괄호로 키 이름을 적으면, 그 자리에서 실제로 그 키를 누릅니다.",
+        "",
+        "        전송해줘 => [enter]",
+        "        검색창 => [ctrl+k]",
+        "        목록으로 => 첫째[enter]둘째[enter]셋째",
+        "",
+        "쓸 수 있는 키",
+        "        {keys}",
+        "",
+        "조합키",
+        "        ctrl, alt, shift, win 을 +로 이어 씁니다. 예) [ctrl+shift+p]",
+        "",
+        "· 대소문자와 공백은 따지지 않습니다. [Ctrl + K], [ctrl-k], [Page Up] 모두 됩니다.",
+        "· a~z, 0~9은 조합키와 같이 쓸 때만 키로 봅니다. [k]는 그냥 글자로 붙습니다.",
+        "· 모르는 이름이면 키로 보지 않고 대괄호째 그대로 붙여넣습니다.",
+        "· 키를 섞으면 조각마다 잠깐 기다렸다 이어서 붙이므로, 길면 조금 느립니다.",
+    ]
+    .join("\r\n")
+    .replace("{keys}", keys::KEY_NAMES)
 }
 
 unsafe fn info(owner: HWND, message: &str) {
@@ -1245,7 +1399,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        742,
+        807,
         root,
         ptr::null_mut(),
         instance,
@@ -1447,7 +1601,7 @@ unsafe fn show_settings(root: HWND) {
         165,
         308,
         365,
-        200,
+        225,
         0,
     );
     for (_, title) in overlay::POSITIONS {
@@ -1468,21 +1622,46 @@ unsafe fn show_settings(root: HWND) {
         })
         .unwrap_or(0);
     SendMessageW(overlay_position, CB_SETCURSEL, selected_position, 0);
-    label("고유명사 (한 줄에 하나)", 350);
+    let word_list_style = WS_CHILD
+        | WS_VISIBLE
+        | WS_BORDER
+        | WS_VSCROLL
+        | ES_MULTILINE as u32
+        | ES_AUTOVSCROLL as u32;
+    label("인식 단어 (한 줄에 하나)", 350);
     let keyterms = control(
         dialog,
         "EDIT",
         &settings.keyterms.join("\r\n"),
-        WS_CHILD
-            | WS_VISIBLE
-            | WS_BORDER
-            | WS_VSCROLL
-            | ES_MULTILINE as u32
-            | ES_AUTOVSCROLL as u32,
+        word_list_style,
         165,
         348,
         365,
-        100,
+        80,
+        0,
+    );
+    label("치환 단어", 431);
+    label("찾을 말 => 바꿀 말", 455);
+    control(
+        dialog,
+        "BUTTON",
+        "사용법",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+        18,
+        479,
+        80,
+        22,
+        ID_REPLACEMENT_HELP,
+    );
+    let replacements = control(
+        dialog,
+        "EDIT",
+        &settings.replacements.join("\r\n"),
+        word_list_style,
+        165,
+        431,
+        365,
+        80,
         0,
     );
     let no_verbatim = control(
@@ -1491,7 +1670,7 @@ unsafe fn show_settings(root: HWND) {
         "군더더기 말 제거 (ElevenLabs)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        468,
+        533,
         365,
         25,
         0,
@@ -1508,7 +1687,7 @@ unsafe fn show_settings(root: HWND) {
         "녹음 중 시스템 소리 음소거",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        503,
+        568,
         365,
         25,
         0,
@@ -1525,20 +1704,20 @@ unsafe fn show_settings(root: HWND) {
         "붙여넣은 뒤 Enter 입력",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        538,
+        603,
         365,
         25,
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
-    label("녹음 시작 효과음", 573);
+    label("녹음 시작 효과음", 638);
     let recording_start_sound_volume = control(
         dialog,
         "msctls_trackbar32",
         "",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
         165,
-        568,
+        633,
         300,
         36,
         0,
@@ -1557,7 +1736,7 @@ unsafe fn show_settings(root: HWND) {
         &format!("{}%", settings.recording_start_sound_volume),
         WS_CHILD | WS_VISIBLE,
         475,
-        573,
+        638,
         55,
         25,
         0,
@@ -1568,7 +1747,7 @@ unsafe fn show_settings(root: HWND) {
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        612,
+        677,
         365,
         26,
         0,
@@ -1579,7 +1758,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        652,
+        717,
         85,
         32,
         ID_SAVE,
@@ -1590,7 +1769,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        652,
+        717,
         85,
         32,
         ID_CANCEL,
@@ -1614,6 +1793,7 @@ unsafe fn show_settings(root: HWND) {
         recording_time_limit,
         overlay_position,
         keyterms,
+        replacements,
         no_verbatim,
         mute,
         recording_start_sound_volume,
@@ -1850,6 +2030,7 @@ unsafe extern "system" fn dialog_proc(
                 }
                 ID_OPENAI_KEY => open_api_key_page(hwnd, "https://platform.openai.com/api-keys"),
                 ID_GROQ_KEY => open_api_key_page(hwnd, "https://console.groq.com/keys"),
+                ID_REPLACEMENT_HELP => info(hwnd, &replacement_help()),
                 ID_API_KEY if (wparam >> 16) == EN_CHANGE as usize => {
                     dialog_state(hwnd).request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
                     dialog_state(hwnd).pending_key = None;
@@ -1930,6 +2111,13 @@ unsafe fn save_dialog(hwnd: HWND) {
         .filter(|term| !term.is_empty())
         .take(100)
         .map(str::to_owned)
+        .collect();
+    updated.replacements = text(dialog.replacements)
+        .lines()
+        .filter_map(|line| {
+            settings::parse_replacement(line).map(|(from, to)| format!("{from} => {to}"))
+        })
+        .take(100)
         .collect();
     updated.no_verbatim = SendMessageW(dialog.no_verbatim, BM_GETCHECK, 0, 0) == 1;
     updated.mute_during_recording = SendMessageW(dialog.mute, BM_GETCHECK, 0, 0) == 1;
