@@ -88,7 +88,7 @@ try {
             Copy-Item -LiteralPath $built -Destination $output -Force
             $previousLog = [Environment]::GetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', 'Process')
             try {
-                [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', (Join-Path $root 'dist-native\windows-debug.log'), 'Process')
+                [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', (Join-Path $root 'dist-native\logs\debug.log'), 'Process')
                 $app = Start-Process -FilePath $output -WorkingDirectory $root -WindowStyle Hidden -PassThru
             } finally {
                 [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', $previousLog, 'Process')

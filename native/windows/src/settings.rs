@@ -36,6 +36,11 @@ pub struct Settings {
         deserialize_with = "deserialize_recording_limit"
     )]
     pub recording_time_limit_minutes: u16,
+    #[serde(
+        default = "default_log_retention",
+        deserialize_with = "deserialize_log_retention"
+    )]
+    pub log_retention_hours: u32,
     pub auto_send: bool,
     pub language: String,
     pub keyterms: Vec<String>,
@@ -59,6 +64,7 @@ impl Default for Settings {
             shortcut: "right_option".into(),
             recording_control: "hold".into(),
             recording_time_limit_minutes: default_recording_limit(),
+            log_retention_hours: default_log_retention(),
             auto_send: true,
             language: "ko".into(),
             keyterms: Vec::new(),
@@ -168,6 +174,30 @@ pub fn parse_replacement(line: &str) -> Option<(&str, &str)> {
     (!from.is_empty()).then(|| (from, to.trim()))
 }
 
+/// 로그·녹음 원본 보존 기간(시간)과 설정 화면 표시 이름.
+pub const LOG_RETENTION_OPTIONS: [(u32, &str); 4] =
+    [(1, "1시간"), (24, "1일"), (168, "7일"), (720, "30일")];
+
+fn default_log_retention() -> u32 {
+    168
+}
+
+fn deserialize_log_retention<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_integer()
+        .and_then(|hours| u32::try_from(hours).ok())
+        .filter(|hours| {
+            LOG_RETENTION_OPTIONS
+                .iter()
+                .any(|(option, _)| option == hours)
+        })
+        .unwrap_or_else(default_log_retention))
+}
+
 fn default_recording_limit() -> u16 {
     30
 }
@@ -226,6 +256,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.recording_start_sound_volume, 150);
+    }
+
+    #[test]
+    fn log_retention_defaults_to_a_week_and_rejects_unknown_values() {
+        let hours = |text| Settings::from_config(text).unwrap().log_retention_hours;
+        assert_eq!(hours(""), 168);
+        assert_eq!(hours("log_retention_hours = 720"), 720);
+        assert_eq!(hours("log_retention_hours = 5"), 168);
+        assert_eq!(hours("log_retention_hours = \"long\""), 168);
     }
 
     #[test]

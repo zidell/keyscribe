@@ -13,7 +13,7 @@ KeyScribe es una aplicación de dictado que transcribe las grabaciones del micr�
 - Aunque ocultes el widget, el icono de la barra de menús (bandeja) se vuelve rojo mientras grabas y naranja mientras transcribe.
 - Permite cambiar el atajo, el idioma, el modelo, el volumen del sonido, la posición del widget de grabación y la pulsación automática de Enter en Configuración.
 - Las **palabras de reconocimiento** mejoran la precisión con los nombres propios, y las **palabras de sustitución** (`buscar => reemplazar`) corrigen errores persistentes justo antes de pegar. Si escribes `[enter]` o `[cmd+k]` en la sustitución, esa tecla se pulsa de verdad en ese punto.
-- **Ver registros** en el menú abre los registros de diagnóstico de las últimas 24 horas. Las claves de API y el contenido grabado o transcrito nunca se escriben en ellos.
+- Las grabaciones originales (WAV) se conservan para que un fallo de red o de la API no haga perder lo que dijiste. En Configuración eliges cuánto se guardan los registros y las grabaciones (1 hora, 1 día, 7 días o 30 días; 7 días por defecto) y los más antiguos se borran solos. **Carpeta de registros y grabaciones** en el menú las abre junto con el registro de diagnóstico. Las claves de API y el contenido transcrito nunca se escriben en los registros.
 
 ## Por qué lo hice
 
@@ -101,10 +101,10 @@ Las claves de Groq pertenecen al proyecto seleccionado y el nivel gratuito tiene
 
 ## Solución de problemas
 
-Puedes consultar el estado y los errores en el menú de la barra de menús o de la bandeja. **Ver registros** abre el registro de diagnóstico de la aplicación.
+Puedes consultar el estado y los errores en el menú de la barra de menús o de la bandeja. **Carpeta de registros y grabaciones** abre la carpeta con el registro de diagnóstico (`debug.log`) y las grabaciones originales (`recording-*.wav`).
 
-- macOS: `~/Library/Application Support/keyscribe/debug.log`
-- Windows: `%APPDATA%\keyscribe\debug.log`
-- Ejecuciones de desarrollo: `dist-native/macos-debug.log`, `dist-native/windows-debug.log`
+- macOS: `~/Library/Application Support/keyscribe/logs/`
+- Windows: `%APPDATA%\keyscribe\logs\`
+- Ejecuciones de desarrollo: `dist-native/logs/`
 
 Los registros de la aplicación de inicio de sesión de macOS y de la compilación con vigilancia de fuentes se guardan en `dist-native/app.log` y `dist-native/watch.log`. El [aviso de privacidad](docs/privacy.md) explica cómo se envía el audio y se almacenan las claves de API. El código fuente está disponible bajo la [licencia MIT](LICENSE).

@@ -13,7 +13,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 - 위젯을 꺼도 메뉴 막대(트레이) 아이콘이 녹음 중에는 빨간색, 변환 중에는 주황색으로 바뀝니다.
 - 설정에서 단축키, 언어, 모델, 효과음 음량, 녹음 위젯 위치, 자동 Enter 입력을 바꿀 수 있습니다.
 - **인식 단어**로 고유명사 인식률을 높이고, **치환 단어**(`찾을 말 => 바꿀 말`)로 끝내 틀리게 들리는 말을 붙여넣기 직전에 바로잡습니다. 바꿀 말에 `[enter]`, `[cmd+k]`처럼 적으면 그 자리에서 실제 키를 누릅니다.
-- 메뉴의 **로그 보기**에서 최근 24시간의 진단 로그를 열 수 있습니다. API 키와 녹음·변환 내용은 로그에 남기지 않습니다.
+- 전사가 네트워크 오류 등으로 실패해도 녹음을 잃지 않도록 녹음 원본(WAV)을 보관합니다. 보존 기간은 설정에서 1시간·1일·7일·30일 중 고를 수 있고(기본 7일), 지난 로그와 녹음은 자동으로 지웁니다. 메뉴의 **로그 및 녹음 원본 폴더**에서 진단 로그와 함께 열 수 있습니다. API 키와 변환 내용은 로그에 남기지 않습니다.
 
 ## 만든 이유
 
@@ -101,11 +101,11 @@ Groq 키는 선택한 프로젝트에 귀속되고 무료 tier에는 요청·오
 
 ## 문제 확인
 
-앱의 상태와 오류는 메뉴 막대 또는 트레이 메뉴에서 확인할 수 있습니다. 메뉴의 **로그 보기**는 앱 진단 로그를 엽니다.
+앱의 상태와 오류는 메뉴 막대 또는 트레이 메뉴에서 확인할 수 있습니다. 메뉴의 **로그 및 녹음 원본 폴더**는 진단 로그(`debug.log`)와 녹음 원본(`recording-*.wav`)이 있는 폴더를 엽니다.
 
-- macOS: `~/Library/Application Support/keyscribe/debug.log`
-- Windows: `%APPDATA%\keyscribe\debug.log`
-- 개발 실행: `dist-native/macos-debug.log`, `dist-native/windows-debug.log`
+- macOS: `~/Library/Application Support/keyscribe/logs/`
+- Windows: `%APPDATA%\keyscribe\logs\`
+- 개발 실행: `dist-native/logs/`
 
 macOS 로그인 앱과 소스 감시 빌드 로그는 `dist-native/app.log`, `dist-native/watch.log`에 저장됩니다.
 

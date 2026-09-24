@@ -13,7 +13,7 @@ KeyScribe is a voice-input app that transcribes microphone recordings and pastes
 - Even with the widget hidden, the menu bar (tray) icon turns red while recording and orange while transcribing.
 - Lets you change the shortcut, language, model, sound-effect volume, recording-widget position, and automatic Enter key in Settings.
 - **Recognition words** improve accuracy for proper nouns, and **replacement words** (`find => replace`) fix stubborn mishearings right before pasting. Write `[enter]` or `[cmd+k]` in the replacement to press that key right there.
-- **View Logs** in the menu opens diagnostic logs from the last 24 hours. API keys and recorded or transcribed content are never written to the logs.
+- Original recordings (WAV) are kept so a network or API failure never loses what you said. Choose how long logs and recordings are kept in Settings (1 hour, 1 day, 7 days, or 30 days; 7 days by default); older ones are deleted automatically. **Logs & Recordings Folder** in the menu opens them together with the diagnostic log. API keys and transcribed content are never written to the logs.
 
 ## Why I made it
 
@@ -101,11 +101,11 @@ Groq keys belong to the selected project, and the free tier has request and audi
 
 ## Troubleshooting
 
-You can check app status and errors in the menu-bar or tray menu. **View Logs** in that menu opens the app's diagnostic log.
+You can check app status and errors in the menu-bar or tray menu. **Logs & Recordings Folder** in that menu opens the folder holding the diagnostic log (`debug.log`) and the original recordings (`recording-*.wav`).
 
-- macOS: `~/Library/Application Support/keyscribe/debug.log`
-- Windows: `%APPDATA%\keyscribe\debug.log`
-- Development runs: `dist-native/macos-debug.log`, `dist-native/windows-debug.log`
+- macOS: `~/Library/Application Support/keyscribe/logs/`
+- Windows: `%APPDATA%\keyscribe\logs\`
+- Development runs: `dist-native/logs/`
 
 Logs for the macOS login app and source-watch build are stored in `dist-native/app.log` and `dist-native/watch.log`.
 

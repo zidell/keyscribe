@@ -48,7 +48,6 @@ const CHIME_FINISHED_MESSAGE: u32 = WM_APP + 5;
 const PASTE_TIMER: usize = 4;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
 const ID_SETTINGS: usize = 101;
-const ID_FOLDER: usize = 102;
 const ID_EXIT: usize = 103;
 const ID_RESTART: usize = 104;
 const ID_SAVE: usize = 201;
@@ -217,15 +216,33 @@ struct App {
     recording_deadline: Option<Instant>,
     recording_seconds_shown: Option<u64>,
     limit_sound_playing: Arc<AtomicBool>,
-    transcription_cancelled: Option<Arc<AtomicBool>>,
+    /// 녹음한 순서대로 쌓인 전사 작업. 전사는 겹쳐 돌 수 있지만 붙여넣기는
+    /// 맨 앞 작업부터 차례로 한다.
+    jobs: VecDeque<Job>,
+    next_job: u64,
+    /// 녹음 중이거나 앞선 결과를 기다리느라 미뤄 둔 실패 메시지.
+    pending_failure: Option<String>,
     mute_before: Option<mute::MuteState>,
     paste_steps: VecDeque<PasteStep>,
     /// 누른 채로 대기 중인 키. 중간에 멈추면 이걸 되돌려 떼 준다.
     paste_held: Vec<u16>,
+    /// 붙여넣기 타이머가 걸려 있는지. 마지막 조각 뒤에도 잠시 기다린다.
+    paste_scheduled: bool,
     pressed: bool,
     generation: u64,
-    transcribing: bool,
     status: String,
+}
+
+impl App {
+    fn transcribing(&self) -> bool {
+        !self.jobs.is_empty()
+    }
+}
+
+struct Job {
+    id: u64,
+    cancelled: Arc<AtomicBool>,
+    result: Option<Result<String, String>>,
 }
 
 struct Dialog {
@@ -245,6 +262,7 @@ struct Dialog {
     shortcut: HWND,
     mode: HWND,
     recording_time_limit: HWND,
+    log_retention: HWND,
     overlay_position: HWND,
     keyterms: HWND,
     replacements: HWND,
@@ -256,7 +274,7 @@ struct Dialog {
 }
 
 struct ResultMessage {
-    generation: u64,
+    job: u64,
     result: Result<String, String>,
 }
 struct ModelsMessage {
@@ -334,6 +352,7 @@ pub fn run() -> Result<(), String> {
         }
         crate::debug_log::log(|| "root window created".into());
         let settings = Settings::load();
+        crate::debug_log::set_retention(settings.log_retention_hours);
         TARGET_KEY.store(shortcut_key(&settings.shortcut), Ordering::SeqCst);
         let mut tray = NOTIFYICONDATAW::default();
         tray.cbSize = mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -359,13 +378,15 @@ pub fn run() -> Result<(), String> {
             recording_deadline: None,
             recording_seconds_shown: None,
             limit_sound_playing: Arc::new(AtomicBool::new(false)),
-            transcription_cancelled: None,
+            jobs: VecDeque::new(),
+            next_job: 0,
+            pending_failure: None,
             mute_before: None,
             paste_steps: VecDeque::new(),
             paste_held: Vec::new(),
+            paste_scheduled: false,
             pressed: false,
             generation: 0,
-            transcribing: false,
             status: "준비됨".into(),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -418,7 +439,7 @@ fn capture_escape(down: bool) -> bool {
 
 unsafe fn refresh_escape_capture(hwnd: HWND) {
     ESCAPE_CAPTURE.store(
-        app(hwnd).recording.is_some() || app(hwnd).transcribing,
+        app(hwnd).recording.is_some() || app(hwnd).transcribing(),
         Ordering::Relaxed,
     );
 }
@@ -614,45 +635,8 @@ unsafe extern "system" fn root_proc(
             0
         }
         RESULT_MESSAGE => {
-            let result = Box::from_raw(lparam as *mut ResultMessage);
-            if result.generation == app(hwnd).generation && app(hwnd).transcribing {
-                app(hwnd).transcribing = false;
-                refresh_escape_capture(hwnd);
-                app(hwnd).transcription_cancelled = None;
-                match result.result {
-                    // 치환 규칙은 붙여넣기 직전, 전사 결과에 마지막으로 적용한다.
-                    Ok(transcript) => {
-                        let text = app(hwnd).settings.apply_replacements(&transcript);
-                        if text.is_empty() {
-                            crate::debug_log::log(|| {
-                                "transcription completed with empty text".into()
-                            });
-                            hide_overlay(hwnd);
-                            set_status(hwnd, "인식된 음성이 없습니다");
-                        } else {
-                            crate::debug_log::log(|| {
-                                format!(
-                                    "transcription completed characters={}",
-                                    text.chars().count()
-                                )
-                            });
-                            hide_overlay(hwnd);
-                            match paste(hwnd, &text, app(hwnd).settings.auto_send) {
-                                Ok(()) => set_status(hwnd, "완료"),
-                                Err(error) => {
-                                    crate::debug_log::log(|| "paste failed".into());
-                                    set_status(hwnd, &format!("붙여넣기 실패: {error}"));
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        crate::debug_log::log(|| "transcription failed after retries".into());
-                        set_status(hwnd, &error);
-                        transient_overlay(hwnd, overlay::State::Failed);
-                    }
-                }
-            }
+            let message = Box::from_raw(lparam as *mut ResultMessage);
+            complete_job(hwnd, message.job, message.result);
             0
         }
         MODELS_MESSAGE => {
@@ -752,8 +736,8 @@ unsafe extern "system" fn root_proc(
             if !owned.hook.is_null() {
                 UnhookWindowsHookEx(owned.hook);
             }
-            if let Some(cancelled) = &owned.transcription_cancelled {
-                cancelled.store(true, Ordering::Relaxed);
+            for job in &owned.jobs {
+                job.cancelled.store(true, Ordering::Relaxed);
             }
             mute::restore(owned.mute_before);
             KillTimer(hwnd, DEV_STOP_TIMER);
@@ -800,8 +784,12 @@ unsafe fn tray_menu(hwnd: HWND) {
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, wide("설정...").as_ptr());
-    AppendMenuW(menu, MF_STRING, ID_FOLDER, wide("설정 폴더 열기").as_ptr());
-    AppendMenuW(menu, MF_STRING, ID_LOG, wide("로그 보기").as_ptr());
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_LOG,
+        wide("로그 및 녹음 원본 폴더").as_ptr(),
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(
         menu,
@@ -837,11 +825,6 @@ unsafe fn tray_menu(hwnd: HWND) {
 unsafe fn tray_command(hwnd: HWND, command: usize) {
     match command {
         ID_SETTINGS => show_settings(hwnd),
-        ID_FOLDER => {
-            let _ = std::process::Command::new("explorer.exe")
-                .arg(settings::directory())
-                .spawn();
-        }
         ID_LOG => open_log(hwnd),
         ID_RESTART => {
             match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn()) {
@@ -870,7 +853,7 @@ unsafe fn set_status(hwnd: HWND, status: &str) {
     state.status = status.into();
     state.tray.hIcon = if state.recording.is_some() {
         state.icons.recording
-    } else if state.transcribing {
+    } else if state.transcribing() {
         state.icons.transcribing
     } else {
         state.icons.idle
@@ -944,13 +927,13 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
         format!(
             "handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}",
             app(hwnd).recording.is_some(),
-            app(hwnd).transcribing,
+            app(hwnd).transcribing(),
             app(hwnd).pressed,
             app(hwnd).settings.recording_control
         )
     });
     if key == VK_ESCAPE as u32 && down {
-        if app(hwnd).recording.is_some() || app(hwnd).transcribing {
+        if app(hwnd).recording.is_some() || app(hwnd).transcribing() {
             cancel(hwnd);
         }
         return;
@@ -963,10 +946,10 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
             return;
         }
         app(hwnd).pressed = true;
-        if app(hwnd).recording.is_none() && !app(hwnd).transcribing {
+        // 앞선 녹음을 변환하는 중이어도 새 녹음은 바로 받는다.
+        if app(hwnd).recording.is_none() {
             start(hwnd);
-        } else if app(hwnd).recording.is_some() && app(hwnd).settings.recording_control == "toggle"
-        {
+        } else if app(hwnd).settings.recording_control == "toggle" {
             stop(hwnd, false);
         }
     } else {
@@ -982,7 +965,6 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
 
 unsafe fn start(hwnd: HWND) {
     crate::debug_log::log(|| "recording start requested".into());
-    abort_paste(hwnd);
     if app(hwnd).limit_sound_playing.load(Ordering::SeqCst) {
         set_status(hwnd, "종료음 재생 중");
         return;
@@ -1103,6 +1085,7 @@ unsafe fn stop(hwnd: HWND, limit_reached: bool) {
         Ok(path) => path,
         Err(error) => {
             set_status(hwnd, &format!("녹음 오류: {error}"));
+            settle_overlay(hwnd);
             return;
         }
     };
@@ -1112,28 +1095,35 @@ unsafe fn stop(hwnd: HWND, limit_reached: bool) {
     {
         let _ = std::fs::remove_file(&wav);
         set_status(hwnd, "녹음된 음성이 없습니다");
+        settle_overlay(hwnd);
         return;
     }
-    app(hwnd).transcribing = true;
+    crate::debug_log::log(|| {
+        format!(
+            "recording saved={}",
+            wav.file_name().unwrap_or_default().to_string_lossy()
+        )
+    });
     let cancelled = Arc::new(AtomicBool::new(false));
-    app(hwnd).transcription_cancelled = Some(cancelled.clone());
-    app(hwnd).generation += 1;
-    let generation = app(hwnd).generation;
+    app(hwnd).next_job += 1;
+    let job = app(hwnd).next_job;
+    app(hwnd).jobs.push_back(Job {
+        id: job,
+        cancelled: cancelled.clone(),
+        result: None,
+    });
     let settings = app(hwnd).settings.clone();
-    set_status(
-        hwnd,
-        if limit_reached {
-            "시간 제한 도달 · 변환 중"
-        } else {
-            "변환 중 · Esc 취소"
-        },
-    );
+    if limit_reached {
+        set_status(hwnd, "시간 제한 도달 · 변환 중");
+    } else {
+        set_status(hwnd, &transcribing_status(hwnd));
+    }
     active_overlay(hwnd, overlay::State::Transcribing);
     let root = hwnd as isize;
     std::thread::spawn(move || {
+        // 녹음 원본은 전사 결과와 관계없이 로그 폴더에 남겨 둔다.
         let result = transcriber::transcribe(&wav, &settings, &cancelled);
-        let _ = std::fs::remove_file(&wav);
-        let message = Box::into_raw(Box::new(ResultMessage { generation, result }));
+        let message = Box::into_raw(Box::new(ResultMessage { job, result }));
         unsafe {
             if PostMessageW(root as HWND, RESULT_MESSAGE, 0, message as isize) == 0 {
                 drop(Box::from_raw(message));
@@ -1142,18 +1132,128 @@ unsafe fn stop(hwnd: HWND, limit_reached: bool) {
     });
 }
 
-unsafe fn cancel(hwnd: HWND) {
-    crate::debug_log::log(|| "recording cancelled; restoring audio".into());
-    app(hwnd).generation += 1;
-    if let Some(cancelled) = app(hwnd).transcription_cancelled.take() {
-        cancelled.store(true, Ordering::Relaxed);
+fn transcribing_status_text(pending: usize) -> String {
+    if pending > 1 {
+        format!("변환 중 ({pending}건) · Esc 취소")
+    } else {
+        "변환 중 · Esc 취소".into()
     }
-    app(hwnd).recording = None;
-    app(hwnd).recording_started_at = None;
-    app(hwnd).recording_deadline = None;
-    app(hwnd).recording_seconds_shown = None;
-    mute::restore(app(hwnd).mute_before.take());
-    app(hwnd).transcribing = false;
+}
+
+unsafe fn transcribing_status(hwnd: HWND) -> String {
+    transcribing_status_text(app(hwnd).jobs.len())
+}
+
+unsafe fn complete_job(hwnd: HWND, id: u64, result: Result<String, String>) {
+    // 취소된 작업은 목록에서 이미 빠져 있다.
+    let Some(job) = app(hwnd).jobs.iter_mut().find(|job| job.id == id) else {
+        return;
+    };
+    job.result = Some(result);
+    // 먼저 녹음한 것이 끝나기 전까지는 뒤의 결과를 붙여넣지 않고 기다린다.
+    while app(hwnd)
+        .jobs
+        .front()
+        .is_some_and(|job| job.result.is_some())
+    {
+        let job = app(hwnd).jobs.pop_front().unwrap();
+        deliver(hwnd, job.result.unwrap());
+    }
+    refresh_escape_capture(hwnd);
+    if app(hwnd).recording.is_some() {
+        return;
+    }
+    if app(hwnd).transcribing() {
+        set_status(hwnd, &transcribing_status(hwnd));
+    } else if !show_pending_failure(hwnd) {
+        hide_overlay(hwnd);
+    }
+}
+
+unsafe fn deliver(hwnd: HWND, result: Result<String, String>) {
+    match result {
+        // 치환 규칙은 붙여넣기 직전, 전사 결과에 마지막으로 적용한다.
+        Ok(transcript) => {
+            let text = app(hwnd).settings.apply_replacements(&transcript);
+            if text.is_empty() {
+                crate::debug_log::log(|| "transcription completed with empty text".into());
+                set_status(hwnd, "인식된 음성이 없습니다");
+                return;
+            }
+            crate::debug_log::log(|| {
+                format!(
+                    "transcription completed characters={}",
+                    text.chars().count()
+                )
+            });
+            match paste(hwnd, &text, app(hwnd).settings.auto_send) {
+                Ok(()) => set_status(hwnd, "완료"),
+                Err(error) => {
+                    crate::debug_log::log(|| "paste failed".into());
+                    set_status(hwnd, &format!("붙여넣기 실패: {error}"));
+                }
+            }
+        }
+        Err(error) => {
+            crate::debug_log::log(|| "transcription failed after retries".into());
+            app(hwnd).pending_failure = Some(error);
+        }
+    }
+}
+
+/// 녹음 중이거나 앞선 결과를 기다리느라 미뤄 둔 실패를 이제 알린다.
+unsafe fn show_pending_failure(hwnd: HWND) -> bool {
+    let Some(error) = app(hwnd).pending_failure.take() else {
+        return false;
+    };
+    set_status(hwnd, &error);
+    transient_overlay(hwnd, overlay::State::Failed);
+    true
+}
+
+/// 녹음이 끝났는데 전사로 넘기지 못했을 때, 남은 상태에 맞게 위젯을 맞춘다.
+unsafe fn settle_overlay(hwnd: HWND) {
+    if app(hwnd).transcribing() {
+        active_overlay(hwnd, overlay::State::Transcribing);
+    } else if !show_pending_failure(hwnd) {
+        hide_overlay(hwnd);
+    }
+}
+
+/// Esc는 지금 위젯에 보이는 것을 취소한다. 녹음 중이면 그 녹음만 버리고 앞서
+/// 끝낸 녹음의 변환은 이어 간다. 변환만 남았다면 변환을 모두 취소한다.
+unsafe fn cancel(hwnd: HWND) {
+    crate::debug_log::log(|| {
+        format!(
+            "cancel requested recording={} pending={}; restoring audio",
+            app(hwnd).recording.is_some(),
+            app(hwnd).jobs.len()
+        )
+    });
+    if app(hwnd).recording.is_some() {
+        app(hwnd).generation += 1;
+        app(hwnd).recording = None;
+        app(hwnd).recording_started_at = None;
+        app(hwnd).recording_deadline = None;
+        app(hwnd).recording_seconds_shown = None;
+        mute::restore(app(hwnd).mute_before.take());
+    } else {
+        for job in app(hwnd).jobs.drain(..) {
+            job.cancelled.store(true, Ordering::Relaxed);
+        }
+        app(hwnd).pending_failure = None;
+    }
+    if app(hwnd).transcribing() {
+        set_status(
+            hwnd,
+            &format!("녹음 취소됨 · {}", transcribing_status(hwnd)),
+        );
+        active_overlay(hwnd, overlay::State::Transcribing);
+        return;
+    }
+    if show_pending_failure(hwnd) {
+        return;
+    }
     set_status(hwnd, "취소됨");
     transient_overlay(hwnd, overlay::State::Cancelled);
 }
@@ -1177,20 +1277,9 @@ impl PasteStep {
     }
 }
 
-/// 진행 중인 붙여넣기를 멈추고, 누른 채였던 키를 되돌려 떼 준다.
-unsafe fn abort_paste(hwnd: HWND) {
-    KillTimer(hwnd, PASTE_TIMER);
-    app(hwnd).paste_steps.clear();
-    let held = mem::take(&mut app(hwnd).paste_held);
-    if !held.is_empty() {
-        let release: Vec<(u16, bool)> = held.iter().rev().map(|key| (*key, true)).collect();
-        send_keys(&release);
-    }
-}
-
+/// 결과가 연달아 나와도 앞선 붙여넣기가 끝난 뒤에 이어 붙이도록 줄을 세운다.
 unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
-    abort_paste(hwnd);
-    let mut steps = VecDeque::new();
+    let steps = &mut app(hwnd).paste_steps;
     for segment in keys::segments(text) {
         match segment {
             keys::Segment::Text(value) => steps.push_back(PasteStep::Text(value)),
@@ -1205,35 +1294,47 @@ unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
         steps.push_back(PasteStep::KeyDown(vec![VK_RETURN]));
         steps.push_back(PasteStep::KeyUp(vec![VK_RETURN]));
     }
-    app(hwnd).paste_steps = steps;
+    if app(hwnd).paste_scheduled {
+        return Ok(());
+    }
     run_paste_step(hwnd)
 }
 
 unsafe fn run_paste_step(hwnd: HWND) -> Result<(), String> {
-    let Some(step) = app(hwnd).paste_steps.pop_front() else {
-        return Ok(());
+    app(hwnd).paste_scheduled = false;
+    // 녹음 단축키를 누르고 있는 동안 키를 보내면 그 수식키가 섞여 들어간다.
+    // 누른 채로 대기 중인 붙여넣기 키는 떼는 것까지 마저 보낸다.
+    let delay = if app(hwnd).pressed && app(hwnd).paste_held.is_empty() {
+        if app(hwnd).paste_steps.is_empty() {
+            return Ok(());
+        }
+        50
+    } else {
+        let Some(step) = app(hwnd).paste_steps.pop_front() else {
+            return Ok(());
+        };
+        match &step {
+            PasteStep::Text(value) => paste_text(value)?,
+            PasteStep::KeyDown(codes) => {
+                app(hwnd).paste_held = codes.clone();
+                let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, false)).collect();
+                send_keys(&events);
+            }
+            PasteStep::KeyUp(codes) => {
+                let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, true)).collect();
+                send_keys(&events);
+                app(hwnd).paste_held.clear();
+            }
+        }
+        step.delay()
     };
-    match &step {
-        PasteStep::Text(value) => paste_text(value)?,
-        PasteStep::KeyDown(codes) => {
-            app(hwnd).paste_held = codes.clone();
-            let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, false)).collect();
-            send_keys(&events);
-        }
-        PasteStep::KeyUp(codes) => {
-            let events: Vec<(u16, bool)> = codes.iter().map(|code| (*code, true)).collect();
-            send_keys(&events);
-            app(hwnd).paste_held.clear();
-        }
-    }
-    if app(hwnd).paste_steps.is_empty() {
-        return Ok(());
-    }
     // 붙여넣기를 비동기로 반영하는 편집기가 있어, 다음 조각 전에 잠시 기다린다.
-    if SetTimer(hwnd, PASTE_TIMER, step.delay(), None) == 0 {
+    // 마지막 조각 뒤에도 기다려야 다음 결과가 클립보드를 너무 일찍 덮어쓰지 않는다.
+    if SetTimer(hwnd, PASTE_TIMER, delay, None) == 0 {
         app(hwnd).paste_steps.clear();
         return Err("다음 붙여넣기를 예약할 수 없습니다".into());
     }
+    app(hwnd).paste_scheduled = true;
     Ok(())
 }
 
@@ -1362,24 +1463,17 @@ unsafe fn open_api_key_page(owner: HWND, url: &str) {
 }
 
 unsafe fn open_log(owner: HWND) {
-    let path = match crate::debug_log::ensure_file() {
-        Ok(path) => path,
-        Err(_) => {
-            info(owner, "로그 파일을 만들 수 없습니다.");
-            return;
-        }
-    };
-    crate::debug_log::log(|| "log opened by user".into());
-    let result = ShellExecuteW(
-        owner,
-        wide("open").as_ptr(),
-        wide("notepad.exe").as_ptr(),
-        wide(&path.to_string_lossy()).as_ptr(),
-        ptr::null(),
-        SW_SHOW,
-    );
-    if (result as isize) <= 32 {
-        info(owner, "로그 파일을 열 수 없습니다.");
+    if crate::debug_log::ensure_file().is_err() {
+        info(owner, "로그 폴더를 만들 수 없습니다.");
+        return;
+    }
+    crate::debug_log::log(|| "log folder opened by user".into());
+    if std::process::Command::new("explorer.exe")
+        .arg(crate::debug_log::directory())
+        .spawn()
+        .is_err()
+    {
+        info(owner, "로그 폴더를 열 수 없습니다.");
     }
 }
 
@@ -1399,7 +1493,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        807,
+        849,
         root,
         ptr::null_mut(),
         instance,
@@ -1592,14 +1686,39 @@ unsafe fn show_settings(root: HWND) {
         .position(|minutes| *minutes == settings.recording_time_limit_minutes)
         .unwrap_or(2);
     SendMessageW(recording_time_limit, CB_SETCURSEL, selected_limit, 0);
-    label("녹음 위젯 위치", 310);
-    let overlay_position = control(
+    label("로그·녹음 보존", 310);
+    let log_retention = control(
         dialog,
         "COMBOBOX",
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         165,
         308,
+        365,
+        120,
+        0,
+    );
+    for (_, title) in settings::LOG_RETENTION_OPTIONS {
+        SendMessageW(
+            log_retention,
+            CB_ADDSTRING,
+            0,
+            wide(title).as_ptr() as isize,
+        );
+    }
+    let selected_retention = settings::LOG_RETENTION_OPTIONS
+        .iter()
+        .position(|(hours, _)| *hours == settings.log_retention_hours)
+        .unwrap_or(2);
+    SendMessageW(log_retention, CB_SETCURSEL, selected_retention, 0);
+    label("녹음 위젯 위치", 352);
+    let overlay_position = control(
+        dialog,
+        "COMBOBOX",
+        "",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
+        165,
+        350,
         365,
         225,
         0,
@@ -1628,27 +1747,27 @@ unsafe fn show_settings(root: HWND) {
         | WS_VSCROLL
         | ES_MULTILINE as u32
         | ES_AUTOVSCROLL as u32;
-    label("인식 단어 (한 줄에 하나)", 350);
+    label("인식 단어 (한 줄에 하나)", 392);
     let keyterms = control(
         dialog,
         "EDIT",
         &settings.keyterms.join("\r\n"),
         word_list_style,
         165,
-        348,
+        390,
         365,
         80,
         0,
     );
-    label("치환 단어", 431);
-    label("찾을 말 => 바꿀 말", 455);
+    label("치환 단어", 473);
+    label("찾을 말 => 바꿀 말", 497);
     control(
         dialog,
         "BUTTON",
         "사용법",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         18,
-        479,
+        521,
         80,
         22,
         ID_REPLACEMENT_HELP,
@@ -1659,7 +1778,7 @@ unsafe fn show_settings(root: HWND) {
         &settings.replacements.join("\r\n"),
         word_list_style,
         165,
-        431,
+        473,
         365,
         80,
         0,
@@ -1670,7 +1789,7 @@ unsafe fn show_settings(root: HWND) {
         "군더더기 말 제거 (ElevenLabs)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        533,
+        575,
         365,
         25,
         0,
@@ -1687,7 +1806,7 @@ unsafe fn show_settings(root: HWND) {
         "녹음 중 시스템 소리 음소거",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        568,
+        610,
         365,
         25,
         0,
@@ -1704,20 +1823,20 @@ unsafe fn show_settings(root: HWND) {
         "붙여넣은 뒤 Enter 입력",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        603,
+        645,
         365,
         25,
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
-    label("녹음 시작 효과음", 638);
+    label("녹음 시작 효과음", 680);
     let recording_start_sound_volume = control(
         dialog,
         "msctls_trackbar32",
         "",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
         165,
-        633,
+        675,
         300,
         36,
         0,
@@ -1736,7 +1855,7 @@ unsafe fn show_settings(root: HWND) {
         &format!("{}%", settings.recording_start_sound_volume),
         WS_CHILD | WS_VISIBLE,
         475,
-        638,
+        680,
         55,
         25,
         0,
@@ -1747,7 +1866,7 @@ unsafe fn show_settings(root: HWND) {
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        677,
+        719,
         365,
         26,
         0,
@@ -1758,7 +1877,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        717,
+        759,
         85,
         32,
         ID_SAVE,
@@ -1769,7 +1888,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        717,
+        759,
         85,
         32,
         ID_CANCEL,
@@ -1791,6 +1910,7 @@ unsafe fn show_settings(root: HWND) {
         shortcut,
         mode,
         recording_time_limit,
+        log_retention,
         overlay_position,
         keyterms,
         replacements,
@@ -2100,6 +2220,10 @@ unsafe fn save_dialog(hwnd: HWND) {
         .get(SendMessageW(dialog.recording_time_limit, CB_GETCURSEL, 0, 0) as usize)
         .copied()
         .unwrap_or(30);
+    updated.log_retention_hours = settings::LOG_RETENTION_OPTIONS
+        .get(SendMessageW(dialog.log_retention, CB_GETCURSEL, 0, 0) as usize)
+        .map(|(hours, _)| *hours)
+        .unwrap_or(updated.log_retention_hours);
     updated.overlay_position = overlay::POSITIONS
         .get(SendMessageW(dialog.overlay_position, CB_GETCURSEL, 0, 0) as usize)
         .map(|(code, _)| *code)
@@ -2133,6 +2257,7 @@ unsafe fn save_dialog(hwnd: HWND) {
         Ok(()) => {
             TARGET_KEY.store(shortcut_key(&updated.shortcut), Ordering::SeqCst);
             overlay::set_position(app(root).overlay, &updated.overlay_position);
+            crate::debug_log::set_retention(updated.log_retention_hours);
             app(root).settings = updated;
             app(root).pressed = false;
             set_status(root, "설정 저장됨");

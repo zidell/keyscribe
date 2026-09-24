@@ -5,6 +5,7 @@ struct Settings {
     var shortcut = "right_command"
     var recordingControl = "hold"
     var recordingTimeLimitMinutes = 30
+    var logRetentionHours = Settings.defaultLogRetentionHours
     var autoSend = true
     var language = "ko"
     var keyterms: [String] = []
@@ -16,6 +17,9 @@ struct Settings {
     var openAIModel = "gpt-transcribe"
     var elevenLabsModel = "scribe_v2"
     var groqModel = "whisper-large-v3-turbo"
+
+    static let defaultLogRetentionHours = 168
+    static let logRetentionOptions = [1, 24, 168, 720]
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/keyscribe", isDirectory: true)
@@ -42,6 +46,10 @@ struct Settings {
             if let limit = values["recording_time_limit_minutes"] as? Int,
                [10, 20, 30, 60].contains(limit) {
                 result.recordingTimeLimitMinutes = limit
+            }
+            if let hours = values["log_retention_hours"] as? Int,
+               logRetentionOptions.contains(hours) {
+                result.logRetentionHours = hours
             }
             result.autoSend = values["auto_send"] as? Bool ?? result.autoSend
             result.language = values["language"] as? String ?? result.language
@@ -87,6 +95,7 @@ struct Settings {
             "shortcut = \(jsonString(shortcut))",
             "recording_control = \(jsonString(recordingControl))",
             "recording_time_limit_minutes = \(recordingTimeLimitMinutes)",
+            "log_retention_hours = \(logRetentionHours)",
             "auto_send = \(autoSend)",
             "language = \(jsonString(language))",
             "keyterms = [\(keyterms.map(jsonString).joined(separator: ", "))]",

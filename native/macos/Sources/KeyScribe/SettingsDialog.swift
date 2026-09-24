@@ -20,6 +20,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let recordingControl = NSPopUpButton()
     private let recordingTimeLimit = NSPopUpButton()
     private let overlayPosition = NSPopUpButton()
+    private let logRetention = NSPopUpButton()
     private let keyterms = NSTextView()
     private let replacements = NSTextView()
     private let noVerbatim = NSButton(checkboxWithTitle: "군더더기 말 제거 (ElevenLabs)", target: nil, action: nil)
@@ -61,6 +62,8 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         updated.shortcut = shortcut.selectedItem?.representedObject as? String ?? original.shortcut
         updated.recordingControl = recordingControl.selectedItem?.representedObject as? String ?? original.recordingControl
         updated.recordingTimeLimitMinutes = Int(recordingTimeLimit.selectedItem?.representedObject as? String ?? "30") ?? 30
+        updated.logRetentionHours = Int(logRetention.selectedItem?.representedObject as? String ?? "")
+            ?? original.logRetentionHours
         updated.overlayPosition = overlayPosition.selectedItem?.representedObject as? String ?? original.overlayPosition
         updated.keyterms = keyterms.string.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -167,7 +170,15 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         populate(recordingTimeLimit, options: [
             ("10", "10분"), ("20", "20분"), ("30", "30분"), ("60", "60분"),
         ], selected: String(original.recordingTimeLimitMinutes))
-        addPicker(recordingTimeLimit, y: 266)
+        addPicker(recordingTimeLimit, y: 266, width: 110)
+        let retentionLabel = NSTextField(labelWithString: "로그·녹음 보존")
+        retentionLabel.frame = NSRect(x: 250, y: 268, width: 95, height: 24)
+        form.addSubview(retentionLabel)
+        populate(logRetention, options: [
+            ("1", "1시간"), ("24", "1일"), ("168", "7일"), ("720", "30일"),
+        ], selected: String(original.logRetentionHours))
+        logRetention.frame = NSRect(x: 345, y: 266, width: 130, height: 26)
+        form.addSubview(logRetention)
 
         for view in form.subviews {
             var frame = view.frame

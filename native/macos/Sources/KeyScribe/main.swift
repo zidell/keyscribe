@@ -9,6 +9,13 @@ private enum Phase {
     case idle, recording, transcribing
 }
 
+/// 녹음 한 번을 전사하는 작업. 녹음이 끝나는 대로 하나씩 생기고, 전사는 서로
+/// 겹쳐 돌 수 있지만 결과는 녹음한 순서대로 붙여넣는다.
+private final class TranscriptionJob {
+    let transcriber = Transcriber()
+    var result: Result<String, Error>?
+}
+
 private let keyCodes: [String: CGKeyCode] = [
     "right_option": 61, "right_alt": 61,
     "left_option": 58, "option": 58, "left_alt": 58, "alt": 58,
@@ -41,7 +48,11 @@ private func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
 final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var settings = Settings.load()
-    private let transcriber = Transcriber()
+    private var jobs: [TranscriptionJob] = []
+    /// 앞선 결과가 붙여넣기 전에 실패했다면, 모든 작업이 끝났을 때 알린다.
+    private var pendingFailure: String?
+    private var pasteQueue: [PasteSegment] = []
+    private var pasteScheduled = false
     private var phase: Phase = .idle {
         didSet {
             guard oldValue != phase else { return }
@@ -74,6 +85,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var overlayTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DebugLog.shared.setRetention(hours: settings.logRetentionHours)
         DebugLog.shared.record("app start shortcut=\(settings.shortcut) mode=\(settings.recordingControl)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
@@ -93,7 +105,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             RemoveEventHandler(escapeHotKeyHandler)
             self.escapeHotKeyHandler = nil
         }
-        cancelRecording()
+        discardRecording()
+        cancelTranscriptions()
     }
 
     private func setupMenu() {
@@ -111,8 +124,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         menu.addItem(statusLine)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
-        menu.addItem(NSMenuItem(title: "설정 폴더 열기", action: #selector(openSettingsFolder(_:)), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "로그 보기", action: #selector(openLog(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "로그 및 녹음 원본 폴더", action: #selector(openLog(_:)), keyEquivalent: ""))
         menu.addItem(.separator())
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 버전"
         let versionItem = NSMenuItem(title: "버전 \(version)", action: nil, keyEquivalent: "")
@@ -289,8 +301,9 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         keyDown = pressed
         DebugLog.shared.record("trigger state pressed=\(pressed) mode=\(settings.recordingControl) phase=\(phase)")
         if pressed {
-            if phase == .idle { startRecording() }
-            else if phase == .recording && settings.recordingControl == "toggle" { stopRecording() }
+            // 앞선 녹음을 변환하는 중이어도 새 녹음은 바로 받는다.
+            if phase != .recording { startRecording() }
+            else if settings.recordingControl == "toggle" { stopRecording() }
         } else if phase == .recording && settings.recordingControl == "hold" {
             stopRecording()
         }
@@ -317,6 +330,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if granted {
+                        guard self.phase != .recording else { return }
                         if self.settings.recordingControl == "toggle" || self.keyDown { self.startRecording() }
                     } else {
                         DebugLog.shared.record("microphone permission denied")
@@ -334,7 +348,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             return
         }
         session = UUID()
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("keyscribe-\(session.uuidString).wav")
+        let url = DebugLog.shared.newRecordingURL()
         let format: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM), AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
@@ -346,7 +360,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             guard recorder?.record() == true else { throw NSError(domain: "KeyScribe", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "마이크를 시작하지 못했습니다."]) }
             recordingURL = url
-            phase = .recording
+            refreshPhase()
             recordingStartedAt = ProcessInfo.processInfo.systemUptime
             recordingLimitMinutes = settings.recordingTimeLimitMinutes
             recordingSecondsShown = nil
@@ -437,38 +451,93 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         recorder?.stop()
         recorder = nil
         restoreSystemAudio()
-        DebugLog.shared.record("recording stopped; audio restore attempted")
-        phase = .transcribing
-        setStatus(limitReached ? "시간 제한 도달 · 변환 중" : "변환 중 · Esc 취소")
+        DebugLog.shared.record("recording stopped; audio restore attempted; saved=\(url.lastPathComponent)")
+        recordingURL = nil
+        let job = TranscriptionJob()
+        jobs.append(job)
+        refreshPhase()
+        setStatus(limitReached ? "시간 제한 도달 · 변환 중" : transcribingStatus())
         showActiveOverlay(.transcribing)
-        let currentSession = session
-        transcriber.transcribe(audioURL: url, settings: settings) { [weak self] result in
-            DispatchQueue.main.async { self?.finish(result, url: url, session: currentSession) }
+        job.transcriber.transcribe(audioURL: url, settings: settings) { [weak self, weak job] result in
+            DispatchQueue.main.async {
+                guard let self, let job else { return }
+                self.complete(job, with: result)
+            }
         }
     }
 
-    private func finish(_ result: Result<String, Error>, url: URL, session completedSession: UUID) {
-        try? FileManager.default.removeItem(at: url)
-        guard completedSession == session && phase == .transcribing else { return }
-        recordingURL = nil
-        phase = .idle
+    private func refreshPhase() {
+        phase = recordingURL != nil ? .recording : jobs.isEmpty ? .idle : .transcribing
+    }
+
+    private func transcribingStatus() -> String {
+        jobs.count > 1 ? "변환 중 (\(jobs.count)건) · Esc 취소" : "변환 중 · Esc 취소"
+    }
+
+    private func complete(_ job: TranscriptionJob, with result: Result<String, Error>) {
+        // 취소된 작업은 목록에서 이미 빠져 있다.
+        guard jobs.contains(where: { $0 === job }) else { return }
+        job.result = result
+        // 먼저 녹음한 것이 끝나기 전까지는 뒤의 결과를 붙여넣지 않고 기다린다.
+        while let first = jobs.first, let result = first.result {
+            jobs.removeFirst()
+            deliver(result)
+        }
+        refreshPhase()
+        switch phase {
+        case .recording:
+            break
+        case .transcribing:
+            setStatus(transcribingStatus())
+        case .idle:
+            if !showPendingFailure() { hideOverlay() }
+        }
+    }
+
+    /// 녹음 중이거나 앞선 결과를 기다리느라 미뤄 둔 실패를 이제 알린다.
+    private func showPendingFailure() -> Bool {
+        guard let failure = pendingFailure else { return false }
+        pendingFailure = nil
+        setStatus(failure)
+        showTransientOverlay(.failed)
+        return true
+    }
+
+    private func deliver(_ result: Result<String, Error>) {
         switch result {
         case .success(let transcript):
             DebugLog.shared.record("transcription completed characters=\(transcript.count)")
-            hideOverlay()
             let text = settings.applyingReplacements(to: transcript)
             guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
             paste(text)
             setStatus("완료")
         case .failure(let error):
             DebugLog.shared.record("transcription failed type=\(type(of: error))")
-            setStatus(error.localizedDescription)
-            showTransientOverlay(.failed)
+            pendingFailure = error.localizedDescription
         }
     }
 
+    /// Esc는 지금 위젯에 보이는 것을 취소한다. 녹음 중이면 그 녹음만 버리고
+    /// 앞서 끝낸 녹음의 변환은 이어 간다. 변환만 남았다면 변환을 모두 취소한다.
     private func cancelRecording() {
-        DebugLog.shared.record("recording/transcription cancelled phase=\(phase)")
+        DebugLog.shared.record("recording/transcription cancelled phase=\(phase) pending=\(jobs.count)")
+        if phase == .recording {
+            discardRecording()
+        } else {
+            cancelTranscriptions()
+        }
+        refreshPhase()
+        if phase == .transcribing {
+            setStatus("녹음 취소됨 · " + transcribingStatus())
+            showActiveOverlay(.transcribing)
+            return
+        }
+        if showPendingFailure() { return }
+        if statusLine != nil { setStatus("취소됨") }
+        showTransientOverlay(.cancelled)
+    }
+
+    private func discardRecording() {
         session = UUID()
         recordingLimitTimer?.invalidate()
         recordingLimitTimer = nil
@@ -476,17 +545,20 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         recordingLimitSound = nil
         recordingStartedAt = nil
         recordingSecondsShown = nil
-        transcriber.cancel()
         recordingStartSound?.stop()
         recordingStartSound = nil
         recorder?.stop()
         recorder = nil
+        // 녹음 중 취소는 버리지만, 녹음을 끝낸 원본은 전사를 취소해도 남긴다.
         if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
         recordingURL = nil
         restoreSystemAudio()
-        phase = .idle
-        if statusLine != nil { setStatus("취소됨") }
-        showTransientOverlay(.cancelled)
+    }
+
+    private func cancelTranscriptions() {
+        jobs.forEach { $0.transcriber.cancel() }
+        jobs = []
+        pendingFailure = nil
     }
 
     private func showActiveOverlay(_ state: RecordingOverlay.State) {
@@ -551,33 +623,44 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         overlay?.hide()
     }
 
+    /// 결과가 연달아 나와도 앞선 붙여넣기가 끝난 뒤에 이어 붙이도록 줄을 세운다.
     private func paste(_ text: String) {
-        var segments = KeyToken.segments(of: text)
+        pasteQueue += KeyToken.segments(of: text)
         // 자동 Enter도 마지막 키 조각일 뿐이라, 키 토큰과 같은 경로로 내보낸다.
-        if settings.autoSend { segments.append(.key(flags: [], code: 36)) }
-        runPaste(segments, session: session)
+        if settings.autoSend { pasteQueue.append(.key(flags: [], code: 36)) }
+        if !pasteScheduled { runPaste() }
     }
 
     /// 조각을 하나씩 내보낸다. 붙여넣기를 비동기로 반영하는 편집기가 있어
-    /// 텍스트 뒤에는 조금 더 오래 기다렸다가 다음 조각으로 넘어간다.
-    private func runPaste(_ segments: [PasteSegment], session pasteSession: UUID) {
-        guard session == pasteSession, let segment = segments.first,
-              let source = CGEventSource(stateID: .hidSystemState) else { return }
-        let delay: TimeInterval
+    /// 텍스트 뒤에는 조금 더 오래 기다렸다가 다음 조각으로 넘어간다. 마지막
+    /// 조각 뒤에도 기다려야 다음 결과가 클립보드를 너무 일찍 덮어쓰지 않는다.
+    private func runPaste() {
+        pasteScheduled = false
+        guard !pasteQueue.isEmpty else { return }
+        // 녹음 단축키를 누르고 있는 동안 키를 보내면 그 수식키가 섞여 들어간다.
+        guard !keyDown else { schedulePaste(after: 0.05); return }
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            DebugLog.shared.record("paste dropped: event source unavailable")
+            pasteQueue = []
+            return
+        }
+        let segment = pasteQueue.removeFirst()
         switch segment {
         case .text(let value):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
             postKey(source: source, code: 9, flags: .maskCommand, hold: 0)
-            delay = 0.4
+            schedulePaste(after: 0.4)
         case .key(let flags, let code):
             postKey(source: source, code: code, flags: flags, hold: 0.04)
-            delay = 0.12
+            schedulePaste(after: 0.12)
         }
-        let rest = Array(segments.dropFirst())
-        guard !rest.isEmpty else { return }
+    }
+
+    private func schedulePaste(after delay: TimeInterval) {
+        pasteScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.runPaste(rest, session: pasteSession)
+            self?.runPaste()
         }
     }
 
@@ -707,13 +790,9 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openSettingsFolder(_ sender: Any?) {
-        NSWorkspace.shared.open(Settings.directory)
-    }
-
     @objc private func openLog(_ sender: Any?) {
-        DebugLog.shared.record("log opened by user")
-        NSWorkspace.shared.open(DebugLog.shared.fileURL)
+        DebugLog.shared.record("log folder opened by user")
+        NSWorkspace.shared.open(DebugLog.shared.directory)
     }
 
     @objc private func restart(_ sender: Any?) {
@@ -751,6 +830,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         do {
             try updated.save()
             settings = updated
+            DebugLog.shared.setRetention(hours: updated.logRetentionHours)
             keyDown = false
             setStatus("설정 저장됨")
         } catch {

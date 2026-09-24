@@ -37,7 +37,7 @@ cat > "$agent" <<EOF
     </array>
     <key>WorkingDirectory</key><string>$(xml_escape "$project_root")</string>
     <key>EnvironmentVariables</key><dict>
-        <key>KEYSCRIBE_DEBUG_LOG</key><string>$(xml_escape "$project_root/dist-native/macos-debug.log")</string>
+        <key>KEYSCRIBE_DEBUG_LOG</key><string>$(xml_escape "$project_root/dist-native/logs/debug.log")</string>
     </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>

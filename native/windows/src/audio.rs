@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use std::{
-    env, fs,
+    fs,
     path::PathBuf,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -100,7 +100,8 @@ impl Recording {
             _ => return Err("지원하지 않는 마이크 샘플 형식입니다".into()),
         }
         .map_err(|e| e.to_string())?;
-        let writer = thread::spawn(move || write_wav(receiver, sample_rate));
+        let path = crate::debug_log::new_recording_path().map_err(|e| e.to_string())?;
+        let writer = thread::spawn(move || write_wav(receiver, sample_rate, path));
         if let Err(error) = stream.play() {
             drop(stream);
             drop(sender);
@@ -144,15 +145,11 @@ impl Drop for Recording {
     }
 }
 
-fn write_wav(receiver: mpsc::Receiver<Vec<i16>>, input_rate: u32) -> Result<PathBuf, String> {
-    let path = env::temp_dir().join(format!(
-        "keyscribe-{}-{}.wav",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_nanos()
-    ));
+fn write_wav(
+    receiver: mpsc::Receiver<Vec<i16>>,
+    input_rate: u32,
+    path: PathBuf,
+) -> Result<PathBuf, String> {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: 16_000,
@@ -188,12 +185,17 @@ fn write_wav(receiver: mpsc::Receiver<Vec<i16>>, input_rate: u32) -> Result<Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("keyscribe-test-{}-{name}.wav", std::process::id()))
+    }
+
     #[test]
     fn writes_speech_rate_wav() {
         let (sender, receiver) = mpsc::sync_channel(1);
         sender.send(vec![100, 100, 200, 200]).unwrap();
         drop(sender);
-        let path = write_wav(receiver, 32_000).unwrap();
+        let path = write_wav(receiver, 32_000, test_path("speech-rate")).unwrap();
         let reader = hound::WavReader::open(&path).unwrap();
         assert_eq!(reader.spec().sample_rate, 16_000);
         assert_eq!(reader.duration(), 2);
@@ -205,7 +207,7 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel(1);
         sender.send(vec![100, 200]).unwrap();
         drop(sender);
-        let path = write_wav(receiver, 8_000).unwrap();
+        let path = write_wav(receiver, 8_000, test_path("low-rate")).unwrap();
         let reader = hound::WavReader::open(&path).unwrap();
         assert_eq!(reader.duration(), 4);
         fs::remove_file(path).unwrap();

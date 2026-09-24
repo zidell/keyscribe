@@ -13,7 +13,7 @@ KeyScribe 是一款语音输入应用：它将麦克风录音转写为文字，�
 - 即使关闭小部件，菜单栏（托盘）图标也会在录音时变红、转写时变橙。
 - 可在设置中更改快捷键、语言、模型、提示音音量、录音小部件位置和自动按 Enter。
 - **识别词**可提升专有名词的准确率；**替换词**（`查找 => 替换`）在粘贴前修正始终听错的词。在替换内容中写 `[enter]`、`[cmd+k]`，就会在该位置真正按下这个键。
-- 菜单中的**查看日志**可打开最近 24 小时的诊断日志；API 密钥和录音、转写内容不会写入日志。
+- 为避免因网络或 API 错误导致转写失败时丢失录音，原始录音（WAV）会被保留。保留期限可在设置中选择 1 小时、1 天、7 天或 30 天（默认 7 天），过期的日志和录音会自动删除。可通过菜单中的**日志和原始录音文件夹**与诊断日志一起打开；API 密钥和转写内容不会写入日志。
 
 ## 为什么制作它
 
@@ -101,11 +101,11 @@ Groq 密钥归属于所选项目，免费层有请求和音频处理限制。提
 
 ## 故障排除
 
-可在菜单栏或托盘菜单查看应用状态和错误；**查看日志**会打开诊断日志。
+可在菜单栏或托盘菜单查看应用状态和错误；**日志和原始录音文件夹**会打开存放诊断日志（`debug.log`）和原始录音（`recording-*.wav`）的文件夹。
 
-- macOS：`~/Library/Application Support/keyscribe/debug.log`
-- Windows：`%APPDATA%\keyscribe\debug.log`
-- 开发运行：`dist-native/macos-debug.log`、`dist-native/windows-debug.log`
+- macOS：`~/Library/Application Support/keyscribe/logs/`
+- Windows：`%APPDATA%\keyscribe\logs\`
+- 开发运行：`dist-native/logs/`
 
 macOS 登录应用和源代码监视构建的日志位于 `dist-native/app.log`、`dist-native/watch.log`。
 
