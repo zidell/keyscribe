@@ -53,6 +53,22 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 
 설정에서 단축키, 녹음 종료 방식, 녹음 시간 제한(10·20·30·60분, 기본 30분), 인식 언어, 녹음 시작 효과음 음량, 자동 전송 여부를 바꿀 수 있습니다. 자동 전송을 켜면 붙여넣은 뒤 Enter도 누릅니다. 관리자 권한으로 실행한 Windows 앱에 자동 입력하려면 KeyScribe도 같은 권한으로 실행해야 할 수 있습니다.
 
+## Ubuntu 지원
+
+macOS·Windows 앱에 더해 C/GTK로 컴파일하는 우분투 네이티브 앱을 추가했습니다.
+[우분투 빌드·설치·사용 안내](native/linux/README.md)를 참고하세요. PipeWire/PulseAudio
+녹음과 세 서비스의 전사 API를 지원하며, GNOME 포털을 통해 전역 단축키와 자동
+붙여넣기를 사용합니다. Linux 설치 패키지는 아직 GitHub Releases에 배포되지 않았습니다.
+
+```sh
+./native/linux/build.sh --test
+./native/linux/install.sh
+~/.local/bin/keyscribe
+```
+
+빌드 의존성 설치 명령과 현재 지원 범위는 위 안내에 있습니다. API 키는
+`~/.config/keyscribe/settings.ini`, 녹음은 `~/.local/share/keyscribe/logs/`에 저장됩니다.
+
 ## STT 공급자
 
 API 키 접두사로 공급자를 자동으로 선택합니다. 공급자마다 마지막으로 선택한 모델을 따로 저장합니다.

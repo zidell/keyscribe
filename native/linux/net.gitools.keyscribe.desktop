@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=KeyScribe
+Comment=Transcribe microphone audio into the active input field
+Comment[ko]=음성을 인식하여 입력란에 붙여넣기
+Exec=keyscribe
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupNotify=true
+DBusActivatable=false

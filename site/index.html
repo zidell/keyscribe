@@ -9,15 +9,15 @@
   <meta property="og:url" content="https://keyscribe.gitools.net/">
   <meta property="og:site_name" content="KeyScribe">
   <meta property="og:title" content="KeyScribe — 음성으로 타이핑하세요">
-  <meta property="og:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows 음성 입력 앱">
+  <meta property="og:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows·Ubuntu 음성 입력 앱">
   <meta property="og:image" content="https://keyscribe.gitools.net/screenshots/keyscribe-flow.gif">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="KeyScribe — 음성으로 타이핑하세요">
-  <meta name="twitter:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows 음성 입력 앱">
+  <meta name="twitter:description" content="말하면 바로 현재 입력창에 글을 넣어 주는 가벼운 macOS·Windows·Ubuntu 음성 입력 앱">
   <meta name="twitter:image" content="https://keyscribe.gitools.net/screenshots/keyscribe-flow.gif">
   <title>KeyScribe — 음성으로 타이핑하세요</title>
   <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KeyScribe","applicationCategory":"UtilitiesApplication","operatingSystem":"macOS, Windows","description":"A lightweight voice typing app that turns speech into text and inserts it into the focused field.","url":"https://keyscribe.gitools.net/","downloadUrl":"https://github.com/zidell/keyscribe/releases","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KeyScribe","applicationCategory":"UtilitiesApplication","operatingSystem":"macOS, Windows, Ubuntu","description":"A lightweight voice typing app that turns speech into text and inserts it into the focused field.","url":"https://keyscribe.gitools.net/","downloadUrl":"https://github.com/zidell/keyscribe/releases","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
@@ -52,7 +52,7 @@
     .benchmark b { display: block; font-size: 1.15rem; letter-spacing: -.02em; }
     .benchmark small { display: block; margin-top: 5px; color: #62697b; }
     .platform-only { display: none; }
-    html[data-platform="mac"] .platform-only.mac, html[data-platform="windows"] .platform-only.windows, html[data-platform="other"] .platform-only { display: block; }
+    html[data-platform="mac"] .platform-only.mac, html[data-platform="windows"] .platform-only.windows, html[data-platform="linux"] .platform-only.linux, html[data-platform="other"] .platform-only { display: block; }
     ol { padding-left: 1.4rem; }
     li + li { margin-top: 8px; }
     @media (prefers-color-scheme: dark) { body { background: #171923; color: #f0f2fa; } .note, .preview figcaption, .benchmark small { color: #aab0c0; } .warning { background: #3b1d25; color: #ffb9c0; } .preview img, .benchmark { border-color: #34394b; } }
@@ -65,7 +65,7 @@
     <h1 data-en="Type with your voice.">음성으로 타이핑하세요.</h1>
     <p class="intro" data-en="KeyScribe is a voice typing app that turns speech into text. It is lightweight and responsive because it is built natively with only the essentials. Connect the STT API service you use and start typing.">KeyScribe는 음성을 텍스트로 변환해주는 보이스 입력 앱입니다. 네이티브 코드로 최소한의 기능만 구현했기에 가볍고 쾌적합니다. 본인이 사용하는 STT API 서비스를 연결하여 사용하세요.</p>
 
-    <section aria-labelledby="preview-title">
+    <section class="platform-only mac windows" aria-labelledby="preview-title">
       <h2 id="preview-title" data-en="Preview">화면 미리보기</h2>
       <div class="previews">
         <figure class="preview platform-only mac"><img src="screenshots/macos-menu-preview.png" alt="macOS 메뉴 막대에서 열린 KeyScribe 메뉴" data-en-alt="The KeyScribe menu open in the macOS menu bar"><figcaption data-en="macOS menu bar">macOS 메뉴 막대</figcaption></figure>
@@ -80,6 +80,7 @@
       <div class="downloads">
         <a class="download platform-only mac" href="https://github.com/zidell/keyscribe/releases/tag/v__VERSION__"><span data-en="Download for macOS">macOS 다운로드</span> <small data-en="Apple Silicon __MACOS_ARM64_SIZE__ or Intel __MACOS_X64_SIZE__ · DMG">Apple Silicon __MACOS_ARM64_SIZE__ 또는 Intel __MACOS_X64_SIZE__ · DMG</small></a>
         <a class="download platform-only windows" href="https://github.com/zidell/keyscribe/releases/download/v__VERSION__/KeyScribe-windows-x64-__VERSION__.exe"><span>Windows</span> <small data-en="x64 · Installer · __WINDOWS_SIZE__">x64 · 설치 파일 · __WINDOWS_SIZE__</small></a>
+        <a class="download platform-only linux" href="https://github.com/zidell/keyscribe/blob/main/native/linux/README.md"><span data-en="Ubuntu build and install">Ubuntu 빌드·설치 안내</span> <small data-en="Native GTK app · Build from source">GTK 네이티브 앱 · 소스에서 빌드</small></a>
       </div>
       <p class="note" data-en-template="Latest version {version}">최신 버전 __VERSION__</p>
       <p class="note platform-only windows" data-en="Windows installers are signed by SignPath.">Windows 설치 파일은 SignPath 서명을 사용합니다.</p>
@@ -87,6 +88,7 @@
 
     <section aria-labelledby="how-title">
       <h2 id="how-title" data-en="How it works">사용 방법</h2>
+      <p class="note platform-only linux" data-en="Ubuntu: register global shortcuts and allow automatic paste in the Shortcuts / Permissions tab. The requested recording shortcut is Ctrl+Alt+Space. On desktops without the required portals, use the recording button and copy the result.">Ubuntu: 단축키 / 권한 탭에서 전역 단축키를 등록하고 자동 붙여넣기를 허용하세요. 기본 요청 단축키는 Ctrl+Alt+Space입니다. 포털을 지원하지 않는 데스크톱에서는 녹음 버튼과 결과 복사를 사용하세요.</p>
       <p class="warning" data-en-html="<strong>An external API key is required.</strong> <a href=&quot;https://platform.openai.com/api-keys&quot;>OpenAI ↗</a> · <a href=&quot;https://elevenlabs.io/app/developers/api-keys&quot;>ElevenLabs ↗</a> · <a href=&quot;https://console.groq.com/keys&quot;>Groq ↗</a>"><strong>외부 API 키가 필수입니다.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a></p>
       <ol>
         <li data-en-html="Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.">앱을 실행하고 메뉴바 또는 트레이의 <strong>설정...</strong>에서 ElevenLabs, OpenAI 또는 Groq API 키를 입력합니다.</li>
@@ -156,16 +158,16 @@
       'zh-CN': {'<strong>An external API key is required.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>': '<strong>需要外部 API 密钥。</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>', 'Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.': '打开应用，在菜单栏或系统托盘的<strong>设置...</strong>中输入 ElevenLabs、OpenAI 或 Groq API 密钥。'},
       es: {'<strong>An external API key is required.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>': '<strong>Se requiere una clave de API externa.</strong> <a href="https://platform.openai.com/api-keys">OpenAI ↗</a> · <a href="https://elevenlabs.io/app/developers/api-keys">ElevenLabs ↗</a> · <a href="https://console.groq.com/keys">Groq ↗</a>', 'Open the app and enter an ElevenLabs, OpenAI, or Groq API key in <strong>Settings...</strong> from the menu bar or system tray.': 'Abre la aplicación e introduce una clave de API de ElevenLabs, OpenAI o Groq en <strong>Configuración...</strong>, desde la barra de menús o la bandeja del sistema.'}
     };
-    document.documentElement.dataset.platform = /mac/i.test(platform) ? 'mac' : /win/i.test(platform) ? 'windows' : 'other';
+    document.documentElement.dataset.platform = /mac/i.test(platform) ? 'mac' : /win/i.test(platform) ? 'windows' : /linux/i.test(platform) && !/android/i.test(navigator.userAgent) ? 'linux' : 'other';
     document.documentElement.lang = locale;
     document.querySelectorAll('.languages a').forEach((link) => { link.setAttribute('aria-current', String(link.dataset.language === locale)); });
     if (locale !== 'ko') {
       document.title = 'KeyScribe — ' + (copy[locale]['Type with your voice.'] || 'Type with your voice.');
-      document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS and Windows';
+      document.querySelector('meta[name="description"]').content = 'Download KeyScribe, a voice typing app for macOS, Windows and Ubuntu';
       document.querySelector('meta[property="og:title"]').content = document.title;
-      document.querySelector('meta[property="og:description"]').content = 'A lightweight voice typing app for macOS and Windows';
+      document.querySelector('meta[property="og:description"]').content = 'A lightweight voice typing app for macOS, Windows and Ubuntu';
       document.querySelector('meta[name="twitter:title"]').content = document.title;
-      document.querySelector('meta[name="twitter:description"]').content = 'A lightweight voice typing app for macOS and Windows';
+      document.querySelector('meta[name="twitter:description"]').content = 'A lightweight voice typing app for macOS, Windows and Ubuntu';
       document.querySelectorAll('[data-en]').forEach((element) => { element.textContent = element.dataset.en; });
       document.querySelectorAll('[data-en-alt]').forEach((element) => { element.alt = element.dataset.enAlt; });
       document.querySelectorAll('[data-en-html]').forEach((element) => { element.innerHTML = element.dataset.enHtml; });

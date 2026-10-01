@@ -40,3 +40,21 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/lcov.info
           fail_ci_if_error: true
+
+  linux-build-and-test:
+    name: Ubuntu native build and tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev libpulse-dev libcurl4-openssl-dev libjson-glib-dev
+      - name: Build and test
+        run: ./native/linux/build.sh --test
+      - name: Build Ubuntu package
+        run: ./packaging/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeyScribe-ubuntu-amd64
+          path: dist-native/linux/KeyScribe-ubuntu-*.deb

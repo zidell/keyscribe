@@ -44,6 +44,15 @@ See the [KeyScribe download page](https://keyscribe.gitools.net) for downloads a
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | Open the DMG and copy the app to Applications |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | Open the DMG and copy the app to Applications |
 | Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | Download the SignPath-signed installer from GitHub Releases |
+| Ubuntu 24.04+ | Build from source / locally built `.deb` | [Native Linux installation](native/linux/README.md) |
+
+### Ubuntu (native Linux app)
+
+Ubuntu support is available from source as a compiled GTK desktop app alongside
+the macOS and Windows apps. See [Ubuntu build, installation, and usage](native/linux/README.md).
+It supports PipeWire/PulseAudio recording, the three STT providers, and portal-based
+global shortcuts and automatic paste on supported GNOME desktops. Linux packages
+are not yet published in GitHub Releases.
 
 ## First use
 
@@ -105,6 +114,7 @@ You can check app status and errors in the menu-bar or tray menu. **Logs & Recor
 
 - macOS: `~/Library/Application Support/keyscribe/logs/`
 - Windows: `%APPDATA%\keyscribe\logs\`
+- Ubuntu: `~/.local/share/keyscribe/logs/` (or `$XDG_DATA_HOME/keyscribe/logs/`)
 - Development runs: `dist-native/logs/`
 
 Logs for the macOS login app and source-watch build are stored in `dist-native/app.log` and `dist-native/watch.log`.
