@@ -44,6 +44,7 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | GitHub Releases에서 SignPath 서명 설치 파일 다운로드 |
+| Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntu 네이티브 설치 방법](native/linux/README.md) |
 
 ## 처음 사용할 때
 
@@ -58,7 +59,8 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 macOS·Windows 앱에 더해 C/GTK로 컴파일하는 우분투 네이티브 앱을 추가했습니다.
 [우분투 빌드·설치·사용 안내](native/linux/README.md)를 참고하세요. PipeWire/PulseAudio
 녹음과 세 서비스의 전사 API를 지원하며, GNOME 포털을 통해 전역 단축키와 자동
-붙여넣기를 사용합니다. Linux 설치 패키지는 아직 GitHub Releases에 배포되지 않았습니다.
+붙여넣기를 사용합니다. 버전 태그를 푸시하면 Ubuntu `.deb`도 자동으로 빌드해
+macOS·Windows 설치 파일과 같은 GitHub Release에 첨부합니다.
 
 ```sh
 ./native/linux/build.sh --test

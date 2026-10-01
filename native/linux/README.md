@@ -88,6 +88,11 @@ native test entry. It aborts if that entry loses focus and sends no network mess
 
 ## Features
 
+The shared `vMAJOR.MINOR.PATCH` release workflow builds and tests Ubuntu amd64,
+packages `KeyScribe-ubuntu-amd64-MAJOR.MINOR.PATCH.deb`, and attaches it to the same
+GitHub Release as macOS and Windows. The publish job requires all three OS builds
+and checks that the Ubuntu asset exists before publishing.
+
 This port follows the existing macOS/Windows implementation:
 
 - Model selector with asynchronous provider model-list loading, refresh, and a

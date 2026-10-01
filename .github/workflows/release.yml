@@ -151,9 +151,41 @@ jobs:
             dist/KeyScribe-windows-x64-*.exe
           if-no-files-found: error
 
+  ubuntu:
+    name: Ubuntu amd64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release version
+        shell: bash
+        run: |
+          if [[ ! "${GITHUB_REF_NAME#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be vMAJOR.MINOR.PATCH" >&2; exit 1
+          fi
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev libpulse-dev libcurl4-openssl-dev libjson-glib-dev
+      - name: Build and test native app
+        run: ./native/linux/build.sh --test
+      - name: Package Ubuntu app
+        shell: bash
+        run: |
+          export KEYSCRIBE_VERSION="${GITHUB_REF_NAME#v}"
+          ./packaging/build-deb.sh
+          package="dist-native/linux/KeyScribe-ubuntu-amd64-$KEYSCRIBE_VERSION.deb"
+          test -s "$package"
+          test "$(dpkg-deb --field "$package" Version)" = "$KEYSCRIBE_VERSION"
+          test "$(dpkg-deb --field "$package" Architecture)" = amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-amd64
+          path: dist-native/linux/KeyScribe-ubuntu-amd64-*.deb
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [macos, windows]
+    needs: [macos, windows, ubuntu]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -171,7 +203,8 @@ jobs:
             "KeyScribe-macos-arm64-$version.dmg" \
             "KeyScribe-macos-x64-$version.dmg" \
             "KeyScribe-windows-x64-$version.msix" \
-            "KeyScribe-windows-x64-$version.exe"; do
+            "KeyScribe-windows-x64-$version.exe" \
+            "KeyScribe-ubuntu-amd64-$version.deb"; do
             test -s "release-assets/$filename" || { echo "Missing asset: $filename" >&2; exit 1; }
           done
         shell: bash
