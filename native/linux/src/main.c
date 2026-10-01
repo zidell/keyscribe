@@ -92,6 +92,7 @@ static void set_state(State state) {
     if (state == IDLE && !g_queue_is_empty(&app.jobs))
         state = TRANSCRIBING;
     app.state = state;
+    portal_capture_escape(&app.portal, state != IDLE);
     g_autofree char *event =
         g_strdup_printf("state=%d pending=%u", state, g_queue_get_length(&app.jobs));
     debug_log(event);
@@ -177,6 +178,11 @@ static gboolean key_press(GtkWidget *w, GdkEventKey *event, void *user) {
 }
 static void shortcut(const char *id, gboolean pressed, void *user) {
     (void)user;
+    if (g_str_equal(id, "cancel")) {
+        if (pressed)
+            cancel_action(NULL, NULL);
+        return;
+    }
     if (!g_str_equal(id, "record"))
         return;
     if (pressed && app.trigger_down)

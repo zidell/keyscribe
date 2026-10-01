@@ -3,6 +3,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 output="${KEYSCRIBE_BUILD_DIR:-$root/dist-native/linux}"
 mkdir -p "$output"
+if [[ "${1:-}" == --escape ]]; then
+  exec "$root/native/linux/tests/escape_test.sh"
+fi
 if [[ "${1:-}" == --input ]]; then
   read -r -a input_cflags <<< "$(pkg-config --cflags gtk+-3.0 gio-unix-2.0)"
   read -r -a input_libs <<< "$(pkg-config --libs gtk+-3.0 gio-unix-2.0)"

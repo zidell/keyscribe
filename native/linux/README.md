@@ -68,8 +68,12 @@ the desktop provides these portals. There is no root input daemon or unrestricte
 keyboard hook. Permissions last for the running session. If a portal is missing
 or permission is denied/revoked, record with the app button, copy the result,
 and paste it manually with Ctrl+V. Older GNOME versions may lack GlobalShortcuts;
-use the button/tray in that case. Escape cancels while the app window has focus;
-cancel from the app or tray menu.
+use the button/tray in that case. On GNOME 50, the bundled KeyScribe Escape
+extension cancels recording/transcription before Escape reaches the focused app.
+The native installer enables it; log out and back in once after first installation.
+For a Debian package installation, enable “KeyScribe recording cancellation” in
+Extensions after logging back in. Other desktops currently require the app/tray
+cancel action or Escape with the main app focused.
 
 Configured launches start in the tray; use the tray's Settings item or
 `keyscribe --settings` to open the window explicitly.
@@ -126,8 +130,14 @@ This port follows the existing macOS/Windows implementation:
 
 GNOME/Wayland routes global shortcuts and keyboard input through system portals.
 The shortcut picker requests a key combination; GNOME decides the final binding.
-Single modifier hooks such as Windows Right Alt and global bare-Escape capture
-are unavailable through these portals. Cancel from the app or tray menu instead.
+The GNOME extension handles Escape directly in Shell, independently of the
+recording portal session, so changing cancellation grabs preserves a held
+recording key’s release. It releases its Escape grabs when idle and retains a
+cancelled Escape until key-up. GNOME’s default Escape window/panel shortcuts
+are temporarily routed to cancellation without changing desktop preferences.
+Run `native/linux/test.sh --escape` for a separate headless GNOME/Wayland session
+that verifies held recording keys, toggle cancellation, modifier Escape,
+swallowed press/release, and normal Escape delivery while idle.
 The positioned non-activating widget uses GTK through Ubuntu's XWayland; it
 receives no keyboard or pointer input. The main settings app remains Wayland native.
 Existing macOS and Windows implementations are unchanged.

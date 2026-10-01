@@ -286,11 +286,40 @@ static void session_closed(GDBusConnection *bus, const char *sender, const char 
     if (!g_strcmp0(path, p->shortcuts))
         g_clear_pointer(&p->shortcuts, g_free);
 }
+#define ESCAPE_PATH "/net/gitools/keyscribe/Escape"
+#define ESCAPE_IFACE "net.gitools.keyscribe.Escape"
+static void escape_method(GDBusConnection *bus, const char *sender, const char *path,
+                          const char *interface, const char *method, GVariant *parameters,
+                          GDBusMethodInvocation *invocation, void *user) {
+    (void)bus; (void)sender; (void)path; (void)interface; (void)parameters;
+    Portal *p = user;
+    if (g_str_equal(method, "GetState")) {
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", p->escape_active));
+    } else {
+        if (p->escape_active && p->event)
+            p->event("cancel", TRUE, p->user);
+        g_dbus_method_invocation_return_value(invocation, NULL);
+    }
+}
+void portal_capture_escape(Portal *p, gboolean active) {
+    p->escape_active = active;
+    if (p->bus && p->escape_registration)
+        g_dbus_connection_emit_signal(p->bus, NULL, ESCAPE_PATH, ESCAPE_IFACE,
+                                      "StateChanged", g_variant_new("(b)", active), NULL);
+}
 gboolean portal_init(Portal *p, ShortcutEvent event, void *user, GError **error) {
     *p = (Portal){.event = event, .user = user};
     p->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, error);
     if (!p->bus)
         return FALSE;
+    g_autoptr(GDBusNodeInfo) escape_info = g_dbus_node_info_new_for_xml(
+        "<node><interface name='" ESCAPE_IFACE "'>"
+        "<method name='GetState'><arg type='b' direction='out'/></method>"
+        "<method name='Cancel'/><signal name='StateChanged'><arg type='b'/></signal>"
+        "</interface></node>", NULL);
+    static const GDBusInterfaceVTable escape_vtable = {.method_call = escape_method};
+    p->escape_registration = g_dbus_connection_register_object(
+        p->bus, ESCAPE_PATH, escape_info->interfaces[0], &escape_vtable, p, NULL, NULL);
     // New portals require an application identity for unsandboxed native applications.
     g_autoptr(GVariant) registered = g_dbus_connection_call_sync(
         p->bus, DEST, PATH, "org.freedesktop.host.portal.Registry", "Register",
@@ -314,6 +343,9 @@ static void close_session(Portal *p, char **session) {
     }
 }
 void portal_clear(Portal *p) {
+    if (p->bus && p->escape_registration)
+        g_dbus_connection_unregister_object(p->bus, p->escape_registration);
+    p->escape_registration = 0;
     if (!p->bus)
         return;
     if (p->ibus_managed)

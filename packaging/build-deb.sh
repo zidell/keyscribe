@@ -10,6 +10,9 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 install -Dm755 "$output/keyscribe" "$stage/usr/bin/keyscribe"
 install -Dm644 "$root/native/linux/net.gitools.keyscribe.desktop" "$stage/usr/share/applications/net.gitools.keyscribe.desktop"
+for file in extension.js metadata.json; do
+  install -Dm644 "$root/native/linux/gnome-extension/$file" "$stage/usr/share/gnome-shell/extensions/keyscribe-escape@gitools.net/$file"
+done
 install -Dm644 "$root/LICENSE" "$stage/usr/share/doc/keyscribe/copyright"
 mkdir -p "$stage/DEBIAN"
 cat > "$stage/DEBIAN/control" <<CONTROL

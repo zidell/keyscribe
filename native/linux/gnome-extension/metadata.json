@@ -1,0 +1,9 @@
+{
+  "uuid": "keyscribe-escape@gitools.net",
+  "name": "KeyScribe recording cancellation",
+  "description": "Consume Escape while KeyScribe is recording or transcribing.",
+  "shell-version": [
+    "50"
+  ],
+  "version": 1
+}

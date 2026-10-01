@@ -13,6 +13,8 @@ typedef struct {
     void *user;
     gboolean keyboard_pending, shortcuts_pending, clipboard_enabled;
     gboolean ibus_managed;
+    gboolean escape_active;
+    guint escape_registration;
     char *clipboard_text;
     guint clipboard_subscription;
 } Portal;
@@ -23,3 +25,5 @@ void portal_pause_shortcuts(Portal *p);
 void portal_enable_keyboard(Portal *p, PortalResult callback, void *user);
 gboolean portal_key(Portal *p, int keysym, gboolean pressed, GError **error);
 gboolean portal_set_text(Portal *p, const char *text, GError **error);
+
+void portal_capture_escape(Portal *p, gboolean active);

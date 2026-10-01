@@ -15,4 +15,24 @@ text=pathlib.Path(sys.argv[2]).read_text().replace('Exec=keyscribe',f'Exec="{exe
 (prefix/'share/applications/net.gitools.keyscribe.desktop').write_text(text)
 PY
 if command -v update-desktop-database >/dev/null; then update-desktop-database "$prefix/share/applications"; fi
+extension=keyscribe-escape@gitools.net
+for file in extension.js metadata.json; do
+  install -Dm644 "$root/native/linux/gnome-extension/$file" "$prefix/share/gnome-shell/extensions/$extension/$file"
+done
+if [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] && command -v gsettings >/dev/null; then
+  python3 - "$extension" <<'PYTHON'
+import sys
+from gi.repository import Gio
+settings = Gio.Settings.new('org.gnome.shell')
+name = sys.argv[1]
+enabled = settings.get_strv('enabled-extensions')
+if name not in enabled:
+    settings.set_strv('enabled-extensions', enabled + [name])
+disabled = settings.get_strv('disabled-extensions')
+if name in disabled:
+    settings.set_strv('disabled-extensions', [item for item in disabled if item != name])
+Gio.Settings.sync()
+PYTHON
+  echo 'GNOME: log out and back in once to load the new Escape cancellation extension.'
+fi
 printf 'Installed %s/bin/keyscribe\n' "$prefix"
