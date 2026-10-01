@@ -11,6 +11,12 @@ Target: Ubuntu 24.04 or newer. Build packages on the oldest Ubuntu release you
 intend to distribute them to. A binary built on a newer system may require newer
 libraries. Ubuntu 26.04 GNOME/Wayland is the local development environment.
 
+Download the Ubuntu amd64 `.deb` and its SHA-256 checksum from
+[KeyScribe Ubuntu 0.1.1](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.1).
+Open the downloaded package to install, or run
+`sudo apt install ./KeyScribe-ubuntu-amd64-0.1.1.deb`.
+To build from source:
+
 ```sh
 sudo apt install build-essential pkg-config libgtk-3-dev \
   libayatana-appindicator3-dev libpulse-dev libcurl4-openssl-dev libjson-glib-dev
@@ -28,7 +34,8 @@ accessible by launching the app again. Only one app instance runs per session.
 Create an installable package with `./packaging/build-deb.sh`, optionally setting
 `KEYSCRIBE_VERSION`. The resulting `.deb` is in `dist-native/linux/` and can be
 installed with `sudo apt install ./dist-native/linux/KeyScribe-ubuntu-*.deb`.
-The Linux package is not yet part of the published GitHub Releases.
+Ubuntu-only releases use `linux-vMAJOR.MINOR.PATCH` tags and are built on Ubuntu
+24.04 in GitHub Actions before publication.
 
 ## First use
 

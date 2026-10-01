@@ -57,10 +57,13 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 ## Ubuntu 지원
 
 macOS·Windows 앱에 더해 C/GTK로 컴파일하는 우분투 네이티브 앱을 추가했습니다.
+[Ubuntu 0.1.1 릴리스](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.1)에서
+`.deb` 설치 파일을 다운로드할 수 있습니다.
 [우분투 빌드·설치·사용 안내](native/linux/README.md)를 참고하세요. PipeWire/PulseAudio
 녹음과 세 서비스의 전사 API를 지원하며, GNOME 포털을 통해 전역 단축키와 자동
 붙여넣기를 사용합니다. 버전 태그를 푸시하면 Ubuntu `.deb`도 자동으로 빌드해
 macOS·Windows 설치 파일과 같은 GitHub Release에 첨부합니다.
+Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니다.
 
 ```sh
 ./native/linux/build.sh --test
