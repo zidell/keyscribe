@@ -133,7 +133,10 @@ static void draw_text(cairo_t *cr, const char *text, int x, int y, double red, d
     pango_layout_set_width(layout, 165 * PANGO_SCALE);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
     cairo_set_source_rgb(cr, red, green, blue);
-    cairo_move_to(cr, x, y);
+    PangoRectangle ink;
+    pango_layout_get_pixel_extents(layout, &ink, NULL);
+    // Center visible glyphs rather than a font-dependent line box.
+    cairo_move_to(cr, x, y - ink.y - ink.height / 2.0);
     pango_cairo_show_layout(cr, layout);
     pango_font_description_free(font);
     g_object_unref(layout);
@@ -154,10 +157,10 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr, void *user) {
         cairo_fill(cr);
     } else if (title && g_str_has_prefix(title, "변환")) {
         const char *frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"};
-        draw_text(cr, frames[((int)phase) % 8], 18, 16, 0.69, 0.69, 0.69);
+        draw_text(cr, frames[((int)phase) % 8], 18, 26, 0.69, 0.69, 0.69);
     }
     draw_text(cr, title ? title : "",
-              recording || (title && g_str_has_prefix(title, "변환")) ? 40 : 20, 16, 1, 1, 1);
+              recording || (title && g_str_has_prefix(title, "변환")) ? 40 : 20, 26, 1, 1, 1);
     {
         cairo_set_source_rgb(cr, 1, recording ? 0.28 : 1, recording ? 0.28 : 1);
         for (int i = 0; i < 5; i++) {
