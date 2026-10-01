@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
             g_printerr("%s\n", error->message);
         else
             for (int i = 0; names[i]; i++)
-                g_print("%s\n", names[i]);
+                printf("%s\n", names[i]);
         settings_clear(&s);
         curl_global_cleanup();
         return error ? 1 : 0;
@@ -49,7 +49,8 @@ int main(int argc, char **argv) {
     if (error)
         g_printerr("%s\n", error->message);
     else
-        g_print("%s\n", text);
+        // Machine-readable UTF-8 output must not depend on GLib's locale conversion.
+        printf("%s\n", text);
     g_unlink(path);
     g_free(path);
     settings_clear(&s);

@@ -120,6 +120,10 @@ int main(int argc, char **argv) {
     process_results();
     g_assert_cmpuint(g_queue_get_length(&app.jobs), ==, 2);
     first->ready = TRUE;
+    app.portal.keyboard_pending = TRUE;
+    process_results();
+    g_assert_cmpuint(g_queue_get_length(&app.jobs), ==, 2);
+    app.portal.keyboard_pending = FALSE;
     set_state(RECORDING);
     process_results();
     g_assert_cmpuint(g_queue_get_length(&app.jobs), ==, 2);

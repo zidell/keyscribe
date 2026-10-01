@@ -9,6 +9,7 @@ typedef struct {
     guint shortcut_subscription, closed_subscription;
     ShortcutEvent event;
     void (*trace)(const char *event);
+    void (*keyboard_closed)(void *user);
     void *user;
     gboolean keyboard_pending, shortcuts_pending, clipboard_enabled;
     gboolean ibus_managed;

@@ -279,6 +279,9 @@ static void session_closed(GDBusConnection *bus, const char *sender, const char 
     if (!g_strcmp0(path, p->keyboard)) {
         g_clear_pointer(&p->keyboard, g_free);
         p->clipboard_enabled = FALSE;
+        g_clear_pointer(&p->clipboard_text, g_free);
+        if (p->keyboard_closed)
+            p->keyboard_closed(p->user);
     }
     if (!g_strcmp0(path, p->shortcuts))
         g_clear_pointer(&p->shortcuts, g_free);

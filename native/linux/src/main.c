@@ -4,6 +4,9 @@
 #include "output.h"
 #include "overlay.h"
 #include "sounds.h"
+#ifndef KEYSCRIBE_VERSION
+#define KEYSCRIBE_VERSION "0.1.1"
+#endif
 #include <json-glib/json-glib.h>
 #include <libintl.h>
 #include <glib-unix.h>
@@ -325,6 +328,23 @@ static void keyboard_done(GVariant *values, const GError *error, void *user) {
     set_status(error
                    ? error->message
                    : "자동 붙여넣기 사용 가능. 입력할 앱에 커서를 두고 전역 단축키로 녹음하세요.");
+    if (error)
+        debug_log(error->message);
+    if (!app.closing)
+        process_results();
+}
+static void keyboard_closed(void *user) {
+    (void)user;
+    if (app.closing)
+        return;
+    app.pasting_text = FALSE;
+    set_status("자동 붙여넣기 연결이 끊겨 복구 중입니다…");
+    // Restore only a previously granted permission. The portal still decides
+    // whether the saved grant is valid and handles any required consent.
+    if (app.portal.keyboard_restore_token && *app.portal.keyboard_restore_token) {
+        debug_log("automatic input keyboard session restoring after close");
+        portal_enable_keyboard(&app.portal, keyboard_done, NULL);
+    }
 }
 static void enable_keyboard(GtkWidget *w, void *user) {
     (void)w;
@@ -387,6 +407,8 @@ static void finish_paste(gboolean success) {
 static gboolean paste_tick(void *user) {
     (void)user;
     if (app.state == RECORDING || app.state == CONNECTING)
+        return G_SOURCE_CONTINUE;
+    if (app.portal.keyboard_pending)
         return G_SOURCE_CONTINUE;
     if (!app.portal.keyboard) {
         set_status("키보드 권한이 해제되었습니다. 결과를 복사해 붙여넣으세요.");
@@ -458,11 +480,16 @@ static void deliver(Job *j) {
         debug_log(j->paste ? "delivery copied only: keyboard permission missing" :
                              "delivery copied only: recording started from settings");
         gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), text, -1);
-        set_status("전사 완료. 결과를 복사하고 Ctrl+V로 붙여넣으세요.");
+        set_status(j->paste
+                       ? "자동 붙여넣기 권한이 없습니다. 권한을 허용하거나 Ctrl+V로 붙여넣으세요."
+                       : "전사 완료. 결과를 복사하고 Ctrl+V로 붙여넣으세요.");
+        if (j->paste)
+            show_window(NULL, NULL);
     }
 }
 static void process_results(void) {
-    if (app.state == RECORDING || app.state == CONNECTING || app.paste_steps)
+    if (app.state == RECORDING || app.state == CONNECTING || app.paste_steps ||
+        app.portal.keyboard_pending)
         return;
     while (!g_queue_is_empty(&app.jobs)) {
         Job *j = g_queue_peek_head(&app.jobs);
@@ -1367,6 +1394,7 @@ static void activate(GtkApplication *application, void *user) {
     if (!portal_init(&app.portal, shortcut, NULL, &error))
         set_status(error->message);
     app.portal.trace = debug_log;
+    app.portal.keyboard_closed = keyboard_closed;
     app.portal.keyboard_token_path = g_build_filename(app.config_dir, "keyboard-restore-token", NULL);
     g_file_get_contents(app.portal.keyboard_token_path, &app.portal.keyboard_restore_token,
                         NULL, NULL);
@@ -1401,7 +1429,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && g_str_equal(argv[1], "--overlay"))
         return overlay_run();
     if (argc == 2 && g_str_equal(argv[1], "--version")) {
-        puts("KeyScribe Linux 0.1.0");
+        puts("KeyScribe Linux " KEYSCRIBE_VERSION);
         return 0;
     }
     signal(SIGPIPE, SIG_IGN);

@@ -198,6 +198,16 @@ static gpointer service(gpointer address) {
 }
 static gboolean callback_done;
 static gboolean expected_denial;
+static guint keyboard_closures;
+static void complete(GVariant *values, const GError *error, void *user);
+static void keyboard_closed(void *user) {
+    Portal *p = user;
+    g_assert_null(p->keyboard);
+    g_assert_false(p->clipboard_enabled);
+    g_assert_null(p->clipboard_text);
+    keyboard_closures++;
+    portal_enable_keyboard(p, complete, NULL);
+}
 static void complete(GVariant *values, const GError *error, void *user) {
     (void)values;
     (void)user;
@@ -303,6 +313,21 @@ int main(int argc, char **argv) {
     g_assert_cmpint(g_atomic_int_get(&clipboard_done), ==, 1);
     g_assert_null(p.keyboard);
     g_assert_false(p.clipboard_enabled);
+    // A closed authorized session can be restored without restarting the app.
+    p.keyboard_closed = keyboard_closed;
+    p.user = &p;
+    callback_done = FALSE;
+    portal_enable_keyboard(&p, complete, NULL);
+    wait_for(&callback_done);
+    callback_done = FALSE;
+    g_assert_true(portal_set_text(&p, "한글 클립보드", &error));
+    wait_for(&callback_done);
+    g_assert_cmpuint(keyboard_closures, ==, 1);
+    g_assert_nonnull(p.keyboard);
+    g_assert_false(p.keyboard_pending);
+    g_assert_true(p.clipboard_enabled);
+    g_assert_true(portal_key(&p, 0x76, TRUE, &error));
+    g_assert_true(portal_key(&p, 0x76, FALSE, &error));
     callback_done = FALSE;
     expected_denial = TRUE;
     g_atomic_int_set(&deny, 1);
@@ -321,6 +346,6 @@ int main(int argc, char **argv) {
     g_test_dbus_down(dbus);
     g_object_unref(dbus);
     g_print("PASS: portal registration, early Response race, shortcut signals, keyboard-only "
-            "permission, Korean clipboard FD transfer, revocation, denial\n");
+            "permission, Korean clipboard FD transfer, session recovery, revocation, denial\n");
     return 0;
 }

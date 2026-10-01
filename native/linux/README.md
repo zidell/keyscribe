@@ -46,6 +46,10 @@ The Linux package is not yet part of the published GitHub Releases.
    it before recording so a permission dialog does not move the text cursor.
    Permission restoration is saved privately and requested again at launch,
    so an accepted persistent grant survives application restarts.
+   If GNOME closes the keyboard session while the app is running, KeyScribe
+   requests restoration using that saved grant and holds completed results until
+   restoration finishes. Failed restoration shows the permission error; the next
+   completed shortcut recording opens Settings with the result available to copy.
 4. Focus the target text field, hold the recording shortcut, speak, then release.
    Select toggle in the recording-mode picker for toggle recording. The recording button and tray
    menu always use toggle mode. Recording started from the app UI produces a

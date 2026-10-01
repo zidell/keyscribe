@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-version="${KEYSCRIBE_VERSION:-0.1.0}"
+version="${KEYSCRIBE_VERSION:-0.1.1}"
 if [[ ! "$version" =~ ^[0-9][0-9A-Za-z.+~-]*$ ]]; then echo 'Invalid Debian version' >&2; exit 1; fi
 arch="$(dpkg --print-architecture)"
 "$root/native/linux/build.sh"

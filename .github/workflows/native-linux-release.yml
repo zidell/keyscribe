@@ -1,0 +1,74 @@
+name: Native Ubuntu release
+
+on:
+  push:
+    tags:
+      - 'linux-v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing linux-vMAJOR.MINOR.PATCH tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-linux-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  ubuntu:
+    name: Build, test and publish Ubuntu amd64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Check release tag
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^linux-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo 'Tag must be linux-vMAJOR.MINOR.PATCH' >&2; exit 1;
+          }
+          git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null
+          echo "KEYSCRIBE_VERSION=${RELEASE_TAG#linux-v}" >> "$GITHUB_ENV"
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev libpulse-dev libcurl4-openssl-dev libjson-glib-dev
+      - name: Build and test
+        run: ./native/linux/build.sh --test
+      - name: Package and verify
+        shell: bash
+        run: |
+          ./packaging/build-deb.sh
+          package="dist-native/linux/KeyScribe-ubuntu-amd64-$KEYSCRIBE_VERSION.deb"
+          test -s "$package"
+          test "$(dpkg-deb --field "$package" Version)" = "$KEYSCRIBE_VERSION"
+          test "$(dpkg-deb --field "$package" Architecture)" = amd64
+          test "$(dist-native/linux/keyscribe --version)" = "KeyScribe Linux $KEYSCRIBE_VERSION"
+          cd dist-native/linux
+          sha256sum "KeyScribe-ubuntu-amd64-$KEYSCRIBE_VERSION.deb" > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-amd64
+          path: |
+            dist-native/linux/KeyScribe-ubuntu-amd64-*.deb
+            dist-native/linux/SHA256SUMS
+          if-no-files-found: error
+      - name: Publish Ubuntu release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "dist-native/linux/KeyScribe-ubuntu-amd64-$KEYSCRIBE_VERSION.deb" \
+            dist-native/linux/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "KeyScribe Ubuntu $KEYSCRIBE_VERSION" --generate-notes
