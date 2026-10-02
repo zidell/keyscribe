@@ -68,9 +68,14 @@ In Settings you can change the shortcut, recording-stop method, recording time l
 ## Configure with an AI agent
 
 KeyScribe stores preferences in editable text files on macOS, Windows, and Linux.
-See the [agent settings guide](docs/agent-settings.md) for file locations, supported
-values, platform differences, and how to apply edits. External edits require an
+The installed app includes an offline `readme.txt` ([contents](docs/readme.txt))
+with file locations, supported values, platform differences, and how to apply edits.
+Use `--help` to discover `--config-path`, which prints the active preferences path.
+Preferences include comments describing individual fields and supported values. External edits require an
 app restart; saving in the Settings window does not reload them.
+
+See [Agent Configuration Accessibility](docs/agent-configuration-accessibility.md)
+for reusable design conventions, format tradeoffs, examples, and blind-agent test results.
 
 ## STT providers
 

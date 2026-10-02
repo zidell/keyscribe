@@ -839,6 +839,22 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 }
 
+// Discovery commands must exit before creating the app or loading preferences.
+let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments == ["--config-path"] {
+    print(Settings.configURL.path)
+    exit(0)
+}
+if arguments == ["--help"] || arguments == ["-h"] {
+    print("""
+    KeyScribe voice input
+      --config-path  Print preferences path; no GUI is started
+    Offline settings guide: KeyScribe.app/Contents/Resources/readme.txt
+    Quit before editing preferences; relaunch afterward.
+    """)
+    exit(0)
+}
+
 let application = NSApplication.shared
 let delegate = KeyScribeApp()
 application.delegate = delegate

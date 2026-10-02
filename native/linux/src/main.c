@@ -1435,6 +1435,22 @@ static void activate(GtkApplication *application, void *user) {
         portal_enable_keyboard(&app.portal, keyboard_done, NULL);
 }
 int main(int argc, char **argv) {
+    // Handle discovery without starting GTK, recording, or permission portals.
+    if (argc == 2 && g_str_equal(argv[1], "--config-path")) {
+        g_autofree char *dir = g_build_filename(g_get_user_config_dir(), "keyscribe", NULL);
+        g_autofree char *path = settings_path(dir);
+        puts(path);
+        return 0;
+    }
+    if (argc == 2 && (g_str_equal(argv[1], "--help") || g_str_equal(argv[1], "-h"))) {
+        puts("KeyScribe voice input\n"
+             "  --config-path  Print the active preferences path; no GUI is started\n"
+             "  --settings     Open Settings\n"
+             "  --version      Print version\n"
+             "Offline settings guide: <install prefix>/share/doc/keyscribe/readme.txt\n"
+             "Quit before editing preferences; relaunch afterward.");
+        return 0;
+    }
     if (argc == 2 && g_str_equal(argv[1], "--settings")) {
         app.show_on_start = TRUE;
         argc = 1;

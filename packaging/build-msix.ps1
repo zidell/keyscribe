@@ -50,6 +50,7 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item $appDirectory -ItemType Directory -Force | Out-Null
 New-Item $assetsDirectory -ItemType Directory -Force | Out-Null
 Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $appDirectory 'KeyScribe.exe')
+Copy-Item -LiteralPath (Join-Path $root 'docs\readme.txt') -Destination (Join-Path $appDirectory 'readme.txt')
 $sourceAssets = Join-Path $root 'packaging\msix-assets'
 foreach ($name in @('StoreLogo.png', 'Logo44.png', 'Logo150.png', 'Logo310.png', 'LogoWide.png')) {
     $source = Join-Path $sourceAssets $name

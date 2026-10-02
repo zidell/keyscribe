@@ -110,13 +110,35 @@ struct Settings {
         ]
         let header = """
         # KeyScribe preferences / 에이전트 설정 안내
-        # Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md
+        # Offline guide: KeyScribe.app/Contents/Resources/readme.txt
         # Quit the app before external edits; relaunch afterward to apply them.
         # Saving in Settings does not reload external edits and rewrites this file.
+        # Find this file by passing --config-path to the installed KeyScribe executable.
         # Use one top-level assignment per line; double-quoted strings and inline arrays.
         # API key: user_config.json in this directory (do not put it in this file).
         """
-        try (header + "\n\n" + fields.joined(separator: "\n") + "\n")
+        var comments: [String: String] = [:]
+        if let templateURL = Bundle.main.url(forResource: "config.toml", withExtension: "example"),
+           let template = try? String(contentsOf: templateURL, encoding: .utf8) {
+            var pending: [String] = []
+            for line in template.components(separatedBy: .newlines) {
+                if line.hasPrefix("#") {
+                    pending.append(line)
+                } else if let equal = line.firstIndex(of: "=") {
+                    let key = line[..<equal].trimmingCharacters(in: .whitespaces)
+                    comments[key] = pending.joined(separator: "\n")
+                    pending.removeAll()
+                } else {
+                    pending.removeAll()
+                }
+            }
+        }
+        let annotated = fields.map { field -> String in
+            let key = field.components(separatedBy: "=")[0].trimmingCharacters(in: .whitespaces)
+            guard let comment = comments[key], !comment.isEmpty else { return field }
+            return comment + "\n" + field
+        }
+        try (header + "\n\n" + annotated.joined(separator: "\n\n") + "\n")
             .write(to: Self.configURL, atomically: true, encoding: .utf8)
         var user = ((try? Data(contentsOf: Self.userURL))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]

@@ -9,6 +9,7 @@ project_root="$(cd "$(dirname "$0")/.." && pwd)"
     shasum "$project_root/native/macos/Package.swift" \
         "$project_root/native/macos/Info.plist" \
         "$project_root/native/macos/build.sh" \
+        "$project_root/docs/readme.txt" \
         "$project_root/config.toml.example" \
         "$project_root/packaging/macos-entitlements.plist"
 } | shasum | cut -d ' ' -f 1

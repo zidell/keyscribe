@@ -1,13 +1,16 @@
-# KeyScribe 설정 파일 (템플릿)
+# KeyScribe 환경설정 — 앱을 종료한 뒤 편집하고 다시 실행하세요.
 # ─────────────────────────────────────────────────────────────────────────────
-# 이 파일은 git에 추적되는 템플릿입니다. 실제 사용되는 config.toml은
-# macOS 첫 실행 시에는 단축키를 right_command로 바꿔 복사합니다.
-# 이후 변경은 컴퓨터마다 독립적입니다.
+# 사용자 설정 폴더의 config.toml에 저장된 값을 앱 시작 시 읽습니다.
+# 배포용 config.toml.example은 템플릿이며, 이를 편집해도 사용자 설정은 바뀌지 않습니다.
+# 실제 파일 경로는 설치된 실행 파일에 --config-path를 전달하면 출력됩니다.
+# API 키는 같은 설정 폴더의 user_config.json에 따로 저장됩니다.
 # 실제 설정 위치와 에이전트용 변경 지침:
-# https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md
+# macOS: KeyScribe.app/Contents/Resources/readme.txt
+# Windows: KeyScribe.exe 옆의 readme.txt
+# Linux: <설치 prefix>/share/doc/keyscribe/readme.txt
 # 외부 편집 전 앱을 종료하고, 편집 후 다시 실행하세요.
 # 실행 중 설정 화면에서 저장하면 외부 변경을 이전 값으로 덮어쓸 수 있습니다.
-# Linux는 이 TOML 대신 설정 폴더의 settings.ini를 사용합니다.
+# Linux는 이 TOML 대신 설정 폴더의 config.ini를 사용합니다.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -16,8 +19,10 @@
 # 녹음을 시작하는 트리거 키 (종료 방식은 recording_control에서 선택)
 # 기본값: macOS "right_command", Windows "right_option"
 # 실제 앱 설정 화면에서 현재 OS에서 쓸 수 있는 키를 목록으로 선택할 수 있습니다.
-# macOS: 좌/우 Option, Command, Control, Shift
-# Windows: 좌/우 Alt, Ctrl, Shift
+# macOS 허용값: right_command, left_cmd, right_option, left_option,
+#               right_ctrl, left_ctrl, right_shift, left_shift
+# Windows 허용값: right_alt, left_alt, right_ctrl, left_ctrl, right_shift, left_shift
+# Windows의 right_option / left_option은 right_alt / left_alt의 별칭입니다.
 shortcut = "right_option"
 
 # hold: 키를 놓으면 녹음 종료 / toggle: 다시 누르면 녹음 종료
@@ -31,7 +36,7 @@ recording_time_limit_minutes = 30
 # 녹음 원본은 전사 실패에 대비해 로그 폴더에 저장되며, 기간이 지나면 로그와 함께 자동 삭제됩니다.
 log_retention_hours = 168
 
-# 붙여넣기 직후 Enter를 눌러 메시지를 자동 전송할지 여부
+# 붙여넣기 직후 Enter를 눌러 메시지를 자동 전송할지 여부 (true/false, 기본 true)
 auto_send = true
 
 # STT 인식 언어 코드 (ISO 639-1)
@@ -61,6 +66,7 @@ replacements = []
 
 # 필러 단어 자동 제거 여부 (um, uh, 어, 음, 그 등)
 # 기본값: true
+# ElevenLabs scribe_v2 / scribe_v2_medical 모델에서만 적용됩니다.
 # true  → ElevenLabs 서버 측에서 필러 단어를 제거한 결과 반환
 # false → 발화 그대로 받아쓰기 (회의록·인터뷰 등 원문이 필요한 경우)
 no_verbatim = true
@@ -69,8 +75,11 @@ no_verbatim = true
 
 # API 키 접두사에 따라 서비스가 자동 선택됩니다.
 # OpenAI: sk-..., ElevenLabs: sk_..., Groq: gsk_...
+# OpenAI 전사 모델 이름 (문자열, 기본 gpt-transcribe)
 openai_model = "gpt-transcribe"
+# ElevenLabs 전사 모델 이름 (문자열, 기본 scribe_v2)
 elevenlabs_model = "scribe_v2"
+# Groq 전사 모델 이름 (문자열, 기본 whisper-large-v3-turbo)
 groq_model = "whisper-large-v3-turbo"
 
 

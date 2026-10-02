@@ -91,11 +91,30 @@ pub fn directory() -> PathBuf {
 
 impl Settings {
     pub fn load() -> Self {
+        // Portable EXE downloads have no installer to copy the offline guide.
+        // MSIX already includes it. Do not overwrite an existing readme or let
+        // a read-only installation directory prevent the app from starting.
+        if let Ok(executable) = env::current_exe() {
+            if let Some(parent) = executable.parent() {
+                if let Ok(mut file) = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(parent.join("readme.txt"))
+                {
+                    use io::Write;
+                    let _ = file.write_all(include_bytes!("../../../docs/readme.txt"));
+                }
+            }
+        }
         let directory = directory();
         let mut value = fs::read_to_string(directory.join("config.toml"))
             .ok()
             .and_then(|text| Self::from_config(&text))
             .unwrap_or_default();
+        if !directory.join("config.toml").exists() {
+            // Create an annotated preferences file without persisting API keys.
+            let _ = value.save_config();
+        }
         if let Ok(text) = fs::read_to_string(directory.join("user_config.json")) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
                 value.api_key = json
@@ -114,20 +133,54 @@ impl Settings {
         value
     }
 
-    pub fn save(&self) -> io::Result<()> {
-        let directory = directory();
-        fs::create_dir_all(&directory)?;
+    fn config_text(&self) -> io::Result<String> {
         let config = toml::to_string_pretty(self).map_err(io::Error::other)?;
         let header = concat!(
             "# KeyScribe preferences / 에이전트 설정 안내\n",
-            "# Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md\n",
+            "# Offline guide: readme.txt beside the installed KeyScribe.exe\n",
             "# Quit the app before external edits; relaunch afterward to apply them.\n",
             "# Saving in Settings does not reload external edits and rewrites this file.\n",
+            "# Find this file with KeyScribe.exe --config-path.\n",
             "# Use one top-level assignment per line; double-quoted strings and inline arrays.\n",
             "# API key: user_config.json in this directory (do not put it in this file).\n",
             "\n",
         );
-        fs::write(directory.join("config.toml"), format!("{header}{config}"))?;
+        let template = include_str!("../../../config.toml.example");
+        let mut comments = std::collections::HashMap::new();
+        let mut pending = Vec::new();
+        for line in template.lines() {
+            if line.starts_with('#') {
+                pending.push(line);
+            } else if let Some((key, _)) = line.split_once('=') {
+                comments.insert(key.trim(), pending.join("\n"));
+                pending.clear();
+            } else {
+                pending.clear();
+            }
+        }
+        let mut annotated = String::from(header);
+        for line in config.lines() {
+            if let Some((key, _)) = line.split_once('=') {
+                if let Some(comment) = comments.get(key.trim()) {
+                    annotated.push_str(comment);
+                    annotated.push('\n');
+                }
+            }
+            annotated.push_str(line);
+            annotated.push('\n');
+        }
+        Ok(annotated)
+    }
+
+    fn save_config(&self) -> io::Result<()> {
+        let directory = directory();
+        fs::create_dir_all(&directory)?;
+        fs::write(directory.join("config.toml"), self.config_text()?)
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        self.save_config()?;
+        let directory = directory();
         let user = serde_json::json!({"api_key": self.api_key});
         fs::write(
             directory.join("user_config.json"),
@@ -226,6 +279,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::{parse_replacement, Settings};
+
+    #[test]
+    fn documented_config_roundtrips_values_and_excludes_api_key() {
+        let mut value = Settings::default();
+        value.api_key = "gsk_private_dummy".into();
+        value.language = "ja".into();
+        value.auto_send = false;
+        value.keyterms = vec!["A # B".into(), "quoted \"name\"".into()];
+        value.replacements = vec!["a => b=c".into(), "say => [enter]".into()];
+        let config = value.config_text().unwrap();
+        assert!(!config.contains("gsk_private_dummy"));
+        assert!(config.contains("# hold:"));
+        let loaded = Settings::from_config(&config).unwrap();
+        assert_eq!(loaded.language, value.language);
+        assert_eq!(loaded.auto_send, value.auto_send);
+        assert_eq!(loaded.keyterms, value.keyterms);
+        assert_eq!(loaded.replacements, value.replacements);
+    }
 
     #[test]
     fn replacement_lines_accept_both_arrows_and_drop_broken_ones() {

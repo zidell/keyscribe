@@ -147,7 +147,7 @@ Existing macOS and Windows implementations are unchanged.
 
 ## Local files and checks
 
-Settings/API key: `${XDG_CONFIG_HOME:-~/.config}/keyscribe/settings.ini`.
+Settings/API key: `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.ini`.
 Recordings/diagnostic log: `${XDG_DATA_HOME:-~/.local/share}/keyscribe/logs/`
 (`recording-*.wav` and `debug.log`).
 API keys are stored locally in plaintext with user-only file permissions. The app

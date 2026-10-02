@@ -13,6 +13,7 @@ install -Dm644 "$root/native/linux/net.gitools.keyscribe.desktop" "$stage/usr/sh
 for file in extension.js metadata.json; do
   install -Dm644 "$root/native/linux/gnome-extension/$file" "$stage/usr/share/gnome-shell/extensions/keyscribe-escape@gitools.net/$file"
 done
+install -Dm644 "$root/docs/readme.txt" "$stage/usr/share/doc/keyscribe/readme.txt"
 install -Dm644 "$root/LICENSE" "$stage/usr/share/doc/keyscribe/copyright"
 mkdir -p "$stage/DEBIAN"
 cat > "$stage/DEBIAN/control" <<CONTROL

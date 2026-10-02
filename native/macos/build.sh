@@ -36,6 +36,7 @@ cp "$project_root/assets/keyscribe-menu.png" "$staged_app/Contents/Resources/key
 cp "$project_root/assets/keyscribe.icns" "$staged_app/Contents/Resources/keyscribe.icns"
 cp "$project_root/assets/recording-start.wav" "$staged_app/Contents/Resources/recording-start.wav"
 cp "$project_root/assets/recording-limit.wav" "$staged_app/Contents/Resources/recording-limit.wav"
+cp "$project_root/docs/readme.txt" "$staged_app/Contents/Resources/readme.txt"
 cp "$project_root/config.toml.example" "$staged_app/Contents/Resources/config.toml.example"
 
 if [[ -n "${KEYSCRIBE_VERSION:-}" ]]; then

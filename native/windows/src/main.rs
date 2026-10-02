@@ -10,6 +10,15 @@ mod transcriber;
 mod ui;
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.as_slice() == ["--config-path"] {
+        println!("{}", settings::directory().join("config.toml").display());
+        return;
+    }
+    if arguments.as_slice() == ["--help"] || arguments.as_slice() == ["-h"] {
+        println!("KeyScribe voice input\n  --config-path  Print preferences path; no GUI is started\nOffline settings guide: readme.txt beside KeyScribe.exe\nQuit before editing preferences; relaunch afterward.");
+        return;
+    }
     if let Err(error) = ui::run() {
         debug_log::log(|| format!("app startup/runtime failed: {error}"));
         eprintln!("KeyScribe: {error}");

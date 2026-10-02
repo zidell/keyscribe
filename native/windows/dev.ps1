@@ -23,6 +23,7 @@ public static class KeyScribeDevStop {
 function Get-SourceSnapshot {
     $files = @(
         Get-Item -LiteralPath (Join-Path $root 'config.toml.example')
+        Get-Item -LiteralPath (Join-Path $root 'docs\readme.txt')
         Get-Item -LiteralPath (Join-Path $PSScriptRoot 'Cargo.toml')
         Get-Item -LiteralPath (Join-Path $PSScriptRoot 'Cargo.lock')
         Get-Item -LiteralPath (Join-Path $PSScriptRoot 'build.rs')
@@ -86,6 +87,7 @@ try {
             Stop-OwnedApp
             New-Item -ItemType Directory -Path (Split-Path $output) -Force | Out-Null
             Copy-Item -LiteralPath $built -Destination $output -Force
+            Copy-Item -LiteralPath (Join-Path $root 'docs\readme.txt') -Destination (Join-Path (Split-Path $output) 'readme.txt') -Force
             $previousLog = [Environment]::GetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', 'Process')
             try {
                 [Environment]::SetEnvironmentVariable('KEYSCRIBE_DEBUG_LOG', (Join-Path $root 'dist-native\logs\debug.log'), 'Process')

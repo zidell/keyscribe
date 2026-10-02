@@ -11,6 +11,7 @@ typedef struct {
 void settings_init(Settings *s);
 void settings_clear(Settings *s);
 void settings_copy(Settings *to, const Settings *from);
+char *settings_path(const char *dir);
 gboolean settings_load(Settings *s, const char *dir, GError **error);
 gboolean settings_save(const Settings *s, const char *dir, GError **error);
 Provider provider_from_key(const char *key);

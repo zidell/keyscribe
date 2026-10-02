@@ -53,13 +53,87 @@ static void settings(void) {
     g_assert_false(b.mute_during_recording);
     g_assert_cmpint(b.sound_volume, ==, 175);
     g_assert_cmpstr(b.overlay_position, ==, "top_right");
-    g_autofree char *path = g_build_filename(dir, "settings.ini", NULL);
+    g_autofree char *path = g_build_filename(dir, "config.ini", NULL);
     struct stat st;
     g_assert_cmpint(stat(path, &st), ==, 0);
     g_assert_cmpint(st.st_mode & 0777, ==, 0600);
     settings_clear(&a);
     settings_clear(&b);
     g_unlink(path);
+    g_rmdir(dir);
+}
+static void initial_settings(void) {
+    g_autoptr(GError) error = NULL;
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-initial-settings-XXXXXX", &error);
+    g_assert_no_error(error);
+    g_autofree char *path = settings_path(dir);
+    g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+    g_autofree char *original_key = g_strdup(g_getenv("ELEVENLABS_API_KEY"));
+    g_setenv("ELEVENLABS_API_KEY", "sk_private_dummy", TRUE);
+    Settings value;
+    settings_init(&value);
+    g_assert_true(settings_load(&value, dir, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(value.api_key, ==, "sk_private_dummy");
+    g_autoptr(GKeyFile) disk = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(disk, path, G_KEY_FILE_KEEP_COMMENTS, &error));
+    g_assert_no_error(error);
+    g_autofree char *stored_key = g_key_file_get_string(disk, "settings", "api_key", &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(stored_key, ==, "");
+    g_autofree char *comment = g_key_file_get_comment(disk, "settings", "sound_volume", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(comment);
+    if (original_key)
+        g_setenv("ELEVENLABS_API_KEY", original_key, TRUE);
+    else
+        g_unsetenv("ELEVENLABS_API_KEY");
+    settings_clear(&value);
+    g_unlink(path);
+    g_rmdir(dir);
+}
+static void legacy_settings(void) {
+    g_autoptr(GError) error = NULL;
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-legacy-settings-XXXXXX", &error);
+    g_assert_no_error(error);
+    g_autofree char *legacy = g_build_filename(dir, "settings.ini", NULL);
+    g_autofree char *current = g_build_filename(dir, "config.ini", NULL);
+    g_assert_true(g_file_set_contents(legacy,
+        "[settings]\napi_key=gsk_dummy\nlanguage=ja\nauto_send=false\n"
+        "replacements=one => two\\nthree => four\n", -1, &error));
+    g_assert_no_error(error);
+    g_autofree char *before = settings_path(dir);
+    g_assert_cmpstr(before, ==, legacy);
+    Settings value;
+    settings_init(&value);
+    g_assert_true(settings_load(&value, dir, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
+    g_assert_cmpstr(value.language, ==, "ja");
+    g_assert_false(value.auto_send);
+    g_assert_cmpstr(value.replacements, ==, "one => two\nthree => four");
+    g_assert_true(settings_save(&value, dir, &error));
+    g_assert_no_error(error);
+    g_autofree char *after = settings_path(dir);
+    g_assert_cmpstr(after, ==, current);
+    g_autoptr(GKeyFile) saved = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(saved, current, G_KEY_FILE_KEEP_COMMENTS, &error));
+    g_assert_no_error(error);
+    g_autofree char *comment = g_key_file_get_comment(saved, "settings", "auto_send", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(comment);
+    g_assert_true(g_file_set_contents(legacy, "[settings]\nlanguage=en\n", -1, &error));
+    g_assert_no_error(error);
+    settings_clear(&value);
+    settings_init(&value);
+    g_assert_true(settings_load(&value, dir, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(value.language, ==, "ja");
+    g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
+    g_assert_false(value.auto_send);
+    settings_clear(&value);
+    g_unlink(legacy);
+    g_unlink(current);
     g_rmdir(dir);
 }
 static void wav(void) {
@@ -145,6 +219,8 @@ int main(int argc, char **argv) {
     g_test_add_func("/linux/text", text);
     g_test_add_func("/linux/replacement-key-commands", key_segments);
     g_test_add_func("/linux/settings-private-roundtrip", settings);
+    g_test_add_func("/linux/settings-legacy-migration", legacy_settings);
+    g_test_add_func("/linux/settings-initial-documented-config", initial_settings);
     g_test_add_func("/linux/wav-format", wav);
     g_test_add_func("/linux/retention", retention);
     g_test_add_func("/linux/cancel-upload", cancellation);

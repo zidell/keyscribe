@@ -62,8 +62,20 @@ static void read_string(GKeyFile *k, const char *name, char **dest) {
         *dest = v;
     }
 }
+char *settings_path(const char *dir) {
+    char *path = g_build_filename(dir, "config.ini", NULL);
+    if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
+        char *legacy = g_build_filename(dir, "settings.ini", NULL);
+        if (g_file_test(legacy, G_FILE_TEST_EXISTS)) {
+            g_free(path);
+            return legacy;
+        }
+        g_free(legacy);
+    }
+    return path;
+}
 gboolean settings_load(Settings *s, const char *dir, GError **error) {
-    g_autofree char *path = g_build_filename(dir, "settings.ini", NULL);
+    g_autofree char *path = settings_path(dir);
     g_autoptr(GKeyFile) k = g_key_file_new();
     if (g_file_test(path, G_FILE_TEST_EXISTS)) {
         if (!g_key_file_load_from_file(k, path, G_KEY_FILE_NONE, error))
@@ -96,6 +108,10 @@ gboolean settings_load(Settings *s, const char *dir, GError **error) {
         int hours = g_key_file_get_integer(k, "settings", "retention_hours", NULL);
         if (hours == 1 || hours == 24 || hours == 168 || hours == 720)
             s->retention_hours = hours;
+    } else {
+        // First launch creates documented preferences before environment keys
+        // are loaded, so an environment credential is not written to disk.
+        settings_save(s, dir, NULL);
     }
     if (!*s->api_key) {
         const char *names[] = {"ELEVENLABS_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY"};
@@ -134,18 +150,40 @@ gboolean settings_save(const Settings *s, const char *dir, GError **error) {
     g_key_file_set_boolean(k, "settings", "auto_send", s->auto_send);
     g_key_file_set_integer(k, "settings", "limit_minutes", s->limit_minutes);
     g_key_file_set_integer(k, "settings", "retention_hours", s->retention_hours);
+    const char *comments[][2] = {
+        {"api_key", "API credential; never share this value. Prefix chooses provider: sk-, sk_, gsk_."},
+        {"language", "Transcription language code, e.g. ko, en, ja (default ko)."},
+        {"openai_model", "OpenAI model name (default gpt-4o-mini-transcribe)."},
+        {"elevenlabs_model", "ElevenLabs model name (default scribe_v2)."},
+        {"groq_model", "Groq model name (default whisper-large-v3-turbo)."},
+        {"keyterms", "Recognition words, comma-separated or escaped newlines; at most 100 terms."},
+        {"replacements", "Ordered find => replace rules, separated by escaped newlines. Key tokens like [enter] execute keystrokes."},
+        {"overlay_position", "Widget: hidden, top_left, top_center, top_right, center, bottom_left, bottom_center, bottom_right."},
+        {"shortcut", "Recording shortcut (default CTRL+ALT+space). Desktop portal approval may be required."},
+        {"no_verbatim", "Remove filler words on ElevenLabs scribe_v2/scribe_v2_medical (default true)."},
+        {"mute_during_recording", "Mute system output while recording and restore afterward (default true)."},
+        {"shortcuts_enabled", "App-managed desktop shortcut authorization state; do not edit to grant permissions."},
+        {"sound_volume", "Recording start sound volume, 0..200 percent; 0 disables sound (default 100)."},
+        {"hold", "true: hold key to record; false: press again to stop (default true)."},
+        {"auto_send", "Press Enter after pasting transcription (default true)."},
+        {"limit_minutes", "Recording limit in minutes: 10, 20, 30, 60 (default 30)."},
+        {"retention_hours", "Log and recording retention in hours: 1, 24, 168, 720 (default 168)."},
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(comments); i++)
+        g_key_file_set_comment(k, "settings", comments[i][0], comments[i][1], NULL);
     g_key_file_set_comment(k, NULL, NULL,
         "KeyScribe preferences / 에이전트 설정 안내\n"
-        "Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md\n"
+        "Offline guide: <install prefix>/share/doc/keyscribe/readme.txt (deb: /usr/share/doc/keyscribe/readme.txt)\n"
         "Quit the app before external edits; relaunch afterward to apply them.\n"
         "Saving in Settings does not reload external edits and rewrites this file.\n"
+        "Find this file with keyscribe --config-path.\n"
         "Use [settings], unquoted strings, true/false, and integers.\n"
         "Multiline values use escaped newlines (\\n).\n"
         "This file includes the API key: keep it and backups private (0600).",
         NULL);
     gsize size;
     g_autofree char *data = g_key_file_to_data(k, &size, NULL);
-    g_autofree char *path = g_build_filename(dir, "settings.ini", NULL);
+    g_autofree char *path = g_build_filename(dir, "config.ini", NULL);
     if (!g_file_set_contents_full(path, data, size,
                                   G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE,
                                   0600, error))

@@ -6,8 +6,8 @@ API 키는 사용자 기기의 `user_config.json`에 저장합니다. 경로는 
 
 KeyScribe 자체 계정이나 자체 음성 인식 서버는 없습니다. 소스 코드에는 별도 사용 통계 전송 기능이 없습니다.
 
-Ubuntu 네이티브 앱은 설정과 API 키를 `$XDG_CONFIG_HOME/keyscribe/settings.ini`
-(기본 `~/.config/keyscribe/settings.ini`)에 함께 저장합니다. 파일 권한은 0600이며
+Ubuntu 네이티브 앱은 설정과 API 키를 `$XDG_CONFIG_HOME/keyscribe/config.ini`
+(기본 `~/.config/keyscribe/config.ini`)에 함께 저장합니다. 파일 권한은 0600이며
 API 키는 평문으로 저장됩니다. 녹음 원본은 `$XDG_DATA_HOME/keyscribe/logs/`
 (기본 `~/.local/share/keyscribe/logs/`)에 0600 권한으로 저장하고, 설정한 보관 기간에
 따라 삭제합니다. Ubuntu 버전은 같은 폴더의 `debug.log`에 상태·HTTP 코드 등 진단 정보를 저장하며,

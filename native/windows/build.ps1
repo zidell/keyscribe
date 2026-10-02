@@ -56,4 +56,5 @@ $outputDirectory = Join-Path $root 'dist-native'
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 $output = Join-Path $outputDirectory 'KeyScribe.exe'
 Copy-Item -LiteralPath $built -Destination $output -Force
+Copy-Item -LiteralPath (Join-Path $root 'docs\readme.txt') -Destination (Join-Path $outputDirectory 'readme.txt') -Force
 Write-Output $output

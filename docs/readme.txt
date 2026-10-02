@@ -1,0 +1,164 @@
+KeyScribe — installed app settings guide / 설치된 앱 환경설정 안내
+================================================================
+
+This readme.txt is shipped with the app. No repository access or network
+connection is needed to use the instructions below.
+
+Installed guide locations:
+- macOS: KeyScribe.app/Contents/Resources/readme.txt
+- Windows: readme.txt beside KeyScribe.exe (including inside the MSIX package)
+- Linux .deb: /usr/share/doc/keyscribe/readme.txt
+- Linux local install: <install prefix>/share/doc/keyscribe/readme.txt
+
+한국어 안내: 아래 OS별 실제 사용자 설정 파일을 수정하세요. 설치 폴더의 파일은
+안내 문서입니다. 앱을 종료한 뒤 설정을 편집하고, 다시 실행해야 반영됩니다.
+
+KeyScribe stores preferences in editable UTF-8 text files. Use this guide when a
+user asks to change KeyScribe's language, recording behavior, shortcut, widget,
+sound, recognition words, or replacement rules. There is currently no
+file watcher or automatic reload after an external edit.
+
+## Locate the installed user's files
+
+| Platform | Preferences | API key |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/keyscribe/config.toml` | `user_config.json` in the same directory, property `api_key` |
+| Windows | `%APPDATA%\keyscribe\config.toml` | `user_config.json` in the same directory, property `api_key` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.ini` | `api_key` under `[settings]` in the same INI file |
+
+Resolve paths in the environment of the account running the installed app.
+Windows packaged apps may redirect application data; if the file is absent at
+the normal location, locate the existing `keyscribe` directory in that app's
+package data before creating a second configuration. On macOS, first launch
+creates the annotated preferences file if missing. Windows and Linux also create
+an annotated default file on first launch, without copying environment API keys
+into it. Existing files are not replaced during startup.
+Bundled `config.toml.example` files are templates, not the live preferences.
+
+## Find settings from the installed executable
+
+Run `keyscribe --config-path` (Linux), `KeyScribe.exe --config-path` (Windows), or
+`/Applications/KeyScribe.app/Contents/MacOS/KeyScribe --config-path` (macOS).
+Use the actual installed executable path if it differs. This prints the active
+preferences path without starting the GUI or requesting permissions. `--help`
+also documents discovery. Agents should capture stdout; on Windows, redirect or
+pipe stdout when invoking a GUI executable from a console.
+
+Each saved preferences file includes comments explaining its fields, so it can
+be edited without reading this guide. Comments are refreshed when the GUI saves.
+Linux reads the legacy `settings.ini` when `config.ini` is absent. Saving writes
+`config.ini`, which takes precedence thereafter; existing credentials and settings
+are retained. `--config-path` reports the legacy file while it is still active.
+
+## Change and apply
+
+1. Identify the OS and the existing preferences file. Read only the values needed
+   for the request; Linux's file also contains the API key, so do not dump the
+   entire file into tool output or a response.
+2. Have KeyScribe idle and quit it before editing to avoid an in-memory settings
+   save overwriting the edit. Do not interrupt an active recording or transcription.
+3. Back up the existing file privately, then change only the requested keys.
+   Preserve unrelated values, comments, and API credentials. Add a missing key
+   once; avoid duplicate keys. Keep credentials and Linux backups private
+   (mode `0600` on Unix). Prefer replacing the file atomically.
+4. Validate types, supported values, and syntax. Invalid settings may silently
+   fall back to defaults. Use the restricted syntax below even if a general TOML
+   library supports more features.
+5. Relaunch the installed app. If editing while it is running was unavoidable,
+   use the menu's Restart action before any Settings save. Opening Settings and
+   clicking Save does **not** reload externally edited preferences.
+6. Confirm the file contains the requested values and, when possible, check the
+   relaunched Settings window. Report what changed and whether the app was
+   relaunched; do not claim runtime verification from a file check alone.
+
+GUI saves rewrite the preferences file. Generated comments describe each field,
+but arbitrary user comments are currently not preserved by GUI saves.
+
+## Preference names and values
+
+Defaults below are the code defaults. An existing file or the macOS bundled
+template can supply different values; keep those unless the user requests a change.
+
+| Meaning | macOS / Windows key | Linux key | Values / default |
+| --- | --- | --- | --- |
+| Transcription language (also UI language where supported) | `language` | `language` | String, e.g. `"ko"`, `"en"`, `"ja"`; default `ko` |
+| Hold versus press again to stop | `recording_control` | `hold` | TOML: `"hold"` / `"toggle"`; Linux: `true` / `false`; default hold |
+| Recording time limit | `recording_time_limit_minutes` | `limit_minutes` | Integer: `10`, `20`, `30`, `60`; default `30` |
+| Log and recording retention | `log_retention_hours` | `retention_hours` | Integer hours: `1`, `24`, `168`, `720`; default `168` |
+| Press Enter after pasting | `auto_send` | `auto_send` | Boolean; default `true` |
+| Mute system output while recording | `mute_during_recording` | `mute_during_recording` | Boolean; default `true` |
+| Recording start sound volume | `recording_start_sound_volume` | `sound_volume` | Integer percent, `0`–`200`; `0` disables it; default `100` |
+| Recording widget placement | `overlay_position` | `overlay_position` | `hidden`, `top_left`, `top_center`, `top_right`, `center`, `bottom_left`, `bottom_center`, `bottom_right`; default `bottom_center` |
+| Remove filler words | `no_verbatim` | `no_verbatim` | Boolean; default `true`; sent only to ElevenLabs `scribe_v2` / `scribe_v2_medical` |
+| OpenAI model | `openai_model` | `openai_model` | String; code default `gpt-transcribe` on macOS/Windows, `gpt-4o-mini-transcribe` on Linux |
+| ElevenLabs model | `elevenlabs_model` | `elevenlabs_model` | String; default `scribe_v2` |
+| Groq model | `groq_model` | `groq_model` | String; default `whisper-large-v3-turbo` |
+| Recognition words | `keyterms` | `keyterms` | TOML array of strings; Linux comma/newline-separated string; default empty; use at most 100 terms |
+| Replacement rules | `replacements` | `replacements` | TOML array of strings; Linux newline-separated string; default empty |
+| Recording trigger | `shortcut` | `shortcut` | Platform-specific, see below |
+| Linux shortcut authorization state | — | `shortcuts_enabled` | App-managed boolean; do not change to bypass portal authorization |
+
+Provider selection comes from the API-key prefix (`sk-`, `sk_`, `gsk_`), not from
+the model name. Changing a model alone does not switch providers. Leave credentials
+alone unless the user requests an API-key/provider change. Never print the key.
+When no stored key is present, the app checks `ELEVENLABS_API_KEY`, `GROQ_API_KEY`,
+then `OPENAI_API_KEY` in its process environment. A desktop launch may have a
+different environment from the agent's shell.
+
+### Shortcuts
+
+- macOS: `right_command` (default), `left_cmd`, `right_option`, `left_option`,
+  `right_ctrl`, `left_ctrl`, `right_shift`, `left_shift`.
+- Windows: `right_alt`, `left_alt`, `right_ctrl`, `left_ctrl`, `right_shift`,
+  `left_shift`. The default `right_option` is an alias for `right_alt`.
+- Linux: portal accelerator string, default `CTRL+ALT+space`. A changed shortcut
+  may require desktop portal approval; use the app's shortcut registration flow
+  if needed. A file edit cannot grant keyboard/paste permissions.
+
+### macOS and Windows syntax
+
+Use top-level `key = value` assignments, double-quoted strings, lowercase
+`true`/`false`, integer numbers, and arrays kept on a single line. macOS uses a
+limited parser: avoid TOML sections, single-quoted strings, and multiline arrays.
+Use JSON-compatible escaping inside strings. `#` comments are supported.
+
+For “turn off automatic sending and the sound, and hide the widget,” edit:
+
+```toml
+auto_send = false
+recording_start_sound_volume = 0
+overlay_position = "hidden"
+```
+
+For recognition words and replacement rules:
+
+```toml
+keyterms = ["KeyScribe", "VideoStew"]
+replacements = ["키스크라이브 => KeyScribe", "비디오 스튜 => VideoStew"]
+```
+
+### Linux syntax
+
+Linux uses GLib KeyFile INI syntax. Values go in the existing `[settings]` group.
+Strings have **no surrounding quotes**; booleans are lowercase `true`/`false`.
+Encode newlines inside a value as literal `\n` sequences. Use a GLib KeyFile
+writer where available to handle escaping. `#` comments are supported.
+
+Equivalent entries (merge into the existing group, preserving `api_key`):
+
+```ini
+[settings]
+auto_send=false
+sound_volume=0
+overlay_position=hidden
+keyterms=KeyScribe,VideoStew
+replacements=키스크라이브 => KeyScribe\n비디오 스튜 => VideoStew
+```
+
+Replacement rules run in order and accept `=>` or `->`; an empty right side
+deletes matching text. On all three platforms, recognized bracket tokens such as
+`[enter]` and `[cmd+k]` can execute keystrokes. Add those only when the user asks
+for that behavior. On Linux, `cmd` maps to Ctrl.
+
+For older installed releases, inspect the existing settings before assuming
+every key is available. This guide ships with the app version it describes.
