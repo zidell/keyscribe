@@ -24,7 +24,7 @@ file watcher or automatic reload after an external edit.
 | --- | --- | --- |
 | macOS | `~/Library/Application Support/keyscribe/config.toml` | `user_config.json` in the same directory, property `api_key` |
 | Windows | `%APPDATA%\keyscribe\config.toml` | `user_config.json` in the same directory, property `api_key` |
-| Linux | `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.ini` | `api_key` under `[settings]` in the same INI file |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.toml` | `user_config.json` in the same directory, property `api_key` |
 
 Resolve paths in the environment of the account running the installed app.
 Windows packaged apps may redirect application data; if the file is absent at
@@ -46,15 +46,21 @@ pipe stdout when invoking a GUI executable from a console.
 
 Each saved preferences file includes comments explaining its fields, so it can
 be edited without reading this guide. Comments are refreshed when the GUI saves.
-Linux reads the legacy `settings.ini` when `config.ini` is absent. Saving writes
-`config.ini`, which takes precedence thereafter; existing credentials and settings
-are retained. `--config-path` reports the legacy file while it is still active.
+Linux automatically migrates legacy `config.ini`, or `settings.ini` if no
+`config.ini` exists, on normal startup when `config.toml` is absent. Preferences
+move to commented TOML with the same key names as macOS/Windows. Stored API keys
+move to `user_config.json`; other JSON properties are preserved. Original INI
+files remain unchanged for recovery and may still contain the old API key.
+`config.toml` always takes precedence after migration. `--config-path` reports
+legacy paths before migration and TOML afterward, without performing migration.
+An invalid TOML or credentials JSON stops Linux startup rather than replacing
+files or silently loading old values. Fix the indicated syntax or value and retry.
 
 ## Change and apply
 
 1. Identify the OS and the existing preferences file. Read only the values needed
-   for the request; Linux's file also contains the API key, so do not dump the
-   entire file into tool output or a response.
+   for the request. Legacy Linux INI files contain the API key; do not dump
+   credentials files or legacy INI contents into tool output or a response.
 2. Have KeyScribe idle and quit it before editing to avoid an in-memory settings
    save overwriting the edit. Do not interrupt an active recording or transcription.
 3. Back up the existing file privately, then change only the requested keys.
@@ -62,7 +68,8 @@ are retained. `--config-path` reports the legacy file while it is still active.
    once; avoid duplicate keys. Keep credentials and Linux backups private
    (mode `0600` on Unix). Prefer replacing the file atomically.
 4. Validate types, supported values, and syntax. Invalid settings may silently
-   fall back to defaults. Use the restricted syntax below even if a general TOML
+   fall back to defaults on macOS/Windows; Linux reports an error. Use the
+   common syntax below even if a general TOML
    library supports more features.
 5. Relaunch the installed app. If editing while it is running was unavoidable,
    use the menu's Restart action before any Settings save. Opening Settings and
@@ -79,24 +86,24 @@ but arbitrary user comments are currently not preserved by GUI saves.
 Defaults below are the code defaults. An existing file or the macOS bundled
 template can supply different values; keep those unless the user requests a change.
 
-| Meaning | macOS / Windows key | Linux key | Values / default |
-| --- | --- | --- | --- |
-| Transcription language (also UI language where supported) | `language` | `language` | String, e.g. `"ko"`, `"en"`, `"ja"`; default `ko` |
-| Hold versus press again to stop | `recording_control` | `hold` | TOML: `"hold"` / `"toggle"`; Linux: `true` / `false`; default hold |
-| Recording time limit | `recording_time_limit_minutes` | `limit_minutes` | Integer: `10`, `20`, `30`, `60`; default `30` |
-| Log and recording retention | `log_retention_hours` | `retention_hours` | Integer hours: `1`, `24`, `168`, `720`; default `168` |
-| Press Enter after pasting | `auto_send` | `auto_send` | Boolean; default `true` |
-| Mute system output while recording | `mute_during_recording` | `mute_during_recording` | Boolean; default `true` |
-| Recording start sound volume | `recording_start_sound_volume` | `sound_volume` | Integer percent, `0`–`200`; `0` disables it; default `100` |
-| Recording widget placement | `overlay_position` | `overlay_position` | `hidden`, `top_left`, `top_center`, `top_right`, `center`, `bottom_left`, `bottom_center`, `bottom_right`; default `bottom_center` |
-| Remove filler words | `no_verbatim` | `no_verbatim` | Boolean; default `true`; sent only to ElevenLabs `scribe_v2` / `scribe_v2_medical` |
-| OpenAI model | `openai_model` | `openai_model` | String; code default `gpt-transcribe` on macOS/Windows, `gpt-4o-mini-transcribe` on Linux |
-| ElevenLabs model | `elevenlabs_model` | `elevenlabs_model` | String; default `scribe_v2` |
-| Groq model | `groq_model` | `groq_model` | String; default `whisper-large-v3-turbo` |
-| Recognition words | `keyterms` | `keyterms` | TOML array of strings; Linux comma/newline-separated string; default empty; use at most 100 terms |
-| Replacement rules | `replacements` | `replacements` | TOML array of strings; Linux newline-separated string; default empty |
-| Recording trigger | `shortcut` | `shortcut` | Platform-specific, see below |
-| Linux shortcut authorization state | — | `shortcuts_enabled` | App-managed boolean; do not change to bypass portal authorization |
+| Meaning | Key on all platforms | Values / default |
+| --- | --- | --- |
+| Transcription language (also UI language where supported) | `language` | String, e.g. `"ko"`, `"en"`, `"ja"`; default `ko` |
+| Hold versus press again to stop | `recording_control` | String: `"hold"` / `"toggle"`; default `"hold"` |
+| Recording time limit | `recording_time_limit_minutes` | Integer: `10`, `20`, `30`, `60`; default `30` |
+| Log and recording retention | `log_retention_hours` | Integer hours: `1`, `24`, `168`, `720`; default `168` |
+| Press Enter after pasting | `auto_send` | Boolean; default `true` |
+| Mute system output while recording | `mute_during_recording` | Boolean; default `true` |
+| Recording start sound volume | `recording_start_sound_volume` | Integer percent, `0`–`200`; `0` disables it; default `100` |
+| Recording widget placement | `overlay_position` | `hidden`, `top_left`, `top_center`, `top_right`, `center`, `bottom_left`, `bottom_center`, `bottom_right`; default `bottom_center` |
+| Remove filler words | `no_verbatim` | Boolean; default `true`; sent only to ElevenLabs `scribe_v2` / `scribe_v2_medical` |
+| OpenAI model | `openai_model` | String; code default `gpt-transcribe` on macOS/Windows, `gpt-4o-mini-transcribe` on Linux |
+| ElevenLabs model | `elevenlabs_model` | String; default `scribe_v2` |
+| Groq model | `groq_model` | String; default `whisper-large-v3-turbo` |
+| Recognition words | `keyterms` | Array of individual strings, at most 100; default `[]`; commas within a word are literal |
+| Replacement rules | `replacements` | Ordered array of individual rule strings; default `[]` |
+| Recording trigger | `shortcut` | Platform-specific, see below |
+| Linux shortcut authorization state | `shortcuts_enabled` | Linux only; app-managed boolean, default `false`; do not edit to bypass portal authorization |
 
 Provider selection comes from the API-key prefix (`sk-`, `sk_`, `gsk_`), not from
 the model name. Changing a model alone does not switch providers. Leave credentials
@@ -115,7 +122,7 @@ different environment from the agent's shell.
   may require desktop portal approval; use the app's shortcut registration flow
   if needed. A file edit cannot grant keyboard/paste permissions.
 
-### macOS and Windows syntax
+### Shared TOML syntax
 
 Use top-level `key = value` assignments, double-quoted strings, lowercase
 `true`/`false`, integer numbers, and arrays kept on a single line. macOS uses a
@@ -137,23 +144,27 @@ keyterms = ["KeyScribe", "VideoStew"]
 replacements = ["키스크라이브 => KeyScribe", "비디오 스튜 => VideoStew"]
 ```
 
-### Linux syntax
+### Linux migration field mapping
 
-Linux uses GLib KeyFile INI syntax. Values go in the existing `[settings]` group.
-Strings have **no surrounding quotes**; booleans are lowercase `true`/`false`.
-Encode newlines inside a value as literal `\n` sequences. Use a GLib KeyFile
-writer where available to handle escaping. `#` comments are supported.
+Do not edit legacy INI after TOML has been created; it is a recovery copy.
+The migration maps:
 
-Equivalent entries (merge into the existing group, preserving `api_key`):
+| Legacy INI field | TOML field |
+| --- | --- |
+| `hold=true` / `hold=false` | `recording_control="hold"` / `recording_control="toggle"` |
+| `sound_volume` | `recording_start_sound_volume` |
+| `limit_minutes` | `recording_time_limit_minutes` |
+| `retention_hours` | `log_retention_hours` |
+| comma/newline `keyterms` | array of individual `keyterms` strings |
+| newline `replacements` | ordered array of individual `replacements` strings |
+| `api_key` | JSON property `api_key` in `user_config.json` |
 
-```ini
-[settings]
-auto_send=false
-sound_volume=0
-overlay_position=hidden
-keyterms=KeyScribe,VideoStew
-replacements=키스크라이브 => KeyScribe\n비디오 스튜 => VideoStew
-```
+All other existing preference fields keep their names. Linux's internal shortcut
+authorization state stays in the Linux-only `shortcuts_enabled` field.
+Linux supports standard TOML via a bundled parser, including multiline arrays and
+literal strings. For shared edits across OSes use the restricted syntax above,
+since macOS currently has a smaller parser. Array items must be individual
+single-line words/rules; use separate entries instead of embedded line breaks.
 
 Replacement rules run in order and accept `=>` or `->`; an empty right side
 deletes matching text. On all three platforms, recognized bracket tokens such as

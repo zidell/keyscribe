@@ -17,183 +17,6 @@ Provider provider_from_key(const char *key) {
         return PROVIDER_ELEVENLABS;
     return PROVIDER_NONE;
 }
-void settings_init(Settings *s) {
-    *s = (Settings){.api_key = g_strdup(""),
-                    .language = g_strdup("ko"),
-                    .models = {g_strdup(""), g_strdup("gpt-4o-mini-transcribe"),
-                               g_strdup("scribe_v2"), g_strdup("whisper-large-v3-turbo")},
-                    .keyterms = g_strdup(""),
-                    .replacements = g_strdup(""),
-                    .hold = TRUE,
-                    .auto_send = TRUE,
-                    .no_verbatim = TRUE,
-                    .mute_during_recording = TRUE,
-                    .sound_volume = 100,
-                    .overlay_position = g_strdup("bottom_center"),
-                    .shortcut = g_strdup("CTRL+ALT+space"),
-                    .limit_minutes = 30,
-                    .retention_hours = 168};
-}
-void settings_clear(Settings *s) {
-    g_free(s->api_key);
-    g_free(s->language);
-    g_free(s->keyterms);
-    g_free(s->replacements);
-    g_free(s->overlay_position);
-    g_free(s->shortcut);
-    for (int i = 0; i < 4; i++)
-        g_free(s->models[i]);
-}
-void settings_copy(Settings *to, const Settings *s) {
-    *to = *s;
-    to->api_key = g_strdup(s->api_key);
-    to->language = g_strdup(s->language);
-    to->keyterms = g_strdup(s->keyterms);
-    to->replacements = g_strdup(s->replacements);
-    to->overlay_position = g_strdup(s->overlay_position);
-    to->shortcut = g_strdup(s->shortcut);
-    for (int i = 0; i < 4; i++)
-        to->models[i] = g_strdup(s->models[i]);
-}
-static void read_string(GKeyFile *k, const char *name, char **dest) {
-    char *v = g_key_file_get_string(k, "settings", name, NULL);
-    if (v) {
-        g_free(*dest);
-        *dest = v;
-    }
-}
-char *settings_path(const char *dir) {
-    char *path = g_build_filename(dir, "config.ini", NULL);
-    if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
-        char *legacy = g_build_filename(dir, "settings.ini", NULL);
-        if (g_file_test(legacy, G_FILE_TEST_EXISTS)) {
-            g_free(path);
-            return legacy;
-        }
-        g_free(legacy);
-    }
-    return path;
-}
-gboolean settings_load(Settings *s, const char *dir, GError **error) {
-    g_autofree char *path = settings_path(dir);
-    g_autoptr(GKeyFile) k = g_key_file_new();
-    if (g_file_test(path, G_FILE_TEST_EXISTS)) {
-        if (!g_key_file_load_from_file(k, path, G_KEY_FILE_NONE, error))
-            return FALSE;
-        read_string(k, "api_key", &s->api_key);
-        read_string(k, "language", &s->language);
-        read_string(k, "openai_model", &s->models[1]);
-        read_string(k, "elevenlabs_model", &s->models[2]);
-        read_string(k, "groq_model", &s->models[3]);
-        read_string(k, "keyterms", &s->keyterms);
-        read_string(k, "replacements", &s->replacements);
-        read_string(k, "overlay_position", &s->overlay_position);
-        read_string(k, "shortcut", &s->shortcut);
-        if (g_key_file_has_key(k, "settings", "no_verbatim", NULL))
-            s->no_verbatim = g_key_file_get_boolean(k, "settings", "no_verbatim", NULL);
-        if (g_key_file_has_key(k, "settings", "mute_during_recording", NULL))
-            s->mute_during_recording =
-                g_key_file_get_boolean(k, "settings", "mute_during_recording", NULL);
-        s->shortcuts_enabled = g_key_file_get_boolean(k, "settings", "shortcuts_enabled", NULL);
-        if (g_key_file_has_key(k, "settings", "sound_volume", NULL))
-            s->sound_volume =
-                CLAMP(g_key_file_get_integer(k, "settings", "sound_volume", NULL), 0, 200);
-        if (g_key_file_has_key(k, "settings", "hold", NULL))
-            s->hold = g_key_file_get_boolean(k, "settings", "hold", NULL);
-        if (g_key_file_has_key(k, "settings", "auto_send", NULL))
-            s->auto_send = g_key_file_get_boolean(k, "settings", "auto_send", NULL);
-        int limit = g_key_file_get_integer(k, "settings", "limit_minutes", NULL);
-        if (limit == 10 || limit == 20 || limit == 30 || limit == 60)
-            s->limit_minutes = limit;
-        int hours = g_key_file_get_integer(k, "settings", "retention_hours", NULL);
-        if (hours == 1 || hours == 24 || hours == 168 || hours == 720)
-            s->retention_hours = hours;
-    } else {
-        // First launch creates documented preferences before environment keys
-        // are loaded, so an environment credential is not written to disk.
-        settings_save(s, dir, NULL);
-    }
-    if (!*s->api_key) {
-        const char *names[] = {"ELEVENLABS_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY"};
-        for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
-            const char *v = g_getenv(names[i]);
-            if (v && *v) {
-                g_free(s->api_key);
-                s->api_key = g_strdup(v);
-                break;
-            }
-        }
-    }
-    return TRUE;
-}
-gboolean settings_save(const Settings *s, const char *dir, GError **error) {
-    if (g_mkdir_with_parents(dir, 0700) < 0) {
-        FAIL("설정 폴더를 만들 수 없습니다");
-        return FALSE;
-    }
-    g_autoptr(GKeyFile) k = g_key_file_new();
-#define STR(name, value) g_key_file_set_string(k, "settings", name, value)
-    STR("api_key", s->api_key);
-    STR("language", s->language);
-    STR("openai_model", s->models[1]);
-    STR("elevenlabs_model", s->models[2]);
-    STR("groq_model", s->models[3]);
-    STR("keyterms", s->keyterms);
-    STR("replacements", s->replacements);
-    STR("overlay_position", s->overlay_position);
-    STR("shortcut", s->shortcut);
-    g_key_file_set_boolean(k, "settings", "no_verbatim", s->no_verbatim);
-    g_key_file_set_boolean(k, "settings", "mute_during_recording", s->mute_during_recording);
-    g_key_file_set_boolean(k, "settings", "shortcuts_enabled", s->shortcuts_enabled);
-    g_key_file_set_integer(k, "settings", "sound_volume", s->sound_volume);
-    g_key_file_set_boolean(k, "settings", "hold", s->hold);
-    g_key_file_set_boolean(k, "settings", "auto_send", s->auto_send);
-    g_key_file_set_integer(k, "settings", "limit_minutes", s->limit_minutes);
-    g_key_file_set_integer(k, "settings", "retention_hours", s->retention_hours);
-    const char *comments[][2] = {
-        {"api_key", "API credential; never share this value. Prefix chooses provider: sk-, sk_, gsk_."},
-        {"language", "Transcription language code, e.g. ko, en, ja (default ko)."},
-        {"openai_model", "OpenAI model name (default gpt-4o-mini-transcribe)."},
-        {"elevenlabs_model", "ElevenLabs model name (default scribe_v2)."},
-        {"groq_model", "Groq model name (default whisper-large-v3-turbo)."},
-        {"keyterms", "Recognition words, comma-separated or escaped newlines; at most 100 terms."},
-        {"replacements", "Ordered find => replace rules, separated by escaped newlines. Key tokens like [enter] execute keystrokes."},
-        {"overlay_position", "Widget: hidden, top_left, top_center, top_right, center, bottom_left, bottom_center, bottom_right."},
-        {"shortcut", "Recording shortcut (default CTRL+ALT+space). Desktop portal approval may be required."},
-        {"no_verbatim", "Remove filler words on ElevenLabs scribe_v2/scribe_v2_medical (default true)."},
-        {"mute_during_recording", "Mute system output while recording and restore afterward (default true)."},
-        {"shortcuts_enabled", "App-managed desktop shortcut authorization state; do not edit to grant permissions."},
-        {"sound_volume", "Recording start sound volume, 0..200 percent; 0 disables sound (default 100)."},
-        {"hold", "true: hold key to record; false: press again to stop (default true)."},
-        {"auto_send", "Press Enter after pasting transcription (default true)."},
-        {"limit_minutes", "Recording limit in minutes: 10, 20, 30, 60 (default 30)."},
-        {"retention_hours", "Log and recording retention in hours: 1, 24, 168, 720 (default 168)."},
-    };
-    for (guint i = 0; i < G_N_ELEMENTS(comments); i++)
-        g_key_file_set_comment(k, "settings", comments[i][0], comments[i][1], NULL);
-    g_key_file_set_comment(k, NULL, NULL,
-        "KeyScribe preferences / 에이전트 설정 안내\n"
-        "Offline guide: <install prefix>/share/doc/keyscribe/readme.txt (deb: /usr/share/doc/keyscribe/readme.txt)\n"
-        "Quit the app before external edits; relaunch afterward to apply them.\n"
-        "Saving in Settings does not reload external edits and rewrites this file.\n"
-        "Find this file with keyscribe --config-path.\n"
-        "Use [settings], unquoted strings, true/false, and integers.\n"
-        "Multiline values use escaped newlines (\\n).\n"
-        "This file includes the API key: keep it and backups private (0600).",
-        NULL);
-    gsize size;
-    g_autofree char *data = g_key_file_to_data(k, &size, NULL);
-    g_autofree char *path = g_build_filename(dir, "config.ini", NULL);
-    if (!g_file_set_contents_full(path, data, size,
-                                  G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE,
-                                  0600, error))
-        return FALSE;
-    if (g_chmod(path, 0600) < 0) {
-        FAIL("설정 파일 권한을 설정할 수 없습니다");
-        return FALSE;
-    }
-    return TRUE;
-}
 char *clean_text(const char *text) {
     GString *out = g_string_new(NULL);
     while (*text) {
@@ -307,12 +130,12 @@ static char *transcribe_single(const char *path, const Settings *s, GCancellable
         field(mime, p == PROVIDER_ELEVENLABS ? "language_code" : "language", s->language);
     if (*s->keyterms) {
         if (p == PROVIDER_ELEVENLABS) {
-            g_auto(GStrv) terms = g_strsplit_set(s->keyterms, ",\n", -1);
+            g_auto(GStrv) terms = g_strsplit(s->keyterms, "\n", -1);
             for (int i = 0; terms[i]; i++)
                 if (*g_strstrip(terms[i]))
                     field(mime, "keyterms", terms[i]);
         } else {
-            g_auto(GStrv) terms = g_strsplit_set(s->keyterms, ",\n", -1);
+            g_auto(GStrv) terms = g_strsplit(s->keyterms, "\n", -1);
             for (int i = 0; terms[i]; i++)
                 g_strstrip(terms[i]);
             g_autofree char *joined = g_strjoinv(", ", terms);
@@ -380,7 +203,7 @@ static char *transcribe_single(const char *path, const Settings *s, GCancellable
                 json_node_get_value_type(node) == G_TYPE_STRING) {
                 result = clean_text(json_node_get_string(node));
                 if (p != PROVIDER_ELEVENLABS && *s->keyterms) {
-                    g_auto(GStrv) terms = g_strsplit_set(s->keyterms, ",\n", -1);
+                    g_auto(GStrv) terms = g_strsplit(s->keyterms, "\n", -1);
                     for (int i = 0; terms[i]; i++)
                         g_strstrip(terms[i]);
                     g_autofree char *joined = g_strjoinv(", ", terms);

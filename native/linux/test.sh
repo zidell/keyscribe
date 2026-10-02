@@ -3,6 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 output="${KEYSCRIBE_BUILD_DIR:-$root/dist-native/linux}"
 mkdir -p "$output"
+settings_sources=("$root/native/linux/src/settings.c" "$root/native/linux/vendor/tomlc17/tomlc17.c")
 if [[ "${1:-}" == --escape ]]; then
   exec "$root/native/linux/tests/escape_test.sh"
 fi
@@ -17,19 +18,19 @@ fi
 read -r -a cflags <<< "$(pkg-config --cflags gio-2.0 libcurl json-glib-1.0)"
 read -r -a libs <<< "$(pkg-config --libs gio-2.0 libcurl json-glib-1.0)"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Wpedantic ${CFLAGS:-} "${cflags[@]}" -I"$root/native/linux/src" \
-  "$root/native/linux/tests/core_test.c" "$root/native/linux/src/core.c" -o "$output/core-test" ${LDFLAGS:-} "${libs[@]}"
+  "$root/native/linux/tests/core_test.c" "$root/native/linux/src/core.c" "${settings_sources[@]}" -o "$output/core-test" ${LDFLAGS:-} "${libs[@]}"
 "$output/core-test"
 
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Wpedantic ${CFLAGS:-} "${cflags[@]}" -I"$root/native/linux/src" \
   '-DKEYSCRIBE_TEST_ENDPOINT=g_getenv("KEYSCRIBE_TEST_ENDPOINT")' \
-  "$root/native/linux/tests/transcribe_fixture.c" "$root/native/linux/src/core.c" -o "$output/transcribe-fixture" ${LDFLAGS:-} "${libs[@]}"
+  "$root/native/linux/tests/transcribe_fixture.c" "$root/native/linux/src/core.c" "${settings_sources[@]}" -o "$output/transcribe-fixture" ${LDFLAGS:-} "${libs[@]}"
 python3 "$root/native/linux/tests/http_test.py" "$output/transcribe-fixture"
 if [[ "${1:-}" == --desktop ]]; then
   read -r -a desktop_cflags <<< "$(pkg-config --cflags gtk+-3.0 ayatana-appindicator3-0.1 libpulse-mainloop-glib libpulse-simple libcurl json-glib-1.0 gio-unix-2.0)"
   read -r -a desktop_libs <<< "$(pkg-config --libs gtk+-3.0 ayatana-appindicator3-0.1 libpulse-mainloop-glib libpulse-simple libcurl json-glib-1.0 gio-unix-2.0)"
   python3 "$root/native/linux/embed_sounds.py" "$output/sounds.h"
   "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Wpedantic ${CFLAGS:-} "${desktop_cflags[@]}" -I"$output" \
-    "$root/native/linux/tests/desktop_smoke.c" "$root/native/linux/src/core.c" "$root/native/linux/src/portal.c" "$root/native/linux/src/output.c" "$root/native/linux/src/overlay.c" \
+    "$root/native/linux/tests/desktop_smoke.c" "$root/native/linux/src/core.c" "${settings_sources[@]}" "$root/native/linux/src/portal.c" "$root/native/linux/src/output.c" "$root/native/linux/src/overlay.c" \
     -o "$output/desktop-smoke" ${LDFLAGS:-} "${desktop_libs[@]}" -lm
   "$output/desktop-smoke"
 fi

@@ -6,6 +6,7 @@
 #include <utime.h>
 #include <string.h>
 #include <curl/curl.h>
+#include <json-glib/json-glib.h>
 static void providers(void) {
     g_assert_cmpint(provider_from_key("gsk_test"), ==, PROVIDER_GROQ);
     g_assert_cmpint(provider_from_key("sk-test"), ==, PROVIDER_OPENAI);
@@ -19,54 +20,103 @@ static void text(void) {
         "안녕 키스크라이브", "키스크라이브 => KeyScribe\n안녕 -> 반가워\n => invalid");
     g_assert_cmpstr(r, ==, "반가워 KeyScribe");
 }
+static void settings_cleanup(const char *dir) {
+    const char *names[] = {"config.toml", "user_config.json", "config.ini", "settings.ini"};
+    for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+        g_autofree char *path = g_build_filename(dir, names[i], NULL);
+        g_unlink(path);
+    }
+    g_assert_cmpint(g_rmdir(dir), ==, 0);
+}
+static char *settings_read(const char *dir, const char *name) {
+    g_autofree char *path = g_build_filename(dir, name, NULL);
+    char *text = NULL;
+    g_autoptr(GError) error = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, &error));
+    g_assert_no_error(error);
+    return text;
+}
+static void settings_write(const char *dir, const char *name, const char *text) {
+    g_autofree char *path = g_build_filename(dir, name, NULL);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(g_file_set_contents(path, text, -1, &error));
+    g_assert_no_error(error);
+}
+static void settings_private_file(const char *dir, const char *name) {
+    g_autofree char *path = g_build_filename(dir, name, NULL);
+    struct stat st;
+    g_assert_cmpint(stat(path, &st), ==, 0);
+    g_assert_cmpint(st.st_mode & 0777, ==, 0600);
+}
 static void settings(void) {
-    g_autoptr(GError) e = NULL;
-    g_autofree char *dir = g_dir_make_tmp("keyscribe-settings-XXXXXX", &e);
-    g_assert_no_error(e);
+    g_autoptr(GError) error = NULL;
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-settings-XXXXXX", &error);
+    g_assert_no_error(error);
+    settings_write(dir, "user_config.json",
+                   "{\"api_key\":\"gsk_old_dummy\",\"metadata\":{\"keep\":true},\"revision\":7}");
     Settings a, b;
     settings_init(&a);
     settings_init(&b);
     g_free(a.api_key);
     a.api_key = g_strdup("gsk_dummy");
+    g_free(a.keyterms);
+    a.keyterms = g_strdup("A # B\nquoted \"name\"\n한글 🚀\nACME, Inc.");
     g_free(a.replacements);
-    a.replacements = g_strdup("안녕 => hello\n하나 -> 둘");
+    a.replacements = g_strdup("안녕 => hello\n하나 -> 둘\nquote => \"x\"\\path\nA # B => C=D");
     a.hold = FALSE;
-    a.auto_send = TRUE;
+    a.auto_send = FALSE;
     a.limit_minutes = 60;
     a.retention_hours = 1;
     a.no_verbatim = FALSE;
     a.mute_during_recording = FALSE;
+    a.shortcuts_enabled = TRUE;
     a.sound_volume = 175;
     g_free(a.overlay_position);
     a.overlay_position = g_strdup("top_right");
-    g_assert_true(settings_save(&a, dir, &e));
-    g_assert_no_error(e);
-    g_assert_true(settings_load(&b, dir, &e));
-    g_assert_no_error(e);
+    g_assert_true(settings_save(&a, dir, &error));
+    g_assert_no_error(error);
+    g_assert_true(settings_load(&b, dir, &error));
+    g_assert_no_error(error);
     g_assert_cmpstr(a.api_key, ==, b.api_key);
+    g_assert_cmpstr(a.keyterms, ==, b.keyterms);
     g_assert_cmpstr(a.replacements, ==, b.replacements);
     g_assert_false(b.hold);
-    g_assert_true(b.auto_send);
+    g_assert_false(b.auto_send);
     g_assert_cmpint(b.limit_minutes, ==, 60);
     g_assert_cmpint(b.retention_hours, ==, 1);
     g_assert_false(b.no_verbatim);
     g_assert_false(b.mute_during_recording);
+    g_assert_true(b.shortcuts_enabled);
     g_assert_cmpint(b.sound_volume, ==, 175);
     g_assert_cmpstr(b.overlay_position, ==, "top_right");
-    g_autofree char *path = g_build_filename(dir, "config.ini", NULL);
-    struct stat st;
-    g_assert_cmpint(stat(path, &st), ==, 0);
-    g_assert_cmpint(st.st_mode & 0777, ==, 0600);
+    g_autofree char *config = settings_read(dir, "config.toml");
+    g_assert_null(strstr(config, "gsk_dummy"));
+    g_assert_null(strstr(config, "api_key ="));
+    g_assert_nonnull(strstr(config, "recording_control"));
+    g_assert_nonnull(strstr(config, "recording_time_limit_minutes"));
+    g_assert_nonnull(strstr(config, "recording_start_sound_volume"));
+    g_assert_nonnull(strstr(config, "log_retention_hours"));
+    g_assert_nonnull(strstr(config, "#"));
+    g_autofree char *credentials = settings_read(dir, "user_config.json");
+    g_autoptr(JsonParser) parser = json_parser_new();
+    g_assert_true(json_parser_load_from_data(parser, credentials, -1, &error));
+    g_assert_no_error(error);
+    JsonObject *user = json_node_get_object(json_parser_get_root(parser));
+    g_assert_cmpstr(json_object_get_string_member(user, "api_key"), ==, "gsk_dummy");
+    g_assert_true(json_object_get_boolean_member(json_object_get_object_member(user, "metadata"), "keep"));
+    g_assert_cmpint(json_object_get_int_member(user, "revision"), ==, 7);
+    settings_private_file(dir, "config.toml");
+    settings_private_file(dir, "user_config.json");
     settings_clear(&a);
     settings_clear(&b);
-    g_unlink(path);
-    g_rmdir(dir);
+    settings_cleanup(dir);
 }
 static void initial_settings(void) {
     g_autoptr(GError) error = NULL;
     g_autofree char *dir = g_dir_make_tmp("keyscribe-initial-settings-XXXXXX", &error);
     g_assert_no_error(error);
     g_autofree char *path = settings_path(dir);
+    g_assert_true(g_str_has_suffix(path, "/config.toml"));
     g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
     g_autofree char *original_key = g_strdup(g_getenv("ELEVENLABS_API_KEY"));
     g_setenv("ELEVENLABS_API_KEY", "sk_private_dummy", TRUE);
@@ -75,66 +125,287 @@ static void initial_settings(void) {
     g_assert_true(settings_load(&value, dir, &error));
     g_assert_no_error(error);
     g_assert_cmpstr(value.api_key, ==, "sk_private_dummy");
-    g_autoptr(GKeyFile) disk = g_key_file_new();
-    g_assert_true(g_key_file_load_from_file(disk, path, G_KEY_FILE_KEEP_COMMENTS, &error));
-    g_assert_no_error(error);
-    g_autofree char *stored_key = g_key_file_get_string(disk, "settings", "api_key", &error);
-    g_assert_no_error(error);
-    g_assert_cmpstr(stored_key, ==, "");
-    g_autofree char *comment = g_key_file_get_comment(disk, "settings", "sound_volume", &error);
-    g_assert_no_error(error);
-    g_assert_nonnull(comment);
+    g_autofree char *config = settings_read(dir, "config.toml");
+    g_assert_null(strstr(config, "sk_private_dummy"));
+    g_assert_nonnull(strstr(config, "recording_start_sound_volume"));
+    g_assert_nonnull(strstr(config, "#"));
+    g_autofree char *user_path = g_build_filename(dir, "user_config.json", NULL);
+    if (g_file_test(user_path, G_FILE_TEST_EXISTS)) {
+        g_autofree char *user = settings_read(dir, "user_config.json");
+        g_assert_null(strstr(user, "sk_private_dummy"));
+        settings_private_file(dir, "user_config.json");
+    }
+    settings_private_file(dir, "config.toml");
     if (original_key)
         g_setenv("ELEVENLABS_API_KEY", original_key, TRUE);
     else
         g_unsetenv("ELEVENLABS_API_KEY");
     settings_clear(&value);
-    g_unlink(path);
-    g_rmdir(dir);
+    settings_cleanup(dir);
 }
 static void legacy_settings(void) {
+    const char *sources[] = {"settings.ini", "config.ini"};
+    const char *legacy_text =
+        "# Leave legacy preferences intact\n[settings]\napi_key=gsk_dummy\nlanguage=ja\n"
+        "openai_model=custom-openai\nelevenlabs_model=custom-eleven\ngroq_model=custom-groq\n"
+        "hold=false\nauto_send=false\nno_verbatim=false\nmute_during_recording=false\n"
+        "sound_volume=175\noverlay_position=top_right\nshortcut=CTRL+ALT+r\n"
+        "shortcuts_enabled=true\nlimit_minutes=60\nretention_hours=24\n"
+        "keyterms=KeyScribe, VideoStew\\n한글\nreplacements=one => two\\nthree => four\n";
+    for (guint i = 0; i < G_N_ELEMENTS(sources); i++) {
+        g_autoptr(GError) error = NULL;
+        g_autofree char *dir = g_dir_make_tmp("keyscribe-legacy-settings-XXXXXX", &error);
+        g_assert_no_error(error);
+        settings_write(dir, sources[i], legacy_text);
+        if (g_str_equal(sources[i], "config.ini"))
+            settings_write(dir, "settings.ini", "[settings]\nlanguage=en\napi_key=gsk_stale_dummy\n");
+        g_autofree char *legacy = g_build_filename(dir, sources[i], NULL);
+        g_autofree char *current = g_build_filename(dir, "config.toml", NULL);
+        g_autofree char *before = settings_path(dir);
+        g_assert_cmpstr(before, ==, legacy);
+        g_assert_false(g_file_test(current, G_FILE_TEST_EXISTS));
+        Settings value;
+        settings_init(&value);
+        g_assert_true(settings_load(&value, dir, &error));
+        g_assert_no_error(error);
+        g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
+        g_assert_cmpstr(value.language, ==, "ja");
+        g_assert_cmpstr(value.models[1], ==, "custom-openai");
+        g_assert_cmpstr(value.models[2], ==, "custom-eleven");
+        g_assert_cmpstr(value.models[3], ==, "custom-groq");
+        g_assert_false(value.hold);
+        g_assert_false(value.auto_send);
+        g_assert_false(value.no_verbatim);
+        g_assert_false(value.mute_during_recording);
+        g_assert_true(value.shortcuts_enabled);
+        g_assert_cmpint(value.sound_volume, ==, 175);
+        g_assert_cmpstr(value.overlay_position, ==, "top_right");
+        g_assert_cmpstr(value.shortcut, ==, "CTRL+ALT+r");
+        g_assert_cmpint(value.limit_minutes, ==, 60);
+        g_assert_cmpint(value.retention_hours, ==, 24);
+        g_assert_cmpstr(value.replacements, ==, "one => two\nthree => four");
+        g_assert_cmpstr(value.keyterms, ==, "KeyScribe\nVideoStew\n한글");
+        g_autofree char *migrated_terms = g_strdup(value.keyterms);
+        g_autofree char *after = settings_path(dir);
+        g_assert_cmpstr(after, ==, current);
+        g_autofree char *legacy_unchanged = settings_read(dir, sources[i]);
+        g_assert_cmpstr(legacy_unchanged, ==, legacy_text);
+        g_autofree char *saved = settings_read(dir, "config.toml");
+        g_assert_null(strstr(saved, "gsk_dummy"));
+        settings_private_file(dir, "config.toml");
+        settings_private_file(dir, "user_config.json");
+        settings_write(dir, sources[i], "[settings]\nlanguage=en\napi_key=gsk_other_dummy\n");
+        settings_clear(&value);
+        settings_init(&value);
+        g_assert_true(settings_load(&value, dir, &error));
+        g_assert_no_error(error);
+        g_assert_cmpstr(value.language, ==, "ja");
+        g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
+        g_assert_cmpstr(value.keyterms, ==, migrated_terms);
+        g_assert_cmpstr(value.replacements, ==, "one => two\nthree => four");
+        g_assert_false(value.hold);
+        g_assert_false(value.auto_send);
+        settings_clear(&value);
+        settings_cleanup(dir);
+    }
+}
+static void migration_credentials(void) {
+    const char *users[] = {
+        "{\"api_key\":\"gsk_json_dummy\",\"metadata\":{\"keep\":true}}",
+        "{\"metadata\":{\"keep\":true}}",
+    };
+    const char *keys[] = {"gsk_json_dummy", "gsk_legacy_dummy"};
+    for (guint i = 0; i < G_N_ELEMENTS(users); i++) {
+        g_autofree char *dir = g_dir_make_tmp("keyscribe-migration-credentials-XXXXXX", NULL);
+        const char *legacy = "[settings]\nlanguage=ja\napi_key=gsk_legacy_dummy\n";
+        settings_write(dir, "config.ini", legacy);
+        settings_write(dir, "user_config.json", users[i]);
+        Settings value;
+        settings_init(&value);
+        g_autoptr(GError) error = NULL;
+        g_assert_true(settings_load(&value, dir, &error));
+        g_assert_no_error(error);
+        g_assert_cmpstr(value.api_key, ==, keys[i]);
+        g_autofree char *migrated = settings_read(dir, "user_config.json");
+        g_autoptr(JsonParser) parser = json_parser_new();
+        g_assert_true(json_parser_load_from_data(parser, migrated, -1, &error));
+        g_assert_no_error(error);
+        JsonObject *user = json_node_get_object(json_parser_get_root(parser));
+        g_assert_cmpstr(json_object_get_string_member(user, "api_key"), ==, keys[i]);
+        g_assert_true(json_object_get_boolean_member(json_object_get_object_member(user, "metadata"), "keep"));
+        g_autofree char *unchanged = settings_read(dir, "config.ini");
+        g_assert_cmpstr(unchanged, ==, legacy);
+        settings_private_file(dir, "user_config.json");
+        settings_clear(&value);
+        settings_cleanup(dir);
+    }
+}
+static void toml_boundaries(void) {
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-toml-boundaries-XXXXXX", NULL);
+    g_autoptr(GString) config = g_string_new(
+        "recording_start_sound_volume = 200\nrecording_time_limit_minutes = 10\n"
+        "log_retention_hours = 720\nkeyterms = [");
+    for (int i = 0; i < 100; i++)
+        g_string_append_printf(config, "\"term-%d\",", i);
+    g_string_append(config, "]\n");
+    settings_write(dir, "config.toml", config->str);
+    Settings value;
+    settings_init(&value);
     g_autoptr(GError) error = NULL;
-    g_autofree char *dir = g_dir_make_tmp("keyscribe-legacy-settings-XXXXXX", &error);
+    g_assert_true(settings_load(&value, dir, &error));
     g_assert_no_error(error);
-    g_autofree char *legacy = g_build_filename(dir, "settings.ini", NULL);
-    g_autofree char *current = g_build_filename(dir, "config.ini", NULL);
-    g_assert_true(g_file_set_contents(legacy,
-        "[settings]\napi_key=gsk_dummy\nlanguage=ja\nauto_send=false\n"
-        "replacements=one => two\\nthree => four\n", -1, &error));
+    g_assert_cmpint(value.sound_volume, ==, 200);
+    g_assert_cmpint(value.limit_minutes, ==, 10);
+    g_assert_cmpint(value.retention_hours, ==, 720);
+    g_auto(GStrv) terms = g_strsplit(value.keyterms, "\n", -1);
+    g_assert_cmpuint(g_strv_length(terms), ==, 100);
+    g_assert_cmpstr(terms[99], ==, "term-99");
+    settings_clear(&value);
+    settings_cleanup(dir);
+}
+static void toml_syntax(void) {
+    g_autoptr(GError) error = NULL;
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-toml-syntax-XXXXXX", &error);
     g_assert_no_error(error);
-    g_autofree char *before = settings_path(dir);
-    g_assert_cmpstr(before, ==, legacy);
+    settings_write(dir, "config.toml",
+        "# TOML edited by an agent\nlanguage = 'ja' # inline comment\n"
+        "future_setting = { version = 2 }\n"
+        "recording_control = \"toggle\"\nauto_send = false\n"
+        "recording_time_limit_minutes = 60\nlog_retention_hours = 24\n"
+        "recording_start_sound_volume = 0\noverlay_position = \"hidden\"\n"
+        "keyterms = [\n  \"A # B\", # hash inside string\n"
+        "  \"quoted \\\"name\\\"\",\n  \"\\uD55C\\uAE00\\U0001F680\",\n]\n"
+        "replacements = [\n  \"A # B => C=D\",\n"
+        "  'path => C:\\Users\\test',\n  \"tab => \\t\",\n]\n");
     Settings value;
     settings_init(&value);
     g_assert_true(settings_load(&value, dir, &error));
     g_assert_no_error(error);
-    g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
     g_assert_cmpstr(value.language, ==, "ja");
+    g_assert_false(value.hold);
     g_assert_false(value.auto_send);
-    g_assert_cmpstr(value.replacements, ==, "one => two\nthree => four");
+    g_assert_cmpint(value.limit_minutes, ==, 60);
+    g_assert_cmpint(value.retention_hours, ==, 24);
+    g_assert_cmpint(value.sound_volume, ==, 0);
+    g_assert_cmpstr(value.overlay_position, ==, "hidden");
+    g_assert_cmpstr(value.keyterms, ==, "A # B\nquoted \"name\"\n한글🚀");
+    g_assert_cmpstr(value.replacements, ==, "A # B => C=D\npath => C:\\Users\\test\ntab => \t");
     g_assert_true(settings_save(&value, dir, &error));
     g_assert_no_error(error);
-    g_autofree char *after = settings_path(dir);
-    g_assert_cmpstr(after, ==, current);
-    g_autoptr(GKeyFile) saved = g_key_file_new();
-    g_assert_true(g_key_file_load_from_file(saved, current, G_KEY_FILE_KEEP_COMMENTS, &error));
+    Settings roundtrip;
+    settings_init(&roundtrip);
+    g_assert_true(settings_load(&roundtrip, dir, &error));
     g_assert_no_error(error);
-    g_autofree char *comment = g_key_file_get_comment(saved, "settings", "auto_send", &error);
-    g_assert_no_error(error);
-    g_assert_nonnull(comment);
-    g_assert_true(g_file_set_contents(legacy, "[settings]\nlanguage=en\n", -1, &error));
-    g_assert_no_error(error);
+    g_assert_cmpstr(roundtrip.keyterms, ==, value.keyterms);
+    g_assert_cmpstr(roundtrip.replacements, ==, value.replacements);
+    settings_clear(&roundtrip);
     settings_clear(&value);
+    settings_cleanup(dir);
+}
+static void invalid_toml(void) {
+    g_autoptr(GString) too_many_terms = g_string_new("keyterms = [");
+    for (int i = 0; i < 101; i++)
+        g_string_append(too_many_terms, "\"term\",");
+    g_string_append(too_many_terms, "]\n");
+    const char *invalid[] = {
+        "language = \"unterminated\n",
+        "language = \"ja\"\nlanguage = \"en\"\n",
+        "auto_send = \"false\"\n",
+        "language = 12\n",
+        "recording_control = \"sometimes\"\n",
+        "recording_time_limit_minutes = 45\n",
+        "recording_time_limit_minutes = \"60\"\n",
+        "log_retention_hours = 5\n",
+        "recording_start_sound_volume = 201\n",
+        "recording_start_sound_volume = -1\n",
+        "overlay_position = \"somewhere\"\n",
+        "keyterms = [\"KeyScribe\", 42]\n",
+        "replacements = \"one => two\"\n",
+        "shortcuts_enabled = \"true\"\n",
+        "no_verbatim = 1\n",
+        "keyterms = [\"line\\nterm\"]\n",
+        "replacements = [\"line\\rrule\"]\n",
+        "language = \"\\u0000\"\n",
+        too_many_terms->str,
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(invalid); i++) {
+        g_autofree char *dir = g_dir_make_tmp("keyscribe-invalid-toml-XXXXXX", NULL);
+        settings_write(dir, "config.toml", invalid[i]);
+        settings_write(dir, "config.ini", "[settings]\nlanguage=ja\napi_key=gsk_legacy_dummy\n");
+        const char *credentials = "{\"api_key\":\"gsk_preserve_dummy\",\"keep\":true}";
+        settings_write(dir, "user_config.json", credentials);
+        Settings value;
+        settings_init(&value);
+        g_autoptr(GError) error = NULL;
+        g_test_message("Invalid TOML fixture %u", i);
+        g_assert_false(settings_load(&value, dir, &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+        g_autofree char *unchanged = settings_read(dir, "config.toml");
+        g_assert_cmpstr(unchanged, ==, invalid[i]);
+        g_autofree char *user_unchanged = settings_read(dir, "user_config.json");
+        g_assert_cmpstr(user_unchanged, ==, credentials);
+        settings_clear(&value);
+        settings_cleanup(dir);
+    }
+}
+static void invalid_legacy(void) {
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-invalid-legacy-XXXXXX", NULL);
+    const char *legacy = "[settings\nlanguage=ja\napi_key=gsk_dummy\n";
+    settings_write(dir, "config.ini", legacy);
+    Settings value;
     settings_init(&value);
-    g_assert_true(settings_load(&value, dir, &error));
-    g_assert_no_error(error);
-    g_assert_cmpstr(value.language, ==, "ja");
-    g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
-    g_assert_false(value.auto_send);
+    g_autoptr(GError) error = NULL;
+    g_assert_false(settings_load(&value, dir, &error));
+    g_assert_nonnull(error);
+    g_autofree char *current = g_build_filename(dir, "config.toml", NULL);
+    g_autofree char *user = g_build_filename(dir, "user_config.json", NULL);
+    g_assert_false(g_file_test(current, G_FILE_TEST_EXISTS));
+    g_assert_false(g_file_test(user, G_FILE_TEST_EXISTS));
+    g_autofree char *unchanged = settings_read(dir, "config.ini");
+    g_assert_cmpstr(unchanged, ==, legacy);
     settings_clear(&value);
-    g_unlink(legacy);
-    g_unlink(current);
-    g_rmdir(dir);
+    settings_cleanup(dir);
+}
+static void invalid_credentials(void) {
+    const char *invalid[] = {"{broken json", "[]", "{\"api_key\":42}"};
+    const char *config = "language = \"ja\"\nauto_send = false\n";
+    for (guint i = 0; i < G_N_ELEMENTS(invalid); i++) {
+        g_autofree char *dir = g_dir_make_tmp("keyscribe-invalid-user-XXXXXX", NULL);
+        settings_write(dir, "config.toml", config);
+        settings_write(dir, "user_config.json", invalid[i]);
+        Settings value;
+        settings_init(&value);
+        g_autoptr(GError) error = NULL;
+        g_assert_false(settings_load(&value, dir, &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+        g_clear_error(&error);
+        g_assert_false(settings_save(&value, dir, &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+        g_autofree char *config_unchanged = settings_read(dir, "config.toml");
+        g_autofree char *user_unchanged = settings_read(dir, "user_config.json");
+        g_assert_cmpstr(config_unchanged, ==, config);
+        g_assert_cmpstr(user_unchanged, ==, invalid[i]);
+        settings_clear(&value);
+        settings_cleanup(dir);
+    }
+    // Failed credential parsing must not partially migrate a legacy configuration.
+    g_autofree char *dir = g_dir_make_tmp("keyscribe-invalid-migration-XXXXXX", NULL);
+    const char *legacy = "[settings]\nlanguage=ja\napi_key=gsk_legacy_dummy\n";
+    settings_write(dir, "settings.ini", legacy);
+    settings_write(dir, "user_config.json", invalid[0]);
+    Settings value;
+    settings_init(&value);
+    g_autoptr(GError) error = NULL;
+    g_assert_false(settings_load(&value, dir, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+    g_autofree char *current = g_build_filename(dir, "config.toml", NULL);
+    g_assert_false(g_file_test(current, G_FILE_TEST_EXISTS));
+    g_autofree char *legacy_unchanged = settings_read(dir, "settings.ini");
+    g_autofree char *user_unchanged = settings_read(dir, "user_config.json");
+    g_assert_cmpstr(legacy_unchanged, ==, legacy);
+    g_assert_cmpstr(user_unchanged, ==, invalid[0]);
+    settings_clear(&value);
+    settings_cleanup(dir);
 }
 static void wav(void) {
     FILE *f = tmpfile();
@@ -221,6 +492,12 @@ int main(int argc, char **argv) {
     g_test_add_func("/linux/settings-private-roundtrip", settings);
     g_test_add_func("/linux/settings-legacy-migration", legacy_settings);
     g_test_add_func("/linux/settings-initial-documented-config", initial_settings);
+    g_test_add_func("/linux/settings-toml-syntax", toml_syntax);
+    g_test_add_func("/linux/settings-migration-credentials-metadata", migration_credentials);
+    g_test_add_func("/linux/settings-toml-boundaries", toml_boundaries);
+    g_test_add_func("/linux/settings-invalid-toml", invalid_toml);
+    g_test_add_func("/linux/settings-invalid-legacy-no-data-loss", invalid_legacy);
+    g_test_add_func("/linux/settings-invalid-credentials-no-data-loss", invalid_credentials);
     g_test_add_func("/linux/wav-format", wav);
     g_test_add_func("/linux/retention", retention);
     g_test_add_func("/linux/cancel-upload", cancellation);

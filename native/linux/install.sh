@@ -6,6 +6,7 @@ if [[ ! -x "$binary" ]]; then "$root/native/linux/build.sh"; fi
 prefix="${KEYSCRIBE_INSTALL_PREFIX:-$HOME/.local}"
 install -Dm755 "$binary" "$prefix/bin/keyscribe"
 install -Dm644 "$root/docs/readme.txt" "$prefix/share/doc/keyscribe/readme.txt"
+install -Dm644 "$root/native/linux/vendor/tomlc17/LICENSE" "$prefix/share/doc/keyscribe/tomlc17-LICENSE"
 mkdir -p "$prefix/share/applications"
 python3 - "$prefix" "$root/native/linux/net.gitools.keyscribe.desktop" <<'PY'
 import pathlib,sys

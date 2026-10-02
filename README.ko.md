@@ -71,8 +71,9 @@ Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니�
 ~/.local/bin/keyscribe
 ```
 
-빌드 의존성 설치 명령과 현재 지원 범위는 위 안내에 있습니다. API 키는
-`~/.config/keyscribe/config.ini`, 녹음은 `~/.local/share/keyscribe/logs/`에 저장됩니다.
+빌드 의존성 설치 명령과 현재 지원 범위는 위 안내에 있습니다. 설정과 API 키는 각각
+`~/.config/keyscribe/config.toml`과 같은 폴더의 `user_config.json`에, 녹음은
+`~/.local/share/keyscribe/logs/`에 저장됩니다. 기존 INI 설정은 자동 이관됩니다.
 
 ## AI 에이전트로 설정 변경하기
 
@@ -83,7 +84,7 @@ macOS·Windows·Linux 모두 텍스트 파일로 환경설정을 변경할 수 �
 찾을 수 있습니다. 설정 파일 자체에도 항목 설명과 허용값이 주석으로 포함됩니다.
 외부에서 편집한 설정은 앱을 재시작해야 반영됩니다.
 
-다른 앱에도 적용할 수 있는 [에이전트 친화적인 환경설정 설계 지침](docs/agent-configuration-accessibility.md)에
+다른 앱에도 적용할 수 있는 [에이전트 친화적인 환경설정 설계 지침](https://github.com/zidell/agent-configuration-accessibility)에
 좋은 설계·피해야 할 설계, 설정 형식 선택과 서브에이전트 테스트 결과를 정리했습니다.
 
 ## STT 공급자

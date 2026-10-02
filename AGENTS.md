@@ -9,4 +9,4 @@ When changing settings code, keep that guide and the generated configuration
 comments consistent with the platform loaders and defaults.
 
 For reusable cross-platform design principles and blind-agent test results, see
-[docs/agent-configuration-accessibility.md](docs/agent-configuration-accessibility.md).
+[Agent Configuration Accessibility](https://github.com/zidell/agent-configuration-accessibility).

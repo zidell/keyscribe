@@ -74,7 +74,7 @@ Use `--help` to discover `--config-path`, which prints the active preferences pa
 Preferences include comments describing individual fields and supported values. External edits require an
 app restart; saving in the Settings window does not reload them.
 
-See [Agent Configuration Accessibility](docs/agent-configuration-accessibility.md)
+See [Agent Configuration Accessibility](https://github.com/zidell/agent-configuration-accessibility)
 for reusable design conventions, format tradeoffs, examples, and blind-agent test results.
 
 ## STT providers

@@ -931,7 +931,7 @@ static void save_settings(GtkWidget *w, void *user) {
     }
     g_free(next.keyterms);
     g_autofree char *terms = view_text(app.terms);
-    g_auto(GStrv) entries = g_strsplit_set(terms, "\n,", -1);
+    g_auto(GStrv) entries = g_strsplit(terms, "\n", -1);
     GString *normalized = g_string_new(NULL);
     guint count = 0;
     for (int i = 0; entries[i] && count < 100; i++) {
@@ -1479,8 +1479,14 @@ int main(int argc, char **argv) {
         return 1;
     }
     g_autoptr(GError) error = NULL;
-    if (!settings_load(&app.settings, app.config_dir, &error))
+    if (!settings_load(&app.settings, app.config_dir, &error)) {
         g_printerr("Cannot load settings: %s\n", error->message);
+        settings_clear(&app.settings);
+        g_free(app.config_dir);
+        g_free(app.logs_dir);
+        curl_global_cleanup();
+        return 1;
+    }
     prune_recordings(app.logs_dir, app.settings.retention_hours);
     GtkApplication *application =
         gtk_application_new("net.gitools.keyscribe", G_APPLICATION_DEFAULT_FLAGS);

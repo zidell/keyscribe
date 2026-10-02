@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     g_free(s.models[p]);
     s.models[p] = g_strdup(argv[2]);
     g_free(s.keyterms);
-    s.keyterms = g_strdup("KeyScribe, 우분투");
+    s.keyterms = g_strdup("KeyScribe\n우분투");
     if (g_str_equal(argv[3], "models")) {
         g_autoptr(GCancellable) cancel = g_cancellable_new();
         g_autoptr(GError) error = NULL;

@@ -14,6 +14,7 @@ for file in extension.js metadata.json; do
   install -Dm644 "$root/native/linux/gnome-extension/$file" "$stage/usr/share/gnome-shell/extensions/keyscribe-escape@gitools.net/$file"
 done
 install -Dm644 "$root/docs/readme.txt" "$stage/usr/share/doc/keyscribe/readme.txt"
+install -Dm644 "$root/native/linux/vendor/tomlc17/LICENSE" "$stage/usr/share/doc/keyscribe/tomlc17-LICENSE"
 install -Dm644 "$root/LICENSE" "$stage/usr/share/doc/keyscribe/copyright"
 mkdir -p "$stage/DEBIAN"
 cat > "$stage/DEBIAN/control" <<CONTROL

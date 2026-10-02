@@ -147,7 +147,16 @@ Existing macOS and Windows implementations are unchanged.
 
 ## Local files and checks
 
-Settings/API key: `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.ini`.
+Preferences: `${XDG_CONFIG_HOME:-~/.config}/keyscribe/config.toml`.
+API key: `user_config.json` in the same directory (property `api_key`).
+Both files are written atomically with mode `0600`. Preferences use the same TOML
+keys and string arrays as macOS/Windows, with Linux-only `shortcuts_enabled`.
+The bundled [tomlc17 parser](vendor/tomlc17/README.md) needs no installed TOML package.
+On startup, absent TOML is automatically migrated from `config.ini`, then
+`settings.ini`; old files remain unchanged for recovery and may contain old keys.
+New TOML wins over both legacy files. Invalid TOML or credential JSON stops startup
+with an error instead of overwriting files or falling back to old values.
+`keyscribe --config-path` reports the active path without migrating or opening GUI.
 Recordings/diagnostic log: `${XDG_DATA_HOME:-~/.local/share}/keyscribe/logs/`
 (`recording-*.wav` and `debug.log`).
 API keys are stored locally in plaintext with user-only file permissions. The app
