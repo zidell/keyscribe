@@ -335,6 +335,8 @@ int main(int argc, char **argv) {
     wait_for(&callback_done);
     g_assert_null(p.keyboard);
     g_assert_false(p.keyboard_pending);
+    g_assert_false(p.clipboard_enabled);
+    g_assert_null(p.clipboard_text);
     portal_clear(&p);
     g_autofree char *token_path = g_build_filename(config, "keyboard-token", NULL);
     g_unlink(token_path);

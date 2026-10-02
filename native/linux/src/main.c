@@ -75,7 +75,7 @@ static void update_overlay(void) {
         title = g_strdup_printf("녹음 중 (%02d:%02d)", seconds / 60, seconds % 60);
     } else
         title = g_strdup(app.state == CONNECTING     ? "마이크 연결 중"
-                         : app.state == TRANSCRIBING ? "변환 중..."
+                         : app.state == TRANSCRIBING ? (app.paste_steps ? "입력 중..." : "변환 중...")
                                                      : "");
     overlay_update(&app.overlay, app.state == IDLE ? "hidden" : app.settings.overlay_position,
                    title, app.input_level,
@@ -89,7 +89,7 @@ static void set_status(const char *message) {
     update_overlay();
 }
 static void set_state(State state) {
-    if (state == IDLE && !g_queue_is_empty(&app.jobs))
+    if (state == IDLE && (!g_queue_is_empty(&app.jobs) || app.paste_steps))
         state = TRANSCRIBING;
     app.state = state;
     portal_capture_escape(&app.portal, state != IDLE);
@@ -482,6 +482,8 @@ static void deliver(Job *j) {
         app.paste_index = 0;
         app.pasting_text = FALSE;
         app.paste_timer = g_timeout_add(150, paste_tick, NULL);
+        set_state(TRANSCRIBING);
+        set_status("인식한 내용을 입력하고 있습니다…");
     } else {
         debug_log(j->paste ? "delivery copied only: keyboard permission missing" :
                              "delivery copied only: recording started from settings");
@@ -489,8 +491,8 @@ static void deliver(Job *j) {
         set_status(j->paste
                        ? "자동 붙여넣기 권한이 없습니다. 권한을 허용하거나 Ctrl+V로 붙여넣으세요."
                        : "전사 완료. 결과를 복사하고 Ctrl+V로 붙여넣으세요.");
-        if (j->paste)
-            show_window(NULL, NULL);
+        // Keep focus in the target app even if permission was revoked while
+        // transcribing. The clipboard and tray status provide the fallback.
     }
 }
 static void process_results(void) {
@@ -518,6 +520,9 @@ static void cancel_jobs(void) {
         app.paste_timer = 0;
     }
     g_clear_pointer(&app.paste_steps, g_ptr_array_unref);
+    app.pasting_text = FALSE;
+    if (app.state != RECORDING && app.state != CONNECTING)
+        set_state(IDLE);
     process_results();
 }
 static void transcribe_worker(GTask *task, void *source, void *data, GCancellable *cancel) {
@@ -658,6 +663,15 @@ static void start_recording(gboolean from_shortcut) {
         set_status("설정에서 API 키를 입력하고 저장하세요");
         if (!from_shortcut)
             show_window(NULL, NULL);
+        return;
+    }
+    if (from_shortcut && (app.portal.keyboard_pending || !app.portal.keyboard)) {
+        debug_log("shortcut recording deferred: keyboard permission unavailable");
+        set_status("자동 붙여넣기 권한을 연결 중입니다. 허용 후 입력할 곳에서 녹음 키를 다시 누르세요.");
+        if (!app.portal.keyboard_pending)
+            portal_enable_keyboard(&app.portal, keyboard_done, NULL);
+        // Permission dialogs can move focus. Require a fresh shortcut press
+        // after the user returns to the intended text field.
         return;
     }
     g_autofree char *stamp =

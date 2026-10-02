@@ -55,8 +55,11 @@ Ubuntu-only releases use `linux-vMAJOR.MINOR.PATCH` tags and are built on Ubuntu
    so an accepted persistent grant survives application restarts.
    If GNOME closes the keyboard session while the app is running, KeyScribe
    requests restoration using that saved grant and holds completed results until
-   restoration finishes. Failed restoration shows the permission error; the next
-   completed shortcut recording opens Settings with the result available to copy.
+   restoration finishes. Failed restoration shows the permission error. A shortcut
+   press without keyboard permission requests access before recording; after
+   accepting, return to the target text field and press the shortcut again.
+   If permission is lost during transcription, the result is copied to the
+   clipboard and Settings stays closed so the target keeps focus.
 4. Focus the target text field, hold the recording shortcut, speak, then release.
    Select toggle in the recording-mode picker for toggle recording. The recording button and tray
    menu always use toggle mode. Recording started from the app UI produces a

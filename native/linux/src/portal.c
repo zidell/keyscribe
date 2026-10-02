@@ -485,9 +485,11 @@ static void created(GVariant *values, const GError *error, void *user) {
 static void setup(Portal *p, gboolean keyboard, PortalResult cb, void *user) {
     if (keyboard ? p->keyboard_pending : p->shortcuts_pending)
         return;
-    if (keyboard)
+    if (keyboard) {
         p->keyboard_pending = TRUE;
-    else
+        p->clipboard_enabled = FALSE;
+        g_clear_pointer(&p->clipboard_text, g_free);
+    } else
         p->shortcuts_pending = TRUE;
     close_session(p, keyboard ? &p->keyboard : &p->shortcuts);
     Setup *s = g_new0(Setup, 1);
