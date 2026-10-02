@@ -1,4 +1,4 @@
-# KeyScribe for Ubuntu
+# KeyScribe for Ubuntu (GNOME and KDE Plasma)
 
 Ubuntu support is an additional native implementation alongside `native/macos`
 and `native/windows`. This app is compiled C with GTK 3, Ayatana AppIndicator,
@@ -12,9 +12,9 @@ intend to distribute them to. A binary built on a newer system may require newer
 libraries. Ubuntu 26.04 GNOME/Wayland is the local development environment.
 
 Download the Ubuntu amd64 `.deb` and its SHA-256 checksum from
-[KeyScribe Ubuntu 0.1.1](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.1).
+[KeyScribe Ubuntu 0.1.2](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.2).
 Open the downloaded package to install, or run
-`sudo apt install ./KeyScribe-ubuntu-amd64-0.1.1.deb`.
+`sudo apt install ./KeyScribe-ubuntu-amd64-0.1.2.deb`.
 To build from source:
 
 ```sh
@@ -37,6 +37,29 @@ installed with `sudo apt install ./dist-native/linux/KeyScribe-ubuntu-*.deb`.
 Ubuntu-only releases use `linux-vMAJOR.MINOR.PATCH` tags and are built on Ubuntu
 24.04 in GitHub Actions before publication.
 
+## Desktop portal setup
+
+Install both backends when switching between GNOME and KDE Plasma:
+
+```sh
+sudo apt install xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-kde
+```
+
+Then log out and back in. Each desktop selects its own backend using its
+shipped desktop-specific portal configuration. Keep both installed; a global
+`portals.conf` that forces GNOME for KDE cannot supply KWin keyboard control.
+KDE's GTK fallback alone supplies neither GlobalShortcuts nor RemoteDesktop.
+The `.deb` recommends both backends and the local installer reports missing ones.
+KDE keyboard injection resolves logical keys using the active GDK/XKB keymap
+and sends portal keycodes, preserving custom modifier mappings. Chord releases
+are briefly paced so asynchronous KWin/IBus handling retains their modifiers. GNOME retains
+portal keysym injection.
+
+Each desktop may ask for its own shortcut and keyboard permission on first use;
+permissions granted by GNOME do not authorize KDE. The configured recording key
+is retained across the switch. KDE uses its native system tray. Keyboard permission restore tokens are kept
+separately for GNOME and KDE so switching cannot overwrite the other grant.
+
 ## First use
 
 1. Enter an OpenAI (`sk-`), ElevenLabs (`sk_`) or Groq (`gsk_`) API key in Settings
@@ -46,7 +69,7 @@ Ubuntu-only releases use `linux-vMAJOR.MINOR.PATCH` tags and are built on Ubuntu
    captures a key and closes immediately. The single **적용** button at the bottom
    saves all settings and registers a changed recording key. **닫기** discards
    unapplied edits and closes the window. The default is
-   **Ctrl+Alt+Space**. GNOME's system
+   **Ctrl+Alt+Space**. The desktop's system
    dialog decides the actual binding; the app displays the returned shortcut.
 3. Enable automatic paste in the same tab and accept the system keyboard-control
    permission. Only keyboard access is requested, with no screen capture. Grant
@@ -65,7 +88,7 @@ Ubuntu-only releases use `linux-vMAJOR.MINOR.PATCH` tags and are built on Ubuntu
    menu always use toggle mode. Recording started from the app UI produces a
    result for manual copying, because that UI has keyboard focus.
 
-On Wayland the app uses the **GlobalShortcuts**, **RemoteDesktop** (keyboard),
+On GNOME and KDE Plasma Wayland the app uses the **GlobalShortcuts**, **RemoteDesktop** (keyboard),
 and, where available, **Clipboard** desktop portals. It also works on X11 when
 the desktop provides these portals. There is no root input daemon or unrestricted
 keyboard hook. Permissions last for the running session. If a portal is missing
@@ -75,8 +98,15 @@ use the button/tray in that case. On GNOME 50, the bundled KeyScribe Escape
 extension cancels recording/transcription before Escape reaches the focused app.
 The native installer enables it; log out and back in once after first installation.
 For a Debian package installation, enable “KeyScribe recording cancellation” in
-Extensions after logging back in. Other desktops currently require the app/tray
-cancel action or Escape with the main app focused.
+Extensions after logging back in. KDE Plasma 6 can use the native KWin Escape helper below. It consumes the logical
+Escape press, repeats and release during recording/transcription, including while
+the recording key or other modifiers are held. Idle Escape reaches the focused app.
+Other desktops require the app/tray cancel action or Escape in the main app.
+
+The default recording-start sound volume is 100%. It uses the current output
+route and respects system speaker mute. If the volume is nonzero but the chime is
+silent, check the desktop's output mute and selected speaker first. Recording
+output mute starts after the chime and restores the previous output state.
 
 Configured launches start in the tray; use the tray's Settings item or
 `keyscribe --settings` to open the window explicitly.
@@ -101,8 +131,9 @@ restored on exit or when selecting a different trigger. The next launch recovers
 the backup after an interrupted run. Independent user preference edits are preserved.
 
 After granting keyboard permission, `native/linux/test.sh --input` checks actual
-GNOME permission restoration, Korean clipboard paste, and Enter in a separate
-native test entry. It aborts if that entry loses focus and sends no network messages.
+desktop permission restoration, Korean clipboard paste, and Enter in a separate
+native test entry. It aborts if that entry loses focus and sends no network messages. Use `--input --authorize` for an explicit first
+keyboard permission request in the private test window.
 
 ## Features
 
@@ -142,8 +173,39 @@ Run `native/linux/test.sh --escape` for a separate headless GNOME/Wayland sessio
 that verifies held recording keys, toggle cancellation, modifier Escape,
 swallowed press/release, and normal Escape delivery while idle.
 The positioned non-activating widget uses GTK through Ubuntu's XWayland; it
-receives no keyboard or pointer input. The main settings app remains Wayland native.
+receives no keyboard or pointer input. Its background, text, waveform and margins
+follow XWayland DPI scaling. On KDE the widget adds 20% to the DPI-scaled
+size for readability (about 436×87 physical pixels at 140% when GTK uses an
+X11 scale of one). The main settings app remains Wayland native.
 Existing macOS and Windows implementations are unchanged.
+
+## KDE Plasma 6 Escape helper
+
+Build the optional helper against development headers for the **exact installed
+KWin version** and Qt 6. KWin's input-filter interface is private, so rebuild this
+helper when KWin changes; do not distribute a locally built helper for other versions.
+The standard GTK build does not require these dependencies.
+
+```sh
+# kwin-dev and Qt 6 development packages must match the installed desktop.
+python3 native/linux/kwin-extension/build.py
+./native/linux/install.sh
+```
+
+If headers are extracted rather than installed, set `KEYSCRIBE_KWIN_INCLUDE_DIR`
+to the extracted `usr/include` directory. The installer includes the helper when
+built and enables its small declarative KWin bootstrap to discover user plugins
+at login. Build with the same `KEYSCRIBE_INSTALL_PREFIX` used for installation.
+Log in again after the initial helper installation, or load the bootstrap in KWin.
+KeyScribe also requests helper loading at startup. The helper observes KeyScribe's
+D-Bus recording state, releases its cancellation state when the app exits, and
+keeps a consumed Escape held through key-up without touching the recording shortcut.
+
+Quit idle KeyScribe, then run `native/linux/test.sh --kde-escape` in a live KDE
+session. The private test injects keys only while its test window has focus,
+checks held recording-key releases, toggle/modifier cancellation and idle Escape,
+and unloads its temporary driver on completion. It does not record or upload audio.
+GNOME's isolated equivalent is `native/linux/test.sh --escape`.
 
 ## Local files and checks
 

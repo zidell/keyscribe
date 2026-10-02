@@ -24,6 +24,8 @@ static const char xml[] =
     "type='a{sv}' direction='in'/><arg type='o' direction='out'/></method><method "
     "name='Start'><arg type='o' direction='in'/><arg type='s' direction='in'/><arg type='a{sv}' "
     "direction='in'/><arg type='o' direction='out'/></method><method "
+    "name='NotifyKeyboardKeycode'><arg type='o' direction='in'/><arg type='a{sv}' "
+    "direction='in'/><arg type='i' direction='in'/><arg type='u' direction='in'/></method><method "
     "name='NotifyKeyboardKeysym'><arg type='o' direction='in'/><arg type='a{sv}' "
     "direction='in'/><arg type='i' direction='in'/><arg type='u' "
     "direction='in'/></method></interface>"
@@ -40,19 +42,28 @@ static GMutex mutex;
 static GCond cond;
 static gboolean ready;
 static GMainLoop *service_loop;
-static gint key_events, clipboard_done, deny;
+static gint key_events, clipboard_done, deny, missing;
 static int read_fd = -1;
 static char *keyboard_session, *shortcut_session;
 static void method(GDBusConnection *bus, const char *sender, const char *path, const char *iface,
                    const char *name, GVariant *args, GDBusMethodInvocation *call, void *user) {
     (void)path;
     (void)user;
+    if (g_str_equal(name, "CreateSession") && g_atomic_int_get(&missing)) {
+        g_dbus_method_invocation_return_dbus_error(call,
+            "org.freedesktop.DBus.Error.UnknownMethod", "Missing portal interface");
+        return;
+    }
     if (g_str_equal(name, "Register") || g_str_equal(name, "Close") ||
         g_str_equal(name, "RequestClipboard")) {
         g_dbus_method_invocation_return_value(call, NULL);
         return;
     }
-    if (g_str_equal(name, "NotifyKeyboardKeysym")) {
+    if (g_str_equal(name, "NotifyKeyboardKeysym") || g_str_equal(name, "NotifyKeyboardKeycode")) {
+        if (g_str_equal(name, "NotifyKeyboardKeycode")) {
+            g_autoptr(GVariant) code = g_variant_get_child_value(args, 2);
+            g_assert_cmpint(g_variant_get_int32(code), ==, 56);
+        }
         g_atomic_int_inc(&key_events);
         g_dbus_method_invocation_return_value(call, NULL);
         return;
@@ -211,11 +222,18 @@ static void keyboard_closed(void *user) {
 static void complete(GVariant *values, const GError *error, void *user) {
     (void)values;
     (void)user;
-    if (expected_denial)
+    if (g_atomic_int_get(&missing)) {
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+        g_assert_nonnull(strstr(error->message, "xdg-desktop-portal-kde"));
+    } else if (expected_denial)
         g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
     else
         g_assert_null(error);
     callback_done = TRUE;
+}
+static int keycode(int keysym) {
+    (void)keysym;
+    return 56;
 }
 static void event(const char *id, gboolean pressed, void *user) {
     (void)id;
@@ -233,6 +251,7 @@ static void wait_for(gboolean *done) {
 }
 int main(int argc, char **argv) {
     g_setenv("GSETTINGS_BACKEND", "memory", TRUE);
+    g_setenv("XDG_CURRENT_DESKTOP", "GNOME", TRUE);
     g_autofree char *config = g_dir_make_tmp("keyscribe-portal-XXXXXX", NULL);
     g_assert_nonnull(config);
     g_setenv("XDG_CONFIG_HOME", config, TRUE);
@@ -249,7 +268,9 @@ int main(int argc, char **argv) {
     g_autoptr(GError) error = NULL;
     g_assert_true(portal_init(&p, event, NULL, &error));
     g_assert_no_error(error);
-    p.keyboard_token_path = g_build_filename(config, "keyboard-token", NULL);
+    p.keyboard_token_path = portal_keyboard_token_path(config);
+    g_autofree char *gnome_token_path = g_build_filename(config, "keyboard-restore-token", NULL);
+    g_assert_cmpstr(p.keyboard_token_path, ==, gnome_token_path);
     p.preferred_trigger = g_strdup("Hangul");
     GSettingsSchemaSource *schemas = g_settings_schema_source_get_default();
     g_autoptr(GSettingsSchema) schema = schemas ? g_settings_schema_source_lookup(
@@ -280,10 +301,24 @@ int main(int argc, char **argv) {
     g_assert_false(p.shortcuts_pending);
     portal_pause_shortcuts(&p);
     g_assert_null(p.shortcuts);
+    // Installed GNOME schemas must not cause KDE launches to rewrite GNOME bindings.
+    g_setenv("XDG_CURRENT_DESKTOP", "KDE", TRUE);
+    g_free(p.keyboard_token_path);
+    p.keyboard_token_path = portal_keyboard_token_path(config);
+    g_autofree char *kde_token_path = g_build_filename(config, "keyboard-restore-token-kde", NULL);
+    g_assert_cmpstr(p.keyboard_token_path, ==, kde_token_path);
+    g_autoptr(GVariant) gnome_before = saved_settings ?
+        g_settings_get_value(saved_settings, "shortcuts") : NULL;
+    g_free(p.preferred_trigger);
+    p.preferred_trigger = g_strdup("CTRL+ALT+space");
     callback_done = FALSE;
     portal_bind(&p, complete, NULL);
     wait_for(&callback_done);
     g_assert_nonnull(p.shortcuts);
+    if (saved_settings) {
+        g_autoptr(GVariant) gnome_after = g_settings_get_value(saved_settings, "shortcuts");
+        g_assert_true(g_variant_equal(gnome_before, gnome_after));
+    }
     callback_done = FALSE;
     portal_enable_keyboard(&p, complete, NULL);
     wait_for(&callback_done);
@@ -301,6 +336,10 @@ int main(int argc, char **argv) {
     g_assert_true(portal_key(&p, 0x76, FALSE, &error));
     g_assert_true(portal_key(&p, 0xffe3, FALSE, &error));
     g_assert_cmpint(g_atomic_int_get(&key_events), ==, 4);
+    p.keycode_for_keysym = keycode;
+    g_assert_true(portal_key(&p, 0xffe3, TRUE, &error));
+    g_assert_true(portal_key(&p, 0xffe3, FALSE, &error));
+    p.keycode_for_keysym = NULL;
     g_assert_true(portal_set_text(&p, "한글 클립보드", &error));
     g_assert_no_error(error);
     gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
@@ -337,8 +376,15 @@ int main(int argc, char **argv) {
     g_assert_false(p.keyboard_pending);
     g_assert_false(p.clipboard_enabled);
     g_assert_null(p.clipboard_text);
+    callback_done = FALSE;
+    expected_denial = FALSE;
+    g_atomic_int_set(&missing, 1);
+    portal_bind(&p, complete, NULL);
+    wait_for(&callback_done);
+    g_assert_null(p.shortcuts);
+    g_assert_false(p.shortcuts_pending);
     portal_clear(&p);
-    g_autofree char *token_path = g_build_filename(config, "keyboard-token", NULL);
+    g_autofree char *token_path = g_strdup(kde_token_path);
     g_unlink(token_path);
     g_rmdir(config);
     g_main_loop_quit(service_loop);

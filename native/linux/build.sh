@@ -2,7 +2,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 output="${KEYSCRIBE_BUILD_DIR:-$root/dist-native/linux}"
-version="${KEYSCRIBE_VERSION:-0.1.1}"
+version="${KEYSCRIBE_VERSION:-0.1.2}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo 'Version must be MAJOR.MINOR.PATCH' >&2
   exit 1

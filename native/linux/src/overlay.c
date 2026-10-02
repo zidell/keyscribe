@@ -11,6 +11,10 @@ static char *title;
 static double volume, phase;
 static gboolean recording, time_warning;
 static char *last_position;
+static double widget_scale = 1.0;
+static int widget_pixels(double logical) {
+    return (int)round(logical * widget_scale);
+}
 void overlay_init(Overlay *overlay) {
     overlay->executable = g_file_read_link("/proc/self/exe", NULL);
 }
@@ -82,16 +86,16 @@ static gboolean input(GIOChannel *channel, GIOCondition condition, void *user) {
     GdkMonitor *monitor = gdk_display_get_monitor_at_point(display, x, y);
     GdkRectangle area;
     gdk_monitor_get_workarea(monitor, &area);
-    x = area.x + (area.width - 260) / 2;
-    y = area.y + area.height - 92;
+    x = area.x + (area.width - widget_pixels(260)) / 2;
+    y = area.y + area.height - widget_pixels(92);
     if (strstr(parts[0], "left"))
-        x = area.x + 40;
+        x = area.x + widget_pixels(40);
     else if (strstr(parts[0], "right"))
-        x = area.x + area.width - 300;
+        x = area.x + area.width - widget_pixels(300);
     if (g_str_has_prefix(parts[0], "top"))
-        y = area.y + 40;
+        y = area.y + widget_pixels(40);
     else if (g_str_equal(parts[0], "center"))
-        y = area.y + (area.height - 52) / 2;
+        y = area.y + (area.height - widget_pixels(52)) / 2;
     gtk_window_move(GTK_WINDOW(window), x, y);
     gtk_widget_show_all(window);
     cairo_region_t *empty = cairo_region_create();
@@ -113,6 +117,7 @@ static void pill(cairo_t *cr, double x, double y, double width, double height) {
 static void draw_text(cairo_t *cr, const char *text, int x, int y, double red, double green,
                       double blue) {
     PangoLayout *layout = pango_cairo_create_layout(cr);
+    pango_cairo_context_set_resolution(pango_layout_get_context(layout), 96.0);
     PangoFontDescription *font = pango_font_description_from_string("Sans 10.5");
     pango_layout_set_font_description(layout, font);
     pango_layout_set_text(layout, text, -1);
@@ -148,6 +153,7 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr, void *user) {
     cairo_set_source_rgba(cr, 0, 0, 0, 0);
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    cairo_scale(cr, widget_scale, widget_scale);
     cairo_set_source_rgba(cr, 0.1, 0.1, 0.1, 0.9);
     pill(cr, 0, 0, 260, 52);
     cairo_fill(cr);
@@ -185,6 +191,9 @@ static gboolean tick(void *user) {
 static void session_xauthority(void) {
     // GUI launchers normally inherit this. Source/dev shells may retain an old
     // XAUTHORITY after GNOME restarts; use the current local Mutter session.
+    const char *authority = g_getenv("XAUTHORITY");
+    if (authority && g_file_test(authority, G_FILE_TEST_IS_REGULAR))
+        return;
     const char *display = g_getenv("DISPLAY");
     if (!display || display[0] != ':')
         return;
@@ -203,12 +212,20 @@ int overlay_run(void) {
     session_xauthority();
     if (!gtk_init_check(NULL, NULL))
         return 1;
+    // GTK scales X11 backing buffers for integer GDK_SCALE. Fractional KDE
+    // scaling is exposed as font DPI instead; scale the whole drawing with it.
+    double dpi = gdk_screen_get_resolution(gdk_screen_get_default());
+    widget_scale = dpi > 0 ? CLAMP(dpi / 96.0, 1.0, 4.0) : 1.0;
+    // The user prefers the KDE HUD 20% larger than its DPI-scaled size.
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    if (desktop && strstr(desktop, "KDE"))
+        widget_scale *= 1.2;
     window = gtk_window_new(GTK_WINDOW_POPUP);
     gtk_window_set_title(GTK_WINDOW(window), "KeyScribe widget");
     GtkWidget *canvas = gtk_drawing_area_new();
-    gtk_widget_set_size_request(canvas, 260, 52);
+    gtk_widget_set_size_request(canvas, widget_pixels(260), widget_pixels(52));
     gtk_container_add(GTK_CONTAINER(window), canvas);
-    gtk_window_set_default_size(GTK_WINDOW(window), 260, 52);
+    gtk_window_set_default_size(GTK_WINDOW(window), widget_pixels(260), widget_pixels(52));
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_accept_focus(GTK_WINDOW(window), FALSE);
     gtk_window_set_focus_on_map(GTK_WINDOW(window), FALSE);

@@ -4,6 +4,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 output="${KEYSCRIBE_BUILD_DIR:-$root/dist-native/linux}"
 mkdir -p "$output"
 settings_sources=("$root/native/linux/src/settings.c" "$root/native/linux/vendor/tomlc17/tomlc17.c")
+if [[ "${1:-}" == --kde-escape ]]; then
+  exec "$root/native/linux/tests/kwin_escape_test.sh"
+fi
 if [[ "${1:-}" == --escape ]]; then
   exec "$root/native/linux/tests/escape_test.sh"
 fi
@@ -13,7 +16,7 @@ if [[ "${1:-}" == --input ]]; then
   "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Wpedantic ${CFLAGS:-} "${input_cflags[@]}" \
     -I"$root/native/linux/src" "$root/native/linux/tests/input_smoke.c" \
     "$root/native/linux/src/portal.c" -o "$output/input-smoke" ${LDFLAGS:-} "${input_libs[@]}"
-  exec "$output/input-smoke"
+  exec "$output/input-smoke" "${@:2}"
 fi
 read -r -a cflags <<< "$(pkg-config --cflags gio-2.0 libcurl json-glib-1.0)"
 read -r -a libs <<< "$(pkg-config --libs gio-2.0 libcurl json-glib-1.0)"

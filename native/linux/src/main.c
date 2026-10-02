@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "core.h"
 #include "portal.h"
+#include "input.h"
 #include "output.h"
 #include "overlay.h"
 #include "sounds.h"
@@ -410,6 +411,13 @@ static void finish_paste(gboolean success) {
         process_results();
     }
 }
+static void pace_chord(void) {
+    // KWin/IBus dispatch is asynchronous: retain modifiers until the target
+    // has processed the chord, rather than releasing them in the same burst.
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    if (desktop && strstr(desktop, "KDE"))
+        g_usleep(30000);
+}
 static gboolean paste_tick(void *user) {
     (void)user;
     if (app.state == RECORDING || app.state == CONNECTING)
@@ -442,6 +450,7 @@ static gboolean paste_tick(void *user) {
         guint keys[] = {GDK_KEY_Control_L, GDK_KEY_v};
         for (guint i = 0; i < 2 && ok; i++)
             ok = send_key(keys[i], TRUE);
+        pace_chord();
         for (int i = 1; i >= 0; i--)
             if (!send_key(keys[i], FALSE))
                 ok = FALSE;
@@ -449,6 +458,7 @@ static gboolean paste_tick(void *user) {
     } else {
         for (guint i = 0; i < segment->n_keys && ok; i++)
             ok = send_key(segment->keys[i], TRUE);
+        pace_chord();
         for (int i = (int)segment->n_keys - 1; i >= 0; i--)
             if (!send_key(segment->keys[i], FALSE))
                 ok = FALSE;
@@ -1413,9 +1423,10 @@ static void activate(GtkApplication *application, void *user) {
     g_autoptr(GError) error = NULL;
     if (!portal_init(&app.portal, shortcut, NULL, &error))
         set_status(error->message);
+    app.portal.keycode_for_keysym = input_keycode;
     app.portal.trace = debug_log;
     app.portal.keyboard_closed = keyboard_closed;
-    app.portal.keyboard_token_path = g_build_filename(app.config_dir, "keyboard-restore-token", NULL);
+    app.portal.keyboard_token_path = portal_keyboard_token_path(app.config_dir);
     g_file_get_contents(app.portal.keyboard_token_path, &app.portal.keyboard_restore_token,
                         NULL, NULL);
     set_state(IDLE);

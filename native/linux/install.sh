@@ -6,6 +6,7 @@ if [[ ! -x "$binary" ]]; then "$root/native/linux/build.sh"; fi
 prefix="${KEYSCRIBE_INSTALL_PREFIX:-$HOME/.local}"
 install -Dm755 "$binary" "$prefix/bin/keyscribe"
 install -Dm644 "$root/docs/readme.txt" "$prefix/share/doc/keyscribe/readme.txt"
+install -Dm644 "$root/native/linux/README.md" "$prefix/share/doc/keyscribe/linux-readme.md"
 install -Dm644 "$root/native/linux/vendor/tomlc17/LICENSE" "$prefix/share/doc/keyscribe/tomlc17-LICENSE"
 mkdir -p "$prefix/share/applications"
 python3 - "$prefix" "$root/native/linux/net.gitools.keyscribe.desktop" <<'PY'
@@ -36,5 +37,25 @@ if name in disabled:
 Gio.Settings.sync()
 PYTHON
   echo 'GNOME: log out and back in once to load the new Escape cancellation extension.'
+fi
+kwin_extension="$(dirname "$binary")/keyscribe-escape.so"
+if [[ -f "$kwin_extension" ]]; then
+  install -Dm755 "$kwin_extension" "$prefix/lib/qt6/plugins/kwin/effects/plugins/keyscribe-escape.so"
+  bootstrap="$prefix/share/kwin/scripts/keyscribe-escape-bootstrap"
+  install -Dm644 "$root/native/linux/kwin-extension/bootstrap-metadata.json" "$bootstrap/metadata.json"
+  install -Dm644 "$root/native/linux/kwin-extension/bootstrap.qml" "$bootstrap/contents/ui/main.qml"
+  install -Dm755 "$(dirname "$binary")/libkeyscribebootstrap.so" "$bootstrap/contents/ui/bootstrap/libkeyscribebootstrap.so"
+  printf 'module KeyScribeBootstrap\nplugin keyscribebootstrap\n' > "$bootstrap/contents/ui/bootstrap/qmldir"
+  if command -v kwriteconfig6 >/dev/null; then
+    kwriteconfig6 --file kwinrc --group Plugins --key keyscribe-escape-bootstrapEnabled true
+  fi
+fi
+# Both backends can coexist; the desktop selects its own at login.
+if command -v dpkg-query >/dev/null; then
+  for backend in xdg-desktop-portal-gnome xdg-desktop-portal-kde; do
+    if [[ "$(dpkg-query -W -f='${Status}' "$backend" 2>/dev/null || true)" != 'install ok installed' ]]; then
+      printf 'Missing desktop backend: %s (install with sudo apt install %s)\n' "$backend" "$backend" >&2
+    fi
+  done
 fi
 printf 'Installed %s/bin/keyscribe\n' "$prefix"

@@ -456,7 +456,7 @@ gboolean settings_save(const Settings *s, const char *dir, GError **error) {
     g_string_append_printf(out,
         "\n# Remove filler words on ElevenLabs scribe_v2/scribe_v2_medical. Boolean, default true.\nno_verbatim = %s\n"
         "\n# Mute system output during recording, restore afterward. Boolean, default true.\nmute_during_recording = %s\n"
-        "\n# Start sound volume, integer 0..200 percent. 0 disables it, default 100.\nrecording_start_sound_volume = %d\n",
+        "\n# Start sound volume, integer 0..200 percent. 0 disables it, default 100; system output mute also silences it.\nrecording_start_sound_volume = %d\n",
         s->no_verbatim ? "true" : "false", s->mute_during_recording ? "true" : "false", s->sound_volume);
     append_string(out, "overlay_position", s->overlay_position,
         "Widget: hidden, top_left, top_center, top_right, center, bottom_left, bottom_center, bottom_right. Default bottom_center.");

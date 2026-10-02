@@ -94,7 +94,7 @@ template can supply different values; keep those unless the user requests a chan
 | Log and recording retention | `log_retention_hours` | Integer hours: `1`, `24`, `168`, `720`; default `168` |
 | Press Enter after pasting | `auto_send` | Boolean; default `true` |
 | Mute system output while recording | `mute_during_recording` | Boolean; default `true` |
-| Recording start sound volume | `recording_start_sound_volume` | Integer percent, `0`–`200`; `0` disables it; default `100` |
+| Recording start sound volume | `recording_start_sound_volume` | Integer percent, `0`–`200`; `0` disables it; default `100`; Linux sound follows system output mute |
 | Recording widget placement | `overlay_position` | `hidden`, `top_left`, `top_center`, `top_right`, `center`, `bottom_left`, `bottom_center`, `bottom_right`; default `bottom_center` |
 | Remove filler words | `no_verbatim` | Boolean; default `true`; sent only to ElevenLabs `scribe_v2` / `scribe_v2_medical` |
 | OpenAI model | `openai_model` | String; code default `gpt-transcribe` on macOS/Windows, `gpt-4o-mini-transcribe` on Linux |
@@ -118,7 +118,15 @@ different environment from the agent's shell.
   `right_ctrl`, `left_ctrl`, `right_shift`, `left_shift`.
 - Windows: `right_alt`, `left_alt`, `right_ctrl`, `left_ctrl`, `right_shift`,
   `left_shift`. The default `right_option` is an alias for `right_alt`.
-- Linux: portal accelerator string, default `CTRL+ALT+space`. A changed shortcut
+- Linux (GNOME and KDE Plasma): requires xdg-desktop-portal and the matching
+  xdg-desktop-portal-gnome / xdg-desktop-portal-kde backend. Keep both installed
+  when switching desktops; log in again after installing a missing backend.
+  Shortcut and keyboard permissions are granted separately by each desktop;
+  their keyboard permission restore tokens are stored separately.
+  Global Escape cancellation uses the bundled GNOME Shell extension or the
+  optional KWin 6 helper built against the installed KWin version; KDE helper
+  installation is described in linux-readme.md beside this guide.
+  Portal accelerator string, default `CTRL+ALT+space`. A changed shortcut
   may require desktop portal approval; use the app's shortcut registration flow
   if needed. A file edit cannot grant keyboard/paste permissions.
 

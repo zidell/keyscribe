@@ -50,10 +50,10 @@ See the [KeyScribe download page](https://keyscribe.gitools.net) for downloads a
 
 Ubuntu support is available as a compiled GTK desktop app alongside the macOS
 and Windows apps. Download the `.deb` from
-[KeyScribe Ubuntu 0.1.1](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.1)
+[KeyScribe Ubuntu 0.1.2](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.2)
 or see [Ubuntu build, installation, and usage](native/linux/README.md).
 It supports PipeWire/PulseAudio recording, the three STT providers, and portal-based
-global shortcuts and automatic paste on supported GNOME desktops. Tagged releases
+global shortcuts and automatic paste on supported GNOME and KDE Plasma desktops. Tagged releases
 build and attach the Ubuntu `.deb` alongside the macOS and Windows installers;
 Ubuntu-only updates use `linux-vMAJOR.MINOR.PATCH` tags.
 

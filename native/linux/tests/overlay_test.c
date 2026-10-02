@@ -44,6 +44,23 @@ int main(int argc, char **argv) {
     cairo_destroy(cr);
     cairo_surface_destroy(surface);
     g_free(title);
+    title = g_strdup("녹음 중 (00:12)");
+    recording = TRUE;
+    widget_scale = 1.4;
+    g_assert_cmpint(widget_pixels(260), ==, 364);
+    g_assert_cmpint(widget_pixels(52), ==, 73);
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 364, 73);
+    cr = cairo_create(surface);
+    draw(NULL, cr, NULL);
+    cairo_surface_flush(surface);
+    data = cairo_image_surface_get_data(surface);
+    stride = cairo_image_surface_get_stride(surface);
+    g_assert_cmpint(data[3], ==, 0);
+    g_assert_cmpint(data[36 * stride + 355 * 4 + 3], >, 200);
+    g_assert_cmpint(data[36 * stride + 296 * 4 + 2], >, 200);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    g_free(title);
     g_print(
         "PASS: original 260x52 widget, transparent rounded corners, original five-bar waveform\n");
     return 0;

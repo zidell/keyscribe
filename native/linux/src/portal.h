@@ -8,6 +8,7 @@ typedef struct {
     char *keyboard_token_path, *keyboard_restore_token;
     guint shortcut_subscription, closed_subscription;
     ShortcutEvent event;
+    int (*keycode_for_keysym)(int keysym);
     void (*trace)(const char *event);
     void (*keyboard_closed)(void *user);
     void *user;
@@ -22,6 +23,7 @@ gboolean portal_init(Portal *p, ShortcutEvent event, void *user, GError **error)
 void portal_clear(Portal *p);
 void portal_bind(Portal *p, PortalResult callback, void *user);
 void portal_pause_shortcuts(Portal *p);
+char *portal_keyboard_token_path(const char *config_dir);
 void portal_enable_keyboard(Portal *p, PortalResult callback, void *user);
 gboolean portal_key(Portal *p, int keysym, gboolean pressed, GError **error);
 gboolean portal_set_text(Portal *p, const char *text, GError **error);

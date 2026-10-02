@@ -320,6 +320,11 @@ gboolean portal_init(Portal *p, ShortcutEvent event, void *user, GError **error)
     static const GDBusInterfaceVTable escape_vtable = {.method_call = escape_method};
     p->escape_registration = g_dbus_connection_register_object(
         p->bus, ESCAPE_PATH, escape_info->interfaces[0], &escape_vtable, p, NULL, NULL);
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    if (desktop && strstr(desktop, "KDE"))
+        g_dbus_connection_call(p->bus, "org.kde.KWin", "/Effects", "org.kde.kwin.Effects",
+            "loadEffect", g_variant_new("(s)", "keyscribe-escape"), NULL, 0, 3000,
+            NULL, NULL, NULL);
     // New portals require an application identity for unsandboxed native applications.
     g_autoptr(GVariant) registered = g_dbus_connection_call_sync(
         p->bus, DEST, PATH, "org.freedesktop.host.portal.Registry", "Register",
@@ -370,6 +375,17 @@ typedef struct {
 static void finish(GVariant *values, const GError *error, void *user) {
     Setup *s = user;
     g_autoptr(GError) local = NULL;
+    if (error && (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
+                  g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE))) {
+        const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+        const char *backend = desktop && strstr(desktop, "KDE") ? "xdg-desktop-portal-kde"
+                            : desktop && strstr(desktop, "GNOME") ? "xdg-desktop-portal-gnome"
+                            : "현재 데스크톱용 xdg-desktop-portal 백엔드";
+        local = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+            "%s 포털을 사용할 수 없습니다. %s 설치 후 로그아웃하고 다시 로그인하세요. "
+            "GNOME과 KDE를 함께 사용하면 두 백엔드가 모두 필요합니다.",
+            s->keyboard ? "키보드 입력" : "전역 단축키", backend);
+    }
     trace(s->p, "portal setup response kind=%s session=%s error=%s",
           s->keyboard ? "keyboard" : "shortcuts",
           s->keyboard ? (s->p->keyboard ? s->p->keyboard : "none")
@@ -418,7 +434,7 @@ static void finish(GVariant *values, const GError *error, void *user) {
         s->p->keyboard_pending = FALSE;
     else
         s->p->shortcuts_pending = FALSE;
-    s->cb(values, error ? error : local, s->user);
+    s->cb(values, local ? local : error, s->user);
     g_free(s);
 }
 static void selected(GVariant *values, const GError *error, void *user) {
@@ -513,7 +529,8 @@ void portal_bind(Portal *p, PortalResult cb, void *user) {
     GSettingsSchemaSource *source = g_settings_schema_source_get_default();
     g_autoptr(GSettingsSchema) schema = source ? g_settings_schema_source_lookup(
         source, "org.gnome.settings-daemon.global-shortcuts.application", TRUE) : NULL;
-    if (schema) {
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    if (schema && desktop && strstr(desktop, "GNOME")) {
         g_autoptr(GSettings) settings = g_settings_new_full(
             schema, NULL, "/org/gnome/settings-daemon/global-shortcuts/net.gitools.keyscribe/");
         g_autoptr(GVariant) saved = g_settings_get_value(settings, "shortcuts");
@@ -560,6 +577,12 @@ void portal_bind(Portal *p, PortalResult cb, void *user) {
     }
     setup(p, FALSE, cb, user);
 }
+char *portal_keyboard_token_path(const char *config_dir) {
+    // Restore tokens belong to a backend. Retain the existing GNOME filename.
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    return g_build_filename(config_dir, desktop && strstr(desktop, "KDE")
+                            ? "keyboard-restore-token-kde" : "keyboard-restore-token", NULL);
+}
 void portal_enable_keyboard(Portal *p, PortalResult cb, void *user) {
     setup(p, TRUE, cb, user);
 }
@@ -572,9 +595,18 @@ gboolean portal_key(Portal *p, int keysym, gboolean pressed, GError **error) {
                             "자동 붙여넣기 권한을 먼저 허용하세요");
         return FALSE;
     }
+    const char *desktop = g_getenv("XDG_CURRENT_DESKTOP");
+    gboolean keycode = desktop && strstr(desktop, "KDE") && p->keycode_for_keysym;
+    int key = keycode ? p->keycode_for_keysym(keysym) : keysym;
+    if (key < 0) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                            "현재 키맵에서 입력할 키를 찾을 수 없습니다");
+        return FALSE;
+    }
     g_autoptr(GVariant) reply = g_dbus_connection_call_sync(
-        p->bus, DEST, PATH, REMOTE, "NotifyKeyboardKeysym",
-        g_variant_new("(o@a{sv}iu)", p->keyboard, empty(), keysym, pressed ? 1 : 0), NULL, 0, 3000,
+        p->bus, DEST, PATH, REMOTE,
+        keycode ? "NotifyKeyboardKeycode" : "NotifyKeyboardKeysym",
+        g_variant_new("(o@a{sv}iu)", p->keyboard, empty(), key, pressed ? 1 : 0), NULL, 0, 3000,
         NULL, error);
     return reply != NULL;
 }
