@@ -74,6 +74,13 @@ Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니�
 빌드 의존성 설치 명령과 현재 지원 범위는 위 안내에 있습니다. API 키는
 `~/.config/keyscribe/settings.ini`, 녹음은 `~/.local/share/keyscribe/logs/`에 저장됩니다.
 
+## AI 에이전트로 설정 변경하기
+
+macOS·Windows·Linux 모두 텍스트 파일로 환경설정을 변경할 수 있습니다.
+[에이전트용 설정 지침](docs/agent-settings.md)에 OS별 실제 파일 위치, 항목과 허용값,
+변경 절차를 정리했습니다. 에이전트에게 이 지침을 참고해 KeyScribe 설정을 바꾸라고
+요청하면 됩니다. 외부에서 편집한 설정은 앱을 재시작해야 반영됩니다.
+
 ## STT 공급자
 
 API 키 접두사로 공급자를 자동으로 선택합니다. 공급자마다 마지막으로 선택한 모델을 따로 저장합니다.

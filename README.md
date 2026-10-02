@@ -65,6 +65,13 @@ Ubuntu-only updates use `linux-vMAJOR.MINOR.PATCH` tags.
 
 In Settings you can change the shortcut, recording-stop method, recording time limit (10, 20, 30, or 60 minutes; 30 by default), recognition language, recording-start sound volume, and automatic sending. With automatic sending enabled, KeyScribe presses Enter after pasting. To automatically type into a Windows app running as administrator, KeyScribe may also need to run as administrator.
 
+## Configure with an AI agent
+
+KeyScribe stores preferences in editable text files on macOS, Windows, and Linux.
+See the [agent settings guide](docs/agent-settings.md) for file locations, supported
+values, platform differences, and how to apply edits. External edits require an
+app restart; saving in the Settings window does not reload them.
+
 ## STT providers
 
 The provider is selected automatically from the API-key prefix. The last selected model is saved separately for each provider.

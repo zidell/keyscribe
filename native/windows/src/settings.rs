@@ -118,7 +118,16 @@ impl Settings {
         let directory = directory();
         fs::create_dir_all(&directory)?;
         let config = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(directory.join("config.toml"), config)?;
+        let header = concat!(
+            "# KeyScribe preferences / 에이전트 설정 안내\n",
+            "# Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md\n",
+            "# Quit the app before external edits; relaunch afterward to apply them.\n",
+            "# Saving in Settings does not reload external edits and rewrites this file.\n",
+            "# Use one top-level assignment per line; double-quoted strings and inline arrays.\n",
+            "# API key: user_config.json in this directory (do not put it in this file).\n",
+            "\n",
+        );
+        fs::write(directory.join("config.toml"), format!("{header}{config}"))?;
         let user = serde_json::json!({"api_key": self.api_key});
         fs::write(
             directory.join("user_config.json"),

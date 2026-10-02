@@ -134,6 +134,15 @@ gboolean settings_save(const Settings *s, const char *dir, GError **error) {
     g_key_file_set_boolean(k, "settings", "auto_send", s->auto_send);
     g_key_file_set_integer(k, "settings", "limit_minutes", s->limit_minutes);
     g_key_file_set_integer(k, "settings", "retention_hours", s->retention_hours);
+    g_key_file_set_comment(k, NULL, NULL,
+        "KeyScribe preferences / 에이전트 설정 안내\n"
+        "Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md\n"
+        "Quit the app before external edits; relaunch afterward to apply them.\n"
+        "Saving in Settings does not reload external edits and rewrites this file.\n"
+        "Use [settings], unquoted strings, true/false, and integers.\n"
+        "Multiline values use escaped newlines (\\n).\n"
+        "This file includes the API key: keep it and backups private (0600).",
+        NULL);
     gsize size;
     g_autofree char *data = g_key_file_to_data(k, &size, NULL);
     g_autofree char *path = g_build_filename(dir, "settings.ini", NULL);

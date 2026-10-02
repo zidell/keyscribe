@@ -108,7 +108,16 @@ struct Settings {
             "elevenlabs_model = \(jsonString(elevenLabsModel))",
             "groq_model = \(jsonString(groqModel))",
         ]
-        try (fields.joined(separator: "\n") + "\n").write(to: Self.configURL, atomically: true, encoding: .utf8)
+        let header = """
+        # KeyScribe preferences / 에이전트 설정 안내
+        # Guide: https://github.com/zidell/keyscribe/blob/main/docs/agent-settings.md
+        # Quit the app before external edits; relaunch afterward to apply them.
+        # Saving in Settings does not reload external edits and rewrites this file.
+        # Use one top-level assignment per line; double-quoted strings and inline arrays.
+        # API key: user_config.json in this directory (do not put it in this file).
+        """
+        try (header + "\n\n" + fields.joined(separator: "\n") + "\n")
+            .write(to: Self.configURL, atomically: true, encoding: .utf8)
         var user = ((try? Data(contentsOf: Self.userURL))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
         user["api_key"] = apiKey
