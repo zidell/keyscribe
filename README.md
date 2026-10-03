@@ -8,7 +8,7 @@ KeyScribe is a voice-input app that transcribes microphone recordings and pastes
 
 ## Features
 
-- Supports push-to-talk and toggle recording, Escape to cancel, and a recording time limit.
+- One key does both: tap it to keep recording until you press it again, or hold it for more than a second and recording stops when you let go. Escape cancels, and recordings have a time limit.
 - Shows recording and transcription status plus live input level in a small widget, placed at the bottom center of the screen by default, or hidden entirely.
 - Even with the widget hidden, the menu bar (tray) icon turns red while recording and orange while transcribing.
 - Lets you change the shortcut, language, model, sound-effect volume, recording-widget position, and automatic Enter key in Settings.

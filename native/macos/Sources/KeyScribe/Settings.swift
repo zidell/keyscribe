@@ -3,7 +3,6 @@ import Foundation
 struct Settings {
     var apiKey = ""
     var shortcut = "right_command"
-    var recordingControl = "hold"
     var recordingTimeLimitMinutes = 30
     var logRetentionHours = Settings.defaultLogRetentionHours
     var autoSend = true
@@ -42,7 +41,6 @@ struct Settings {
             let values = parseTOML(contents)
             result.shortcut = values["shortcut"] as? String ?? result.shortcut
             if result.shortcut == "right_cmd" { result.shortcut = "right_command" }
-            result.recordingControl = values["recording_control"] as? String ?? result.recordingControl
             if let limit = values["recording_time_limit_minutes"] as? Int,
                [10, 20, 30, 60].contains(limit) {
                 result.recordingTimeLimitMinutes = limit
@@ -93,7 +91,6 @@ struct Settings {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fields = [
             "shortcut = \(jsonString(shortcut))",
-            "recording_control = \(jsonString(recordingControl))",
             "recording_time_limit_minutes = \(recordingTimeLimitMinutes)",
             "log_retention_hours = \(logRetentionHours)",
             "auto_send = \(autoSend)",

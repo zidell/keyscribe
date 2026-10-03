@@ -229,6 +229,8 @@ struct App {
     /// 붙여넣기 타이머가 걸려 있는지. 마지막 조각 뒤에도 잠시 기다린다.
     paste_scheduled: bool,
     pressed: bool,
+    /// 지금 누르고 있는 키가 녹음을 시작했다면 그 시각. 오래 누른 뒤 떼면 녹음을 끝낸다.
+    press_started_recording_at: Option<Instant>,
     generation: u64,
     status: String,
 }
@@ -260,7 +262,6 @@ struct Dialog {
     language: HWND,
     language_codes: Vec<String>,
     shortcut: HWND,
-    mode: HWND,
     recording_time_limit: HWND,
     log_retention: HWND,
     overlay_position: HWND,
@@ -386,6 +387,7 @@ pub fn run() -> Result<(), String> {
             paste_held: Vec::new(),
             paste_scheduled: false,
             pressed: false,
+            press_started_recording_at: None,
             generation: 0,
             status: "준비됨".into(),
         });
@@ -917,6 +919,9 @@ fn shortcut_key(value: &str) -> u16 {
         .unwrap_or(VK_RMENU)
 }
 
+/// 녹음 키를 이보다 오래 누르고 있으면 떼는 순간 녹음을 끝낸다. 더 짧으면 다시 누를 때까지 녹음한다.
+const HOLD_TO_TALK_THRESHOLD: Duration = Duration::from_secs(1);
+
 unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
     handle_key_inner(hwnd, key, down);
     refresh_escape_capture(hwnd);
@@ -925,11 +930,10 @@ unsafe fn handle_key(hwnd: HWND, key: u32, down: bool) {
 unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
     crate::debug_log::log(|| {
         format!(
-            "handle_key key={key} down={down} recording={} transcribing={} pressed={} mode={}",
+            "handle_key key={key} down={down} recording={} transcribing={} pressed={}",
             app(hwnd).recording.is_some(),
             app(hwnd).transcribing(),
-            app(hwnd).pressed,
-            app(hwnd).settings.recording_control
+            app(hwnd).pressed
         )
     });
     if key == VK_ESCAPE as u32 && down {
@@ -949,7 +953,10 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
         // 앞선 녹음을 변환하는 중이어도 새 녹음은 바로 받는다.
         if app(hwnd).recording.is_none() {
             start(hwnd);
-        } else if app(hwnd).settings.recording_control == "toggle" {
+            if app(hwnd).recording.is_some() {
+                app(hwnd).press_started_recording_at = Some(Instant::now());
+            }
+        } else {
             stop(hwnd, false);
         }
     } else {
@@ -957,7 +964,11 @@ unsafe fn handle_key_inner(hwnd: HWND, key: u32, down: bool) {
             return;
         }
         app(hwnd).pressed = false;
-        if app(hwnd).recording.is_some() && app(hwnd).settings.recording_control == "hold" {
+        // 짧게 눌렀다 떼면 다시 누를 때까지 녹음하고, 오래 누르고 있었으면 떼는 순간 끝낸다.
+        let held_since = app(hwnd).press_started_recording_at.take();
+        if app(hwnd).recording.is_some()
+            && held_since.is_some_and(|at| at.elapsed() >= HOLD_TO_TALK_THRESHOLD)
+        {
             stop(hwnd, false);
         }
     }
@@ -1493,7 +1504,7 @@ unsafe fn show_settings(root: HWND) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         560,
-        849,
+        807,
         root,
         ptr::null_mut(),
         instance,
@@ -1639,36 +1650,14 @@ unsafe fn show_settings(root: HWND) {
         .position(|(code, _, _)| shortcut_key(code) == shortcut_key(&settings.shortcut))
         .unwrap_or(0);
     SendMessageW(shortcut, CB_SETCURSEL, selected, 0);
-    label("녹음 방식", 226);
-    let mode = control(
-        dialog,
-        "COMBOBOX",
-        "",
-        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
-        165,
-        224,
-        365,
-        100,
-        0,
-    );
-    for title in ["누르는 동안 녹음", "한번 누르면 녹음시작, 다시 누르면 종료"]
-    {
-        SendMessageW(mode, CB_ADDSTRING, 0, wide(title).as_ptr() as isize);
-    }
-    SendMessageW(
-        mode,
-        CB_SETCURSEL,
-        usize::from(settings.recording_control == "toggle"),
-        0,
-    );
-    label("녹음 시간 제한", 268);
+    label("녹음 시간 제한", 226);
     let recording_time_limit = control(
         dialog,
         "COMBOBOX",
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         165,
-        266,
+        224,
         365,
         120,
         0,
@@ -1686,14 +1675,14 @@ unsafe fn show_settings(root: HWND) {
         .position(|minutes| *minutes == settings.recording_time_limit_minutes)
         .unwrap_or(2);
     SendMessageW(recording_time_limit, CB_SETCURSEL, selected_limit, 0);
-    label("로그·녹음 보존", 310);
+    label("로그·녹음 보존", 268);
     let log_retention = control(
         dialog,
         "COMBOBOX",
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         165,
-        308,
+        266,
         365,
         120,
         0,
@@ -1711,14 +1700,14 @@ unsafe fn show_settings(root: HWND) {
         .position(|(hours, _)| *hours == settings.log_retention_hours)
         .unwrap_or(2);
     SendMessageW(log_retention, CB_SETCURSEL, selected_retention, 0);
-    label("녹음 위젯 위치", 352);
+    label("녹음 위젯 위치", 310);
     let overlay_position = control(
         dialog,
         "COMBOBOX",
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         165,
-        350,
+        308,
         365,
         225,
         0,
@@ -1747,27 +1736,27 @@ unsafe fn show_settings(root: HWND) {
         | WS_VSCROLL
         | ES_MULTILINE as u32
         | ES_AUTOVSCROLL as u32;
-    label("인식 단어 (한 줄에 하나)", 392);
+    label("인식 단어 (한 줄에 하나)", 350);
     let keyterms = control(
         dialog,
         "EDIT",
         &settings.keyterms.join("\r\n"),
         word_list_style,
         165,
-        390,
+        348,
         365,
         80,
         0,
     );
-    label("치환 단어", 473);
-    label("찾을 말 => 바꿀 말", 497);
+    label("치환 단어", 431);
+    label("찾을 말 => 바꿀 말", 455);
     control(
         dialog,
         "BUTTON",
         "사용법",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         18,
-        521,
+        479,
         80,
         22,
         ID_REPLACEMENT_HELP,
@@ -1778,7 +1767,7 @@ unsafe fn show_settings(root: HWND) {
         &settings.replacements.join("\r\n"),
         word_list_style,
         165,
-        473,
+        431,
         365,
         80,
         0,
@@ -1789,7 +1778,7 @@ unsafe fn show_settings(root: HWND) {
         "군더더기 말 제거 (ElevenLabs)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        575,
+        533,
         365,
         25,
         0,
@@ -1806,7 +1795,7 @@ unsafe fn show_settings(root: HWND) {
         "녹음 중 시스템 소리 음소거",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        610,
+        568,
         365,
         25,
         0,
@@ -1823,20 +1812,20 @@ unsafe fn show_settings(root: HWND) {
         "붙여넣은 뒤 Enter 입력",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX as u32,
         165,
-        645,
+        603,
         365,
         25,
         0,
     );
     SendMessageW(auto_send, BM_SETCHECK, usize::from(settings.auto_send), 0);
-    label("녹음 시작 효과음", 680);
+    label("녹음 시작 효과음", 638);
     let recording_start_sound_volume = control(
         dialog,
         "msctls_trackbar32",
         "",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS,
         165,
-        675,
+        633,
         300,
         36,
         0,
@@ -1855,7 +1844,7 @@ unsafe fn show_settings(root: HWND) {
         &format!("{}%", settings.recording_start_sound_volume),
         WS_CHILD | WS_VISIBLE,
         475,
-        680,
+        638,
         55,
         25,
         0,
@@ -1866,7 +1855,7 @@ unsafe fn show_settings(root: HWND) {
         "API 키는 이 컴퓨터의 사용자 설정에 저장됩니다.",
         WS_CHILD | WS_VISIBLE,
         165,
-        719,
+        677,
         365,
         26,
         0,
@@ -1877,7 +1866,7 @@ unsafe fn show_settings(root: HWND) {
         "저장",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON as u32,
         348,
-        759,
+        717,
         85,
         32,
         ID_SAVE,
@@ -1888,7 +1877,7 @@ unsafe fn show_settings(root: HWND) {
         "취소",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
         445,
-        759,
+        717,
         85,
         32,
         ID_CANCEL,
@@ -1908,7 +1897,6 @@ unsafe fn show_settings(root: HWND) {
         language,
         language_codes,
         shortcut,
-        mode,
         recording_time_limit,
         log_retention,
         overlay_position,
@@ -2211,11 +2199,6 @@ unsafe fn save_dialog(hwnd: HWND) {
         .map(|entry| entry.0)
         .unwrap_or("right_alt")
         .into();
-    updated.recording_control = if SendMessageW(dialog.mode, CB_GETCURSEL, 0, 0) == 1 {
-        "toggle".into()
-    } else {
-        "hold".into()
-    };
     updated.recording_time_limit_minutes = [10, 20, 30, 60]
         .get(SendMessageW(dialog.recording_time_limit, CB_GETCURSEL, 0, 0) as usize)
         .copied()
@@ -2260,6 +2243,7 @@ unsafe fn save_dialog(hwnd: HWND) {
             crate::debug_log::set_retention(updated.log_retention_hours);
             app(root).settings = updated;
             app(root).pressed = false;
+            app(root).press_started_recording_at = None;
             set_status(root, "설정 저장됨");
             DestroyWindow(hwnd);
         }

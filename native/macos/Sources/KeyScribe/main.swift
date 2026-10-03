@@ -76,6 +76,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var escapeHotKeys: [EventHotKeyRef] = []
     private var escapeHotKeyHandler: EventHandlerRef?
     private var keyDown = false
+    /// 지금 누르고 있는 키가 녹음을 시작했다면 그 시각. 오래 누른 뒤 떼면 녹음을 끝낸다.
+    private var pressStartedRecordingAt: TimeInterval?
+    /// 녹음 키를 이보다 오래 누르고 있으면 떼는 순간 녹음을 끝낸다. 더 짧으면 다시 누를 때까지 녹음한다.
+    private let holdToTalkThreshold: TimeInterval = 1
     private var escapeKeyDownConsumed = false
     private var session = UUID()
     private var audioOutput: SystemAudioOutput.Snapshot?
@@ -86,7 +90,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLog.shared.setRetention(hours: settings.logRetentionHours)
-        DebugLog.shared.record("app start shortcut=\(settings.shortcut) mode=\(settings.recordingControl)")
+        DebugLog.shared.record("app start shortcut=\(settings.shortcut)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         installEventTap()
@@ -299,13 +303,23 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             return
         }
         keyDown = pressed
-        DebugLog.shared.record("trigger state pressed=\(pressed) mode=\(settings.recordingControl) phase=\(phase)")
+        DebugLog.shared.record("trigger state pressed=\(pressed) phase=\(phase)")
         if pressed {
             // 앞선 녹음을 변환하는 중이어도 새 녹음은 바로 받는다.
-            if phase != .recording { startRecording() }
-            else if settings.recordingControl == "toggle" { stopRecording() }
-        } else if phase == .recording && settings.recordingControl == "hold" {
-            stopRecording()
+            if phase != .recording {
+                startRecording()
+                if phase == .recording { pressStartedRecordingAt = ProcessInfo.processInfo.systemUptime }
+            } else {
+                stopRecording()
+            }
+        } else {
+            // 짧게 눌렀다 떼면 다시 누를 때까지 녹음하고, 오래 누르고 있었으면 떼는 순간 끝낸다.
+            let heldSince = pressStartedRecordingAt
+            pressStartedRecordingAt = nil
+            if phase == .recording, let heldSince,
+               ProcessInfo.processInfo.systemUptime - heldSince >= holdToTalkThreshold {
+                stopRecording()
+            }
         }
     }
 
@@ -331,7 +345,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                     guard let self else { return }
                     if granted {
                         guard self.phase != .recording else { return }
-                        if self.settings.recordingControl == "toggle" || self.keyDown { self.startRecording() }
+                        self.startRecording()
                     } else {
                         DebugLog.shared.record("microphone permission denied")
                         self.setStatus("마이크 권한이 필요합니다")
@@ -832,6 +846,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             settings = updated
             DebugLog.shared.setRetention(hours: updated.logRetentionHours)
             keyDown = false
+            pressStartedRecordingAt = nil
             setStatus("설정 저장됨")
         } catch {
             setStatus("설정 저장 실패: \(error.localizedDescription)")

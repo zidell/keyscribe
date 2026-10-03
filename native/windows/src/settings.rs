@@ -30,7 +30,6 @@ impl Provider {
 #[serde(default)]
 pub struct Settings {
     pub shortcut: String,
-    pub recording_control: String,
     #[serde(
         default = "default_recording_limit",
         deserialize_with = "deserialize_recording_limit"
@@ -62,7 +61,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             shortcut: "right_option".into(),
-            recording_control: "hold".into(),
             recording_time_limit_minutes: default_recording_limit(),
             log_retention_hours: default_log_retention(),
             auto_send: true,

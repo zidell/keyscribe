@@ -17,7 +17,6 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let modelHint = NSTextField(labelWithString: "")
     private let language = NSPopUpButton()
     private let shortcut = NSPopUpButton()
-    private let recordingControl = NSPopUpButton()
     private let recordingTimeLimit = NSPopUpButton()
     private let overlayPosition = NSPopUpButton()
     private let logRetention = NSPopUpButton()
@@ -60,7 +59,6 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         updated.groqModel = selectedModels[.groq] ?? original.groqModel
         updated.language = language.selectedItem?.representedObject as? String ?? original.language
         updated.shortcut = shortcut.selectedItem?.representedObject as? String ?? original.shortcut
-        updated.recordingControl = recordingControl.selectedItem?.representedObject as? String ?? original.recordingControl
         updated.recordingTimeLimitMinutes = Int(recordingTimeLimit.selectedItem?.representedObject as? String ?? "30") ?? 30
         updated.logRetentionHours = Int(logRetention.selectedItem?.representedObject as? String ?? "")
             ?? original.logRetentionHours
@@ -80,7 +78,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
 
     private func makeForm() -> NSView {
         let width: CGFloat = 480
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 620))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 580))
         func addLabel(_ title: String, y: CGFloat, height: CGFloat = 24) {
             let label = NSTextField(labelWithString: title)
             label.frame = NSRect(x: 0, y: y, width: 124, height: height)
@@ -155,17 +153,6 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         populate(shortcut, options: shortcuts, selected: original.shortcut)
         addPicker(shortcut, y: 306)
 
-        addLabel("녹음 방식", y: 268)
-        populate(recordingControl, options: [
-            ("hold", "누르는 동안 녹음"), ("toggle", "한번 누르면 녹음시작, 다시 누르면 종료"),
-        ], selected: original.recordingControl)
-        addPicker(recordingControl, y: 266)
-
-        for view in form.subviews {
-            var frame = view.frame
-            frame.origin.y += 40
-            view.frame = frame
-        }
         addLabel("녹음 시간 제한", y: 268)
         populate(recordingTimeLimit, options: [
             ("10", "10분"), ("20", "20분"), ("30", "30분"), ("60", "60분"),
