@@ -24,9 +24,10 @@ use windows_sys::Win32::{
         DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
         LibraryLoader::GetModuleHandleW,
         Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
-        Threading::{CreateEventW, WaitForSingleObject},
+        Threading::{CreateEventW, GetCurrentProcessId, WaitForSingleObject},
     },
     UI::{
+        Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
         Controls::{
             InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TBM_SETPOS,
             TBM_SETRANGEMAX, TBM_SETRANGEMIN, TBS_NOTICKS,
@@ -52,6 +53,7 @@ const TRACKBAR_END_TRACK: usize = 8;
 const ID_SETTINGS: usize = 101;
 const ID_EXIT: usize = 103;
 const ID_RESTART: usize = 104;
+const ID_PASTE_LAST: usize = 105;
 const ID_SAVE: usize = 201;
 const ID_CANCEL: usize = 202;
 const ID_REFRESH: usize = 203;
@@ -71,6 +73,9 @@ const SHORTCUTS: [(&str, &str, u16); 6] = [
     ("left_shift", "왼쪽 Shift", VK_LSHIFT),
 ];
 static ROOT: AtomicIsize = AtomicIsize::new(0);
+/// 사용자가 마지막으로 쓰던 다른 앱의 창. 트레이 아이콘을 누르면 작업 표시줄이
+/// 포커스를 가져가므로, 다시 붙여넣을 곳은 그 전에 앞에 있던 이 창이다.
+static LAST_TARGET: AtomicIsize = AtomicIsize::new(0);
 static TARGET_KEY: AtomicU16 = AtomicU16::new(VK_RMENU);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
@@ -94,6 +99,18 @@ mod shortcut_tests {
         assert!(is_recording_key(VK_RMENU as u32, VK_RMENU as u32));
         assert!(!is_recording_key(VK_HANGUL as u32, VK_RMENU as u32));
         assert!(!is_recording_key(VK_LMENU as u32, VK_RMENU as u32));
+    }
+
+    #[test]
+    fn last_result_label_shortens_to_one_line_and_escapes_mnemonics() {
+        assert_eq!(
+            last_result_label("A & B\nnext"),
+            "다시 붙여넣기: \u{201C}A && B next\u{201D}"
+        );
+        assert_eq!(
+            last_result_label(&"가".repeat(30)),
+            format!("다시 붙여넣기: \u{201C}{}…\u{201D}", "가".repeat(24))
+        );
     }
 }
 
@@ -235,6 +252,9 @@ struct App {
     press_started_recording_at: Option<Instant>,
     generation: u64,
     status: String,
+    /// 마지막으로 붙여넣은 결과. 포커스가 다른 데로 가서 놓쳤을 때 트레이 메뉴에서 다시 붙여넣는다.
+    last_result: Option<String>,
+    focus_hook: HWINEVENTHOOK,
 }
 
 impl App {
@@ -392,6 +412,8 @@ pub fn run() -> Result<(), String> {
             press_started_recording_at: None,
             generation: 0,
             status: "준비됨".into(),
+            last_result: None,
+            focus_hook: ptr::null_mut(),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
         ROOT.store(hwnd as isize, Ordering::SeqCst);
@@ -417,6 +439,19 @@ pub fn run() -> Result<(), String> {
             return Err("전역 단축키를 등록하지 못했습니다".into());
         }
         crate::debug_log::log(|| "keyboard hook installed".into());
+        remember_target(GetForegroundWindow());
+        app(hwnd).focus_hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            ptr::null_mut(),
+            Some(foreground_changed),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
+        if app(hwnd).focus_hook.is_null() {
+            crate::debug_log::log(|| "foreground hook unavailable".into());
+        }
         let mut message: MSG = mem::zeroed();
         while GetMessageW(&mut message, ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&message);
@@ -740,6 +775,9 @@ unsafe extern "system" fn root_proc(
             if !owned.hook.is_null() {
                 UnhookWindowsHookEx(owned.hook);
             }
+            if !owned.focus_hook.is_null() {
+                UnhookWinEvent(owned.focus_hook);
+            }
             for job in &owned.jobs {
                 job.cancelled.store(true, Ordering::Relaxed);
             }
@@ -780,12 +818,20 @@ unsafe fn tray_menu(hwnd: HWND) {
     if menu.is_null() {
         return;
     }
+    // 메뉴를 띄우면 포커스가 KeyScribe로 넘어오니, 그 전의 대상을 먼저 붙잡아 둔다.
+    remember_target(GetForegroundWindow());
+    let target = LAST_TARGET.load(Ordering::Relaxed) as HWND;
     AppendMenuW(
         menu,
         MF_STRING | MF_GRAYED,
         0,
         wide(&format!("상태: {}", app(hwnd).status)).as_ptr(),
     );
+    let (paste_flags, paste_label) = match &app(hwnd).last_result {
+        Some(text) => (MF_STRING, last_result_label(text)),
+        None => (MF_STRING | MF_GRAYED, "다시 붙여넣기 (결과 없음)".to_string()),
+    };
+    AppendMenuW(menu, paste_flags, ID_PASTE_LAST, wide(&paste_label).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, wide("설정...").as_ptr());
     AppendMenuW(
@@ -821,9 +867,89 @@ unsafe fn tray_menu(hwnd: HWND) {
     );
     DestroyMenu(menu);
     PostMessageW(hwnd, WM_NULL, 0, 0);
-    if selected != 0 {
+    if selected as usize == ID_PASTE_LAST {
+        paste_last_result(hwnd, target);
+    } else if selected != 0 {
         tray_command(hwnd, selected as usize);
     }
+}
+
+/// 메뉴 항목에 보여 줄 결과의 앞부분. `&`는 메뉴에서 단축키 표시로 읽히므로 두 번 쓴다.
+fn last_result_label(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview: String = line.chars().take(24).collect();
+    if line.chars().count() > 24 {
+        preview.push('…');
+    }
+    format!("다시 붙여넣기: \u{201C}{}\u{201D}", preview.replace('&', "&&"))
+}
+
+/// 붙여넣을 수 있는 다른 앱의 창이면 기억해 둔다. KeyScribe 자신의 창과
+/// 작업 표시줄·바탕 화면 같은 셸 창은 붙여넣을 곳이 아니라서 건너뛴다.
+unsafe fn remember_target(hwnd: HWND) {
+    if hwnd.is_null() {
+        return;
+    }
+    let mut process = 0;
+    GetWindowThreadProcessId(hwnd, &mut process);
+    if process == GetCurrentProcessId() {
+        return;
+    }
+    let mut class = [0u16; 64];
+    let length = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+    let class = String::from_utf16_lossy(&class[..length.max(0) as usize]);
+    if matches!(
+        class.as_str(),
+        "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "NotifyIconOverflowWindow"
+            | "TopLevelWindowForOverflowXamlIsland"
+            | "Progman"
+            | "WorkerW"
+    ) {
+        return;
+    }
+    LAST_TARGET.store(hwnd as isize, Ordering::Relaxed);
+}
+
+unsafe extern "system" fn foreground_changed(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    remember_target(hwnd);
+}
+
+/// 메뉴를 띄우느라 가져온 포커스를 원래 창에 돌려준 뒤 마지막 결과를 다시 붙여넣는다.
+/// 첫 붙여넣기 때 Enter만 제자리에 들어갔을 수 있어, 두 번 전송되지 않도록 자동 Enter는 붙이지 않는다.
+unsafe fn paste_last_result(hwnd: HWND, target: HWND) {
+    let Some(text) = app(hwnd).last_result.clone() else {
+        return;
+    };
+    crate::debug_log::log(|| {
+        format!(
+            "last result pasted again characters={}",
+            text.chars().count()
+        )
+    });
+    if !target.is_null() && IsWindow(target) != 0 {
+        SetForegroundWindow(target);
+    }
+    queue_paste(hwnd, &text, false);
+    if app(hwnd).paste_scheduled {
+        return;
+    }
+    // 포커스가 원래 창으로 옮겨 간 뒤에 첫 조각을 보낸다.
+    if SetTimer(hwnd, PASTE_TIMER, 150, None) == 0 {
+        app(hwnd).paste_steps.clear();
+        set_status(hwnd, "붙여넣기 실패: 다음 붙여넣기를 예약할 수 없습니다");
+        return;
+    }
+    app(hwnd).paste_scheduled = true;
 }
 
 unsafe fn tray_command(hwnd: HWND, command: usize) {
@@ -1199,6 +1325,7 @@ unsafe fn deliver(hwnd: HWND, result: Result<String, String>) {
                     text.chars().count()
                 )
             });
+            app(hwnd).last_result = Some(text.clone());
             match paste(hwnd, &text, app(hwnd).settings.auto_send) {
                 Ok(()) => set_status(hwnd, "완료"),
                 Err(error) => {
@@ -1292,6 +1419,14 @@ impl PasteStep {
 
 /// 결과가 연달아 나와도 앞선 붙여넣기가 끝난 뒤에 이어 붙이도록 줄을 세운다.
 unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
+    queue_paste(hwnd, text, auto_send);
+    if app(hwnd).paste_scheduled {
+        return Ok(());
+    }
+    run_paste_step(hwnd)
+}
+
+unsafe fn queue_paste(hwnd: HWND, text: &str, auto_send: bool) {
     let steps = &mut app(hwnd).paste_steps;
     for segment in keys::segments(text) {
         match segment {
@@ -1307,10 +1442,6 @@ unsafe fn paste(hwnd: HWND, text: &str, auto_send: bool) -> Result<(), String> {
         steps.push_back(PasteStep::KeyDown(vec![VK_RETURN]));
         steps.push_back(PasteStep::KeyUp(vec![VK_RETURN]));
     }
-    if app(hwnd).paste_scheduled {
-        return Ok(());
-    }
-    run_paste_step(hwnd)
 }
 
 unsafe fn run_paste_step(hwnd: HWND) -> Result<(), String> {

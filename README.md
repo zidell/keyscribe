@@ -14,6 +14,7 @@ KeyScribe is a voice-input app that transcribes microphone recordings and pastes
 - Lets you change the shortcut, language, model, sound-effect volume, recording-widget position, and automatic Enter key in Settings.
 - **Recognition words** improve accuracy for proper nouns, and **replacement words** (`find => replace`) fix stubborn mishearings right before pasting. Write `[enter]` or `[cmd+k]` in the replacement to press that key right there.
 - Original recordings (WAV) are kept so a network or API failure never loses what you said. Choose how long logs and recordings are kept in Settings (1 hour, 1 day, 7 days, or 30 days; 7 days by default); older ones are deleted automatically. **Logs & Recordings Folder** in the menu opens them together with the diagnostic log. API keys and transcribed content are never written to the logs.
+- If focus moved and the result was lost or landed in the wrong place, choose **Paste Again** at the top of the menu to paste the last result where your cursor is now. The result stays in memory only until the app quits, and the automatic Enter is not repeated.
 
 ## Why I made it
 

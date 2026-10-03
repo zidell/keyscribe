@@ -30,7 +30,9 @@ typedef struct {
         *terms, *rules, *send, *limit, *retention, *mute, *no_verbatim, *volume, *position,
         *shortcut_choice;
     AppIndicator *indicator;
-    GtkWidget *menu_status;
+    GtkWidget *menu_status, *menu_last;
+    // 마지막으로 전달한 결과. 포커스가 다른 데로 가서 놓쳤을 때 트레이 메뉴에서 다시 입력한다.
+    char *last_result;
     Settings settings;
     Portal portal;
     State state;
@@ -477,6 +479,47 @@ static gboolean paste_tick(void *user) {
     }
     return G_SOURCE_CONTINUE;
 }
+static void update_last_result_item(void) {
+    if (!app.last_result) {
+        gtk_menu_item_set_label(GTK_MENU_ITEM(app.menu_last), "다시 붙여넣기 (결과 없음)");
+        gtk_widget_set_sensitive(app.menu_last, FALSE);
+        return;
+    }
+    g_autofree char *line = g_strdup(app.last_result);
+    g_strdelimit(line, "\r\n\t", ' ');
+    gboolean long_text = g_utf8_strlen(line, -1) > 24;
+    g_autofree char *preview = g_utf8_substring(line, 0, MIN(g_utf8_strlen(line, -1), 24));
+    g_autofree char *label =
+        g_strdup_printf("다시 붙여넣기: “%s%s”", preview, long_text ? "…" : "");
+    gtk_menu_item_set_label(GTK_MENU_ITEM(app.menu_last), label);
+    gtk_widget_set_sensitive(app.menu_last, TRUE);
+}
+// 트레이 메뉴가 닫히면 포커스는 사용자가 마지막으로 쓰던 창으로 돌아가니, 거기에 다시 입력한다.
+// 첫 입력 때 Enter만 제자리에 들어갔을 수 있어, 두 번 전송되지 않도록 자동 Enter는 붙이지 않는다.
+static void paste_last_result(GtkMenuItem *item, void *user) {
+    (void)item;
+    (void)user;
+    if (!app.last_result)
+        return;
+    if (app.state != IDLE || app.paste_steps) {
+        set_status("녹음이나 입력이 끝난 뒤 다시 붙여넣으세요");
+        return;
+    }
+    g_autofree char *event = g_strdup_printf("last result pasted again characters=%ld",
+                                             g_utf8_strlen(app.last_result, -1));
+    debug_log(event);
+    if (!app.portal.keyboard) {
+        gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), app.last_result, -1);
+        set_status("자동 붙여넣기 권한이 없습니다. 결과를 복사했으니 Ctrl+V로 붙여넣으세요.");
+        return;
+    }
+    app.paste_steps = paste_segments(app.last_result);
+    app.paste_index = 0;
+    app.pasting_text = FALSE;
+    app.paste_timer = g_timeout_add(150, paste_tick, NULL);
+    set_state(TRANSCRIBING);
+    set_status("마지막 결과를 다시 입력하고 있습니다…");
+}
 static void deliver(Job *j) {
     if (j->error) {
         set_status(g_error_matches(j->error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
@@ -490,6 +533,9 @@ static void deliver(Job *j) {
         set_status("인식된 음성이 없습니다");
         return;
     }
+    g_free(app.last_result);
+    app.last_result = g_strdup(text);
+    update_last_result_item();
     if (j->paste && app.portal.keyboard) {
         debug_log(j->settings.auto_send ? "automatic input queued with Enter" :
                                          "automatic input queued");
@@ -1418,6 +1464,10 @@ static void activate(GtkApplication *application, void *user) {
     app.menu_status = gtk_menu_item_new_with_label("준비됨");
     gtk_widget_set_sensitive(app.menu_status, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), app.menu_status);
+    app.menu_last = gtk_menu_item_new_with_label("");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), app.menu_last);
+    g_signal_connect(app.menu_last, "activate", G_CALLBACK(paste_last_result), NULL);
+    update_last_result_item();
     const char *names[] = {"설정 / 결과",    "녹음 시작 / 종료", "취소",
                            "로그·녹음 폴더", "다시 시작",        "종료"};
     GCallback callbacks[] = {G_CALLBACK(show_window),   G_CALLBACK(toggle),
@@ -1547,6 +1597,7 @@ int main(int argc, char **argv) {
     g_free(app.config_dir);
     g_free(app.logs_dir);
     g_free(app.wav);
+    g_free(app.last_result);
     // libcurl may still be in use by a cancelled worker; process exit releases it.
     return status;
 }

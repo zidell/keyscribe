@@ -14,6 +14,7 @@ KeyScribe es una aplicación de dictado que transcribe las grabaciones del micr�
 - Permite cambiar el atajo, el idioma, el modelo, el volumen del sonido, la posición del widget de grabación y la pulsación automática de Enter en Configuración.
 - Las **palabras de reconocimiento** mejoran la precisión con los nombres propios, y las **palabras de sustitución** (`buscar => reemplazar`) corrigen errores persistentes justo antes de pegar. Si escribes `[enter]` o `[cmd+k]` en la sustitución, esa tecla se pulsa de verdad en ese punto.
 - Las grabaciones originales (WAV) se conservan para que un fallo de red o de la API no haga perder lo que dijiste. En Configuración eliges cuánto se guardan los registros y las grabaciones (1 hora, 1 día, 7 días o 30 días; 7 días por defecto) y los más antiguos se borran solos. **Carpeta de registros y grabaciones** en el menú las abre junto con el registro de diagnóstico. Las claves de API y el contenido transcrito nunca se escriben en los registros.
+- Si el foco cambió y el resultado se perdió o acabó en otro sitio, elige **Pegar de nuevo** en la parte superior del menú para pegar el último resultado donde está ahora el cursor. El resultado solo se guarda en memoria hasta cerrar la app y el Enter automático no se repite.
 
 ## Por qué lo hice
 

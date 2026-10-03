@@ -52,6 +52,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     /// 앞선 결과가 붙여넣기 전에 실패했다면, 모든 작업이 끝났을 때 알린다.
     private var pendingFailure: String?
     private var pasteQueue: [PasteSegment] = []
+    /// 마지막으로 붙여넣은 결과. 포커스가 다른 데로 가서 놓쳤을 때 메뉴에서 다시 붙여넣는다.
+    private var lastResult: String?
     private var pasteScheduled = false
     private var phase: Phase = .idle {
         didSet {
@@ -63,6 +65,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
     private var statusItem: NSStatusItem!
     private var statusLine: NSMenuItem!
+    private var lastResultItem: NSMenuItem!
     private var recorder: AVAudioRecorder?
     private var recordingStartSound: AVAudioPlayer?
     private var recordingLimitSound: AVAudioPlayer?
@@ -148,9 +151,14 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             statusItem.button?.imagePosition = .imageOnly
         }
         let menu = NSMenu()
+        // 마지막 결과 항목을 결과가 있을 때만 켜려고 자동 활성화를 끈다.
+        menu.autoenablesItems = false
         statusLine = NSMenuItem(title: "준비됨", action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
         menu.addItem(statusLine)
+        lastResultItem = NSMenuItem(title: "", action: #selector(pasteLastResult(_:)), keyEquivalent: "")
+        menu.addItem(lastResultItem)
+        updateLastResultItem()
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "설정…", action: #selector(showSettings(_:)), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "로그 및 녹음 원본 폴더", action: #selector(openLog(_:)), keyEquivalent: ""))
@@ -167,6 +175,30 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     private func setStatus(_ message: String) {
         statusLine.title = message
+    }
+
+    private func updateLastResultItem() {
+        guard let lastResultItem else { return }
+        guard let lastResult else {
+            lastResultItem.title = "다시 붙여넣기 (결과 없음)"
+            lastResultItem.isEnabled = false
+            return
+        }
+        let line = lastResult.split(whereSeparator: \.isNewline).joined(separator: " ")
+        let preview = line.count > 24 ? line.prefix(24) + "…" : line
+        lastResultItem.title = "다시 붙여넣기: \u{201C}\(preview)\u{201D}"
+        lastResultItem.isEnabled = true
+    }
+
+    /// 메뉴 막대 메뉴는 앞에 있던 앱의 포커스를 빼앗지 않으니, 메뉴가 닫히고 나면
+    /// 사용자가 마지막으로 커서를 둔 곳에 그대로 붙여넣는다. 첫 붙여넣기 때 Enter만
+    /// 제자리에 들어갔을 수 있어, 두 번 전송되지 않도록 자동 Enter는 붙이지 않는다.
+    @objc private func pasteLastResult(_ sender: Any?) {
+        guard let text = lastResult else { return }
+        DebugLog.shared.record("last result pasted again characters=\(text.count)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.paste(text, autoSend: false)
+        }
     }
 
     /// 메뉴 막대 아이콘을 현재 상태에 맞춰 물들인다. 녹음 위젯을 "표시 안 함"으로
@@ -524,7 +556,9 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             DebugLog.shared.record("transcription completed characters=\(transcript.count)")
             let text = settings.applyingReplacements(to: transcript)
             guard !text.isEmpty else { setStatus("인식된 음성이 없습니다"); return }
-            paste(text)
+            lastResult = text
+            updateLastResultItem()
+            paste(text, autoSend: settings.autoSend)
             setStatus("완료")
         case .failure(let error):
             DebugLog.shared.record("transcription failed type=\(type(of: error))")
@@ -639,10 +673,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     /// 결과가 연달아 나와도 앞선 붙여넣기가 끝난 뒤에 이어 붙이도록 줄을 세운다.
-    private func paste(_ text: String) {
+    private func paste(_ text: String, autoSend: Bool) {
         pasteQueue += KeyToken.segments(of: text)
         // 자동 Enter도 마지막 키 조각일 뿐이라, 키 토큰과 같은 경로로 내보낸다.
-        if settings.autoSend { pasteQueue.append(.key(flags: [], code: 36)) }
+        if autoSend { pasteQueue.append(.key(flags: [], code: 36)) }
         if !pasteScheduled { runPaste() }
     }
 
