@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 final class SettingsDialog: NSObject, NSTextFieldDelegate {
@@ -26,6 +27,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     private let mute = NSButton(checkboxWithTitle: "녹음 중 시스템 소리 음소거", target: nil, action: nil)
     private let recordingStartSoundVolume = NSSlider()
     private let recordingStartSoundValue = NSTextField(labelWithString: "100%")
+    private var recordingStartSoundPreview: AVAudioPlayer?
     private let autoSend = NSButton(checkboxWithTitle: "붙여넣은 뒤 Enter 입력", target: nil, action: nil)
 
     init(settings: Settings) {
@@ -222,6 +224,7 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
         recordingStartSoundVolume.doubleValue = Double(original.recordingStartSoundVolume)
         recordingStartSoundVolume.target = self
         recordingStartSoundVolume.action = #selector(recordingStartSoundVolumeChanged(_:))
+        recordingStartSoundVolume.isContinuous = true
         form.addSubview(recordingStartSoundVolume)
         recordingStartSoundValue.frame = NSRect(x: 415, y: 40, width: 60, height: 25)
         recordingStartSoundValue.stringValue = "\(original.recordingStartSoundVolume)%"
@@ -235,7 +238,13 @@ final class SettingsDialog: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func recordingStartSoundVolumeChanged(_ sender: NSSlider) {
-        recordingStartSoundValue.stringValue = "\(Int(sender.doubleValue.rounded()))%"
+        let volume = Int(sender.doubleValue.rounded())
+        recordingStartSoundValue.stringValue = "\(volume)%"
+        // 드래그 중에는 숫자만 바꾸고, 손을 떼거나 키보드로 한 칸 옮겼을 때 그 볼륨으로 들려준다.
+        guard let event = NSApp.currentEvent, event.type == .leftMouseUp || event.type == .keyDown else { return }
+        recordingStartSoundPreview?.stop()
+        recordingStartSoundPreview = volume > 0 ? RecordingStartSound.make(volume: volume) : nil
+        recordingStartSoundPreview?.play()
     }
 
     private func updateProvider() {

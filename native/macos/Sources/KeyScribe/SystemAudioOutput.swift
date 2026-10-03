@@ -44,6 +44,32 @@ enum SystemAudioOutput {
                                           UInt32(MemoryLayout<Float32>.size), &value) == noErr
     }
 
+    /// 앱이 음소거한 사실을 파일로 남긴다. 녹음 중 앱이 강제로 끝나 되돌리지 못하면
+    /// 다음 실행 때 이 표시를 보고 음소거를 풀어 준다.
+    private static let leftoverMuteURL = Settings.directory.appendingPathComponent("muted-by-keyscribe.json")
+
+    static func rememberMute(volume: Float32?) {
+        var marker: [String: Any] = [:]
+        if let volume { marker["volume"] = volume }
+        guard let data = try? JSONSerialization.data(withJSONObject: marker) else { return }
+        try? data.write(to: leftoverMuteURL, options: .atomic)
+    }
+
+    static func forgetMute() {
+        try? FileManager.default.removeItem(at: leftoverMuteURL)
+    }
+
+    /// 지난 실행이 음소거를 풀지 못하고 끝났으면 기본 출력 장치의 음소거를 풀고 볼륨을 되돌린다.
+    static func restoreLeftoverMute() -> Bool {
+        guard let data = try? Data(contentsOf: leftoverMuteURL) else { return false }
+        let marker = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard let output = capture() else { return false }
+        if let volume = (marker["volume"] as? NSNumber)?.floatValue { setVolume(volume, on: output) }
+        guard setMuted(false, on: output) else { return false }
+        forgetMute()
+        return true
+    }
+
     @discardableResult
     static func setMuted(_ muted: Bool, on snapshot: Snapshot) -> Bool {
         var muteAddress = address(kAudioDevicePropertyMute)

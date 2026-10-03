@@ -47,6 +47,8 @@ const RIGHT_ALT_TIMER: usize = 3;
 const CHIME_FINISHED_MESSAGE: u32 = WM_APP + 5;
 const PASTE_TIMER: usize = 4;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
+/// 트랙바를 놓거나 키보드로 옮기기를 마쳤을 때 오는 WM_HSCROLL 알림 코드.
+const TRACKBAR_END_TRACK: usize = 8;
 const ID_SETTINGS: usize = 101;
 const ID_EXIT: usize = 103;
 const ID_RESTART: usize = 104;
@@ -2123,6 +2125,20 @@ unsafe extern "system" fn dialog_proc(
                     dialog.recording_start_sound_value,
                     wide(&format!("{volume}%")).as_ptr(),
                 );
+                // 드래그 중에는 숫자만 바꾸고, 손을 떼거나 키보드로 옮긴 뒤 그 볼륨으로 들려준다.
+                if loword(wparam) == TRACKBAR_END_TRACK && volume > 0 {
+                    let volume = volume as u16;
+                    std::thread::spawn(move || {
+                        let sound = recording_start_sound(volume);
+                        unsafe {
+                            PlaySoundW(
+                                sound.as_ptr().cast(),
+                                ptr::null_mut(),
+                                SND_MEMORY | SND_NODEFAULT | SND_SYNC,
+                            );
+                        }
+                    });
+                }
             }
             0
         }

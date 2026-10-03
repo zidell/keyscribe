@@ -1114,6 +1114,21 @@ static GtkWidget *combo(GtkWidget *box, const char *label, const char **ids, con
     gtk_box_pack_start(GTK_BOX(box), w, FALSE, FALSE, 0);
     return w;
 }
+// 드래그 중에는 숫자만 바꾸고, 손을 떼거나 키보드로 옮긴 뒤 그 볼륨으로 들려준다.
+static gboolean preview_start_sound(GtkWidget *scale, GdkEvent *event, void *user) {
+    (void)user;
+    if (event->type == GDK_KEY_RELEASE) {
+        switch (event->key.keyval) {
+        case GDK_KEY_Left: case GDK_KEY_Right: case GDK_KEY_Up: case GDK_KEY_Down:
+        case GDK_KEY_Page_Up: case GDK_KEY_Page_Down: case GDK_KEY_Home: case GDK_KEY_End:
+            break;
+        default:
+            return FALSE;
+        }
+    }
+    sound_play(FALSE, lrint(gtk_range_get_value(GTK_RANGE(scale))), NULL, NULL);
+    return FALSE;
+}
 static void form_row(GtkWidget *grid, int row, const char *label, GtkWidget *widget) {
     if (gtk_widget_get_parent(widget)) {
         g_object_ref(widget);
@@ -1319,6 +1334,8 @@ static void activate(GtkApplication *application, void *user) {
     app.volume = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 200, 1);
     gtk_range_set_value(GTK_RANGE(app.volume), app.settings.sound_volume);
     gtk_scale_set_digits(GTK_SCALE(app.volume), 0);
+    g_signal_connect(app.volume, "button-release-event", G_CALLBACK(preview_start_sound), NULL);
+    g_signal_connect(app.volume, "key-release-event", G_CALLBACK(preview_start_sound), NULL);
     gtk_box_pack_start(GTK_BOX(settings), app.volume, FALSE, FALSE, 0);
     button(settings, "설정 저장", G_CALLBACK(save_settings));
     button(settings, "변경 취소", G_CALLBACK(discard_settings));

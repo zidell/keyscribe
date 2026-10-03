@@ -87,10 +87,15 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var audioRestoreTimer: Timer?
     private var overlay: RecordingOverlay?
     private var overlayTimer: Timer?
+    private var terminationSignals: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLog.shared.setRetention(hours: settings.logRetentionHours)
         DebugLog.shared.record("app start shortcut=\(settings.shortcut)")
+        if SystemAudioOutput.restoreLeftoverMute() {
+            DebugLog.shared.record("audio unmuted after a previous run ended while muted")
+        }
+        installTerminationSignals()
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         installEventTap()
@@ -100,6 +105,26 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.shared.record("app terminate; cancelling and restoring audio")
+        cleanUpForExit()
+    }
+
+    /// launchctl kickstart -k 같은 재시작은 SIGTERM으로 끝내는데, 그대로 두면 정리 없이 죽어
+    /// 녹음 중 걸어 둔 시스템 음소거가 남는다. 정상 종료와 같은 정리를 거친 뒤 끝낸다.
+    private func installTerminationSignals() {
+        for number in [SIGTERM, SIGINT] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                DebugLog.shared.record("signal \(number) received; cancelling and restoring audio")
+                self?.cleanUpForExit()
+                exit(0)
+            }
+            source.resume()
+            terminationSignals.append(source)
+        }
+    }
+
+    private func cleanUpForExit() {
         if let escapeMonitor {
             NSEvent.removeMonitor(escapeMonitor)
             self.escapeMonitor = nil
@@ -392,7 +417,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             showActiveOverlay(.recording)
             updateRecordingElapsed()
             if settings.recordingStartSoundVolume > 0,
-               let sound = makeRecordingStartSound(volume: settings.recordingStartSoundVolume) {
+               let sound = RecordingStartSound.make(volume: settings.recordingStartSoundVolume) {
                 recordingStartSound = sound
                 sound.prepareToPlay()
                 if sound.play() {
@@ -416,30 +441,6 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             setStatus("녹음 오류: \(error.localizedDescription)")
             showTransientOverlay(.microphoneError)
         }
-    }
-
-    private func makeRecordingStartSound(volume: Int) -> AVAudioPlayer? {
-        guard let url = Bundle.main.url(forResource: "recording-start", withExtension: "wav") else { return nil }
-        if volume <= 100 {
-            guard let sound = try? AVAudioPlayer(contentsOf: url) else { return nil }
-            sound.volume = Float(volume) / 100
-            return sound
-        }
-        guard var data = try? Data(contentsOf: url), data.count >= 44 else { return nil }
-        let gain = Double(volume) / 100
-        data.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
-            for offset in stride(from: 44, to: bytes.count - 1, by: 2) {
-                let sample = Int16(bitPattern: UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8))
-                let scaled = Double(sample) / 32768 * gain
-                let magnitude = abs(scaled)
-                let limited = magnitude <= 0.8 ? magnitude : 0.8 + 0.2 * (1 - exp(-(magnitude - 0.8) / 0.2))
-                let adjusted = Int16(((scaled < 0 ? -limited : limited) * 32767).rounded())
-                let encoded = UInt16(bitPattern: adjusted)
-                bytes[offset] = UInt8(truncatingIfNeeded: encoded)
-                bytes[offset + 1] = UInt8(truncatingIfNeeded: encoded >> 8)
-            }
-        }
-        return try? AVAudioPlayer(data: data)
     }
 
     private func playRecordingLimitSound() {
@@ -719,12 +720,16 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             DebugLog.shared.record("audio output captured muted=\(output.wasMuted)")
             guard !output.wasMuted else { return }
             guard let volume = output.volume, volume > 0 else {
-                if !SystemAudioOutput.setMuted(true, on: output) {
+                if SystemAudioOutput.setMuted(true, on: output) {
+                    SystemAudioOutput.rememberMute(volume: output.volume)
+                } else {
                     DebugLog.shared.record("audio mute failed")
                     audioOutput = nil
                 }
                 return
             }
+            // 페이드 도중 앱이 끝나도 다음 실행이 원래 볼륨으로 되돌릴 수 있게 먼저 남긴다.
+            SystemAudioOutput.rememberMute(volume: volume)
             let currentSession = session
             for step in 1...5 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.025) { [weak self] in
@@ -751,6 +756,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
                 DebugLog.shared.record("audio mute failed")
                 wasMuted = nil
             } else {
+                SystemAudioOutput.rememberMute(volume: nil)
                 DebugLog.shared.record("audio muted; previous state=unmuted")
             }
         } else {
@@ -764,6 +770,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
             if !output.wasMuted {
                 for attempt in 1...3 {
                     if SystemAudioOutput.setMuted(false, on: output) {
+                        SystemAudioOutput.forgetMute()
                         DebugLog.shared.record("audio restored attempt=\(attempt)")
                         audioRestoreTimer?.invalidate()
                         audioRestoreTimer = nil
@@ -781,6 +788,7 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         if wasMuted == false {
             for attempt in 1...3 {
                 if runAppleScript("set volume output muted false") != nil {
+                    SystemAudioOutput.forgetMute()
                     DebugLog.shared.record("audio restored attempt=\(attempt)")
                     audioRestoreTimer?.invalidate()
                     audioRestoreTimer = nil
