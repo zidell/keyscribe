@@ -288,7 +288,7 @@ mod tests {
         value.replacements = vec!["a => b=c".into(), "say => [enter]".into()];
         let config = value.config_text().unwrap();
         assert!(!config.contains("gsk_private_dummy"));
-        assert!(config.contains("# hold:"));
+        assert!(config.contains("1초 넘게 누르고 있으면 뗄 때 녹음을 끝낸다"));
         let loaded = Settings::from_config(&config).unwrap();
         assert_eq!(loaded.language, value.language);
         assert_eq!(loaded.auto_send, value.auto_send);
