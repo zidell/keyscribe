@@ -4,6 +4,8 @@
 
 [English](README.md) | [한국어](README.ko.md) | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [Español](README.es.md)
 
+> KeyScribe es un proyecto personal publicado de forma gratuita. Puedes usarlo libremente, pero no se aceptan sugerencias de funciones, informes de errores ni solicitudes de soporte. Si necesitas algo distinto, haz un fork bajo la licencia MIT y adáptalo.
+
 KeyScribe es una aplicación de dictado que transcribe las grabaciones del micrófono y pega el texto resultante en el campo activo. Mantiene deliberadamente un conjunto pequeño de funciones y está implementada de forma nativa, con un objetivo de memoria en reposo de unos 20 MB. No incluye un modelo propio, por lo que necesita una clave de API de OpenAI, ElevenLabs o Groq (Groq puede usarse gratis).
 
 ## Funciones
