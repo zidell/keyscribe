@@ -38,13 +38,13 @@ KeyScribeは、マイクの録音を文字起こしし、現在の入力欄へ�
 
 ## インストール
 
-ダウンロードとインストール方法は[KeyScribeダウンロードページ](https://keyscribe.gitools.net)をご覧ください。すべてのインストーラーは[GitHub Releases](https://github.com/zidell/keyscribe/releases)で直接配布しています。
+ダウンロードとインストール方法は[KeyScribeダウンロードページ](https://keyscribe.gitools.net)をご覧ください。macOS版とUbuntu版のインストーラーは[GitHub Releases](https://github.com/zidell/keyscribe/releases)で、Windows版はMicrosoft Storeで配布しています。新しいバージョンが出ると、macOS版はお知らせしたうえでインストールし、Windows版はMicrosoft Storeが自動で更新し、Ubuntu版はトレイメニューにダウンロード項目を表示します。
 
 | OS | ファイル | インストールまたは実行 |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMGを開き、アプリをApplicationsへコピー |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMGを開き、アプリをApplicationsへコピー |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | GitHub ReleasesからSignPath署名済みインストーラーをダウンロード |
+| Windows 10/11 x64 | Microsoft Store | Microsoft Storeでの公開を準備中 |
 | Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntuネイティブ版のインストール](native/linux/README.md) |
 
 ## 最初の使用
@@ -63,7 +63,6 @@ macOS版・Windows版とは別に、C/GTKでコンパイルしたUbuntuネイテ
 PipeWire/PulseAudioでの録音と3つの文字起こしサービスに対応し、GNOMEとKDE Plasmaでは
 デスクトップポータルでグローバルショートカットと自動貼り付けを使います。必要なポータルがない
 デスクトップでは、アプリの録音ボタンで録音し、結果をコピーして貼り付けます。
-Ubuntu版だけの更新は`linux-vMAJOR.MINOR.PATCH`タグで配布します。
 
 ## STTプロバイダー
 

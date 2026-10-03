@@ -111,10 +111,36 @@ jobs:
             --context context:primary-signature "$dmg"
           hdiutil verify "$dmg"
         shell: bash
+      - name: Write Sparkle update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.KEYSCRIBE_SPARKLE_PRIVATE_KEY }}
+        run: |
+          [[ -n "$SPARKLE_PRIVATE_KEY" ]] || { echo 'Missing KEYSCRIBE_SPARKLE_PRIVATE_KEY' >&2; exit 1; }
+          sparkle_version=2.10.0
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$sparkle_version/Sparkle-$sparkle_version.tar.xz"
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $RUNNER_TEMP/sparkle.tar.xz" |
+            shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/sparkle" "$RUNNER_TEMP/feed"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          version="${RELEASE_TAG#macos-v}"
+          cp "KeyScribe-macos-${{ matrix.arch }}-$version.dmg" "$RUNNER_TEMP/feed/"
+          # The installed app reads appcast-<arch>.xml from the landing page; the
+          # enclosure points at this release's DMG.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" \
+            --link https://keyscribe.gitools.net \
+            -o "appcast-${{ matrix.arch }}.xml" "$RUNNER_TEMP/feed"
+          grep -q 'sparkle:edSignature=' "appcast-${{ matrix.arch }}.xml"
+          grep -q "<sparkle:version>$version</sparkle:version>" "appcast-${{ matrix.arch }}.xml"
+        shell: bash
       - uses: actions/upload-artifact@v4
         with:
           name: native-macos-${{ matrix.arch }}
-          path: KeyScribe-macos-*.dmg
+          path: |
+            KeyScribe-macos-*.dmg
+            appcast-*.xml
           if-no-files-found: error
       - name: Remove signing keychain
         if: always()
@@ -128,6 +154,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
@@ -144,13 +171,18 @@ jobs:
             test -s "release-assets/KeyScribe-macos-$arch-$version.dmg" || {
               echo "Missing macOS $arch DMG" >&2; exit 1;
             }
+            test -s "release-assets/appcast-$arch.xml" || {
+              echo "Missing macOS $arch update feed" >&2; exit 1;
+            }
           done
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; refusing to replace its files" >&2
             exit 1
           fi
-          gh release create "$RELEASE_TAG" release-assets/*.dmg \
+          gh release create "$RELEASE_TAG" release-assets/*.dmg release-assets/appcast-*.xml \
             --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "KeyScribe macOS $version" --generate-notes \
             --prerelease --latest=false
         shell: bash
+      - name: Redeploy landing page with the new update feed
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

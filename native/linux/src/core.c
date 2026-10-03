@@ -569,3 +569,58 @@ GPtrArray *paste_segments(const char *text) {
     g_string_free(buffer, TRUE);
     return result;
 }
+// Compares dotted numeric versions such as 0.1.10 and 0.1.9; missing parts count as 0.
+int version_compare(const char *a, const char *b) {
+    g_auto(GStrv) x = g_strsplit(a, ".", -1);
+    g_auto(GStrv) y = g_strsplit(b, ".", -1);
+    guint nx = g_strv_length(x), ny = g_strv_length(y);
+    for (guint i = 0; i < MAX(nx, ny); i++) {
+        guint64 p = i < nx ? g_ascii_strtoull(x[i], NULL, 10) : 0;
+        guint64 q = i < ny ? g_ascii_strtoull(y[i], NULL, 10) : 0;
+        if (p != q)
+            return p < q ? -1 : 1;
+    }
+    return 0;
+}
+// The landing page publishes the newest Ubuntu release number as plain text.
+char *fetch_latest_version(GCancellable *cancel, GError **error) {
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        FAIL("네트워크 초기화 실패");
+        return NULL;
+    }
+    Transfer t = {g_string_new(NULL), cancel};
+#ifdef KEYSCRIBE_TEST_ENDPOINT
+    curl_easy_setopt(curl, CURLOPT_URL, KEYSCRIBE_TEST_ENDPOINT);
+#else
+    curl_easy_setopt(curl, CURLOPT_URL, "https://keyscribe.gitools.net/linux-version.txt");
+#endif
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &t);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &t);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    CURLcode code = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    char *version = NULL;
+    if (g_cancellable_set_error_if_cancelled(cancel, error)) {
+    } else if (code != CURLE_OK)
+        FAIL("업데이트 확인 연결 실패: %s", curl_easy_strerror(code));
+    else if (status < 200 || status >= 300)
+        FAIL("업데이트 확인 실패 (HTTP %ld)", status);
+    else {
+        g_strstrip(t.body->str);
+        if (g_regex_match_simple("^[0-9]+\\.[0-9]+\\.[0-9]+$", t.body->str, 0, 0))
+            version = g_strdup(t.body->str);
+        else
+            FAIL("업데이트 정보 형식이 올바르지 않습니다");
+    }
+    g_string_free(t.body, TRUE);
+    curl_easy_cleanup(curl);
+    return version;
+}

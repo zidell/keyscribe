@@ -38,13 +38,13 @@ KeyScribe 是一款语音输入应用：它将麦克风录音转写为文字，�
 
 ## 安装
 
-请在 [KeyScribe 下载页面](https://keyscribe.gitools.net)查看下载和安装说明。所有安装文件均直接通过 [GitHub Releases](https://github.com/zidell/keyscribe/releases) 发布。
+请在 [KeyScribe 下载页面](https://keyscribe.gitools.net)查看下载和安装说明。macOS 和 Ubuntu 安装文件通过 [GitHub Releases](https://github.com/zidell/keyscribe/releases) 发布，Windows 应用通过 Microsoft Store 分发。有新版本时，macOS 应用会提示并在确认后安装，Microsoft Store 会自动更新 Windows 应用，Ubuntu 应用会在托盘菜单中显示下载项。
 
 | 操作系统 | 文件 | 安装或运行 |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | 打开 DMG 并将应用复制到 Applications |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | 打开 DMG 并将应用复制到 Applications |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | 从 GitHub Releases 下载经 SignPath 签名的安装程序 |
+| Windows 10/11 x64 | Microsoft Store | 即将上架 Microsoft Store |
 | Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntu 原生版安装](native/linux/README.md) |
 
 ## 首次使用
@@ -61,7 +61,7 @@ KeyScribe 是一款语音输入应用：它将麦克风录音转写为文字，�
 可从[最新 Ubuntu 版本](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)下载 `.deb` 安装文件，构建、安装和使用说明见
 [Ubuntu 指南](native/linux/README.md)。支持 PipeWire/PulseAudio 录音和三种转写服务，
 在 GNOME 和 KDE Plasma 上通过桌面门户使用全局快捷键和自动粘贴。在缺少所需门户的桌面上，
-请用应用中的录音按钮录音，再复制结果粘贴。仅针对 Ubuntu 的更新通过 `linux-vMAJOR.MINOR.PATCH` 标签发布。
+请用应用中的录音按钮录音，再复制结果粘贴。
 
 ## STT 提供商
 

@@ -4,6 +4,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import Sparkle
 
 private enum Phase {
     case idle, recording, transcribing
@@ -89,6 +90,8 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     private var wasMuted: Bool?
     private var audioRestoreTimer: Timer?
     private var overlay: RecordingOverlay?
+    /// 릴리스 빌드만 업데이트 피드를 갖는다. 개발 빌드는 배포판으로 바꿔치기되지 않도록 업데이트를 찾지 않는다.
+    private var updater: SPUStandardUpdaterController?
     private var overlayTimer: Timer?
     private var terminationSignals: [DispatchSourceSignal] = []
 
@@ -100,6 +103,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         }
         installTerminationSignals()
         NSApp.setActivationPolicy(.accessory)
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil,
+                                                   userDriverDelegate: nil)
+        }
         setupMenu()
         installEventTap()
         installEscapeMonitor()
@@ -170,6 +177,13 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "재실행", action: #selector(restart(_:)), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "종료", action: #selector(quit(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil { item.target = self }
+        if let updater {
+            let updateItem = NSMenuItem(title: "업데이트 확인…",
+                                        action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                                        keyEquivalent: "")
+            updateItem.target = updater
+            menu.insertItem(updateItem, at: menu.index(of: versionItem) + 1)
+        }
         statusItem.menu = menu
     }
 

@@ -477,10 +477,18 @@ static void key_segments(void) {
         g_ptr_array_unref(parts);
     }
 }
+static void versions(void) {
+    g_assert_cmpint(version_compare("0.1.2", "0.1.2"), ==, 0);
+    g_assert_cmpint(version_compare("0.1.10", "0.1.9"), >, 0);
+    g_assert_cmpint(version_compare("0.2.0", "0.10.0"), <, 0);
+    g_assert_cmpint(version_compare("1.0", "1.0.0"), ==, 0);
+    g_assert_cmpint(version_compare("1.0.1", "1.0"), >, 0);
+}
 int main(int argc, char **argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/linux/providers", providers);
+    g_test_add_func("/linux/version-compare", versions);
     g_test_add_func("/linux/text", text);
     g_test_add_func("/linux/replacement-key-commands", key_segments);
     g_test_add_func("/linux/settings-private-roundtrip", settings);

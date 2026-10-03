@@ -6,6 +6,8 @@ API 키는 사용자 기기의 `user_config.json`에 저장합니다. 경로는 
 
 KeyScribe 자체 계정이나 자체 음성 인식 서버는 없습니다. 소스 코드에는 별도 사용 통계 전송 기능이 없습니다.
 
+새 버전 확인을 위해 macOS 앱은 하루 한 번 `keyscribe.gitools.net`의 업데이트 정보(`appcast-arm64.xml` 또는 `appcast-x64.xml`)를, Ubuntu 앱은 6시간마다 `linux-version.txt`를 내려받습니다. 이 요청에는 앱 이름과 버전이 담긴 일반적인 HTTP 요청 정보만 포함되며, 녹음·전사 내용·API 키·설정은 보내지 않습니다. macOS 앱은 사용자가 설치를 선택하면 GitHub Releases에서 새 버전을 내려받습니다. Windows 앱의 업데이트는 Microsoft Store가 처리합니다.
+
 Ubuntu 네이티브 앱은 설정을 `$XDG_CONFIG_HOME/keyscribe/config.toml`
 (기본 `~/.config/keyscribe/config.toml`)에, API 키를 같은 폴더의 `user_config.json`에
 분리해 저장합니다. 두 파일 권한은 0600이며 API 키는 평문으로 저장됩니다.

@@ -21,6 +21,8 @@ gboolean wav_header(FILE *file, guint32 bytes);
 char *transcribe(const char *path, const Settings *s, GCancellable *cancel, GError **error);
 void prune_recordings(const char *dir, int hours);
 char **fetch_models(const char *api_key, GCancellable *cancel, GError **error);
+int version_compare(const char *a, const char *b);
+char *fetch_latest_version(GCancellable *cancel, GError **error);
 
 void debug_log(const char *event);
 void debug_log_init(const char *dir);

@@ -19,9 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Render static site
-        run: |
-          version="$(awk -F'"' '/^version = / { print $2; exit }' native/windows/Cargo.toml)"
-          bash scripts/render_site.sh "$version" "$RUNNER_TEMP/static-site"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEYSCRIBE_WINDOWS_STORE_URL: ${{ vars.KEYSCRIBE_WINDOWS_STORE_URL }}
+        run: bash scripts/render_site.sh "$RUNNER_TEMP/static-site"
         shell: bash
       - uses: actions/upload-pages-artifact@v3
         with:

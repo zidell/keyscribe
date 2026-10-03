@@ -30,7 +30,9 @@ typedef struct {
         *terms, *rules, *send, *limit, *retention, *mute, *no_verbatim, *volume, *position,
         *shortcut_choice;
     AppIndicator *indicator;
-    GtkWidget *menu_status, *menu_last;
+    GtkWidget *menu_status, *menu_last, *menu_update;
+    // 다운로드 페이지에 올라온 더 새 Ubuntu 버전. 없으면 NULL이다.
+    char *update_version;
     // 마지막으로 전달한 결과. 포커스가 다른 데로 가서 놓쳤을 때 트레이 메뉴에서 다시 입력한다.
     char *last_result;
     Settings settings;
@@ -129,6 +131,53 @@ static gboolean hide_window(GtkWidget *w, GdkEvent *e, void *user) {
     discard_settings(w, NULL);
     gtk_widget_hide(w);
     return TRUE;
+}
+static void update_worker(GTask *task, void *source, void *data, GCancellable *cancel) {
+    (void)source;
+    (void)data;
+    GError *error = NULL;
+    char *version = fetch_latest_version(cancel, &error);
+    if (version)
+        g_task_return_pointer(task, version, g_free);
+    else
+        g_task_return_error(task, error);
+}
+static void update_ready(GObject *obj, GAsyncResult *result, void *user) {
+    (void)obj;
+    (void)user;
+    g_autoptr(GError) error = NULL;
+    g_autofree char *version = g_task_propagate_pointer(G_TASK(result), &error);
+    if (!version) {
+        debug_log("update check failed");
+        return;
+    }
+    if (version_compare(version, KEYSCRIBE_VERSION) <= 0 || !g_strcmp0(version, app.update_version))
+        return;
+    debug_log("newer Ubuntu release available");
+    g_free(app.update_version);
+    app.update_version = g_steal_pointer(&version);
+    g_autofree char *label = g_strdup_printf("새 버전 %s 다운로드", app.update_version);
+    gtk_menu_item_set_label(GTK_MENU_ITEM(app.menu_update), label);
+    gtk_widget_show(app.menu_update);
+}
+// .deb 설치본은 스스로 업데이트하지 못하니, 새 버전이 나오면 트레이 메뉴에서 알려 준다.
+static gboolean check_for_update(void *user) {
+    (void)user;
+    GTask *task = g_task_new(NULL, NULL, update_ready, NULL);
+    g_task_run_in_thread(task, update_worker);
+    g_object_unref(task);
+    return G_SOURCE_CONTINUE;
+}
+static void open_update(GtkMenuItem *item, void *user) {
+    (void)item;
+    (void)user;
+    if (!app.update_version)
+        return;
+    g_autofree char *uri = g_strdup_printf(
+        "https://github.com/zidell/keyscribe/releases/tag/linux-v%s", app.update_version);
+    g_autoptr(GError) error = NULL;
+    if (!g_app_info_launch_default_for_uri(uri, NULL, &error))
+        set_status(error->message);
 }
 static void open_logs(GtkMenuItem *item, void *user) {
     (void)item;
@@ -1468,6 +1517,10 @@ static void activate(GtkApplication *application, void *user) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), app.menu_last);
     g_signal_connect(app.menu_last, "activate", G_CALLBACK(paste_last_result), NULL);
     update_last_result_item();
+    app.menu_update = gtk_menu_item_new_with_label("");
+    gtk_widget_set_no_show_all(app.menu_update, TRUE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), app.menu_update);
+    g_signal_connect(app.menu_update, "activate", G_CALLBACK(open_update), NULL);
     const char *names[] = {"설정 / 결과",    "녹음 시작 / 종료", "취소",
                            "로그·녹음 폴더", "다시 시작",        "종료"};
     GCallback callbacks[] = {G_CALLBACK(show_window),   G_CALLBACK(toggle),
@@ -1484,6 +1537,8 @@ static void activate(GtkApplication *application, void *user) {
                                  "audio-input-microphone", "category", "ApplicationStatus", NULL);
     app_indicator_set_status(app.indicator, APP_INDICATOR_STATUS_ACTIVE);
     app_indicator_set_menu(app.indicator, GTK_MENU(menu));
+    check_for_update(NULL);
+    g_timeout_add_seconds(6 * 60 * 60, check_for_update, NULL);
     app.audio_loop = pa_glib_mainloop_new(NULL);
     output_init(&app.output, app.audio_loop);
     overlay_init(&app.overlay);
@@ -1598,6 +1653,7 @@ int main(int argc, char **argv) {
     g_free(app.logs_dir);
     g_free(app.wav);
     g_free(app.last_result);
+    g_free(app.update_version);
     // libcurl may still be in use by a cancelled worker; process exit releases it.
     return status;
 }

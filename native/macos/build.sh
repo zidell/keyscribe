@@ -3,7 +3,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "$0")/../.." && pwd)"
 mac_root="$project_root/native/macos"
-output_dir="$project_root/dist-native"
+output_dir="${KEYSCRIBE_BUILD_DIR:-$project_root/dist-native}"
 output="$output_dir/KeyScribe.app"
 
 if [[ -z "${KEYSCRIBE_CODESIGN_IDENTITY:-}" && -d "$output" ]] &&
@@ -33,13 +33,34 @@ cp "$project_root/assets/recording-start.wav" "$staged_app/Contents/Resources/re
 cp "$project_root/assets/recording-limit.wav" "$staged_app/Contents/Resources/recording-limit.wav"
 cp "$project_root/docs/readme.txt" "$staged_app/Contents/Resources/readme.txt"
 cp "$project_root/config.toml.example" "$staged_app/Contents/Resources/config.toml.example"
+mkdir -p "$staged_app/Contents/Frameworks"
+# ditto keeps the framework's Versions symlinks intact.
+ditto "$mac_root/.build/release/Sparkle.framework" "$staged_app/Contents/Frameworks/Sparkle.framework"
 
 if [[ -n "${KEYSCRIBE_VERSION:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $KEYSCRIBE_VERSION" "$staged_app/Contents/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $KEYSCRIBE_VERSION" "$staged_app/Contents/Info.plist"
+    # Only versioned release builds look for updates; each architecture has its own feed
+    # so an update never swaps an Apple Silicon app for an Intel build or vice versa.
+    case "$(lipo -archs "$staged_app/Contents/MacOS/KeyScribe")" in
+        arm64) feed_arch=arm64 ;;
+        x86_64) feed_arch=x64 ;;
+        *) echo '업데이트 피드를 정할 수 없는 아키텍처입니다.' >&2; exit 1 ;;
+    esac
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://keyscribe.gitools.net/appcast-$feed_arch.xml" \
+        "$staged_app/Contents/Info.plist"
 fi
 
 if [[ -n "${KEYSCRIBE_CODESIGN_IDENTITY:-}" ]]; then
+    # Sparkle's helpers are signed one by one, innermost first; --deep would strip
+    # the Downloader service's entitlements.
+    sparkle="$staged_app/Contents/Frameworks/Sparkle.framework"
+    codesign_sparkle() { codesign --force --options runtime --timestamp --sign "$KEYSCRIBE_CODESIGN_IDENTITY" "$@"; }
+    codesign_sparkle "$sparkle/Versions/B/XPCServices/Installer.xpc"
+    codesign_sparkle --preserve-metadata=entitlements "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+    codesign_sparkle "$sparkle/Versions/B/Autoupdate"
+    codesign_sparkle "$sparkle/Versions/B/Updater.app"
+    codesign_sparkle "$sparkle"
     codesign --force --options runtime --timestamp \
         --entitlements "$project_root/packaging/macos-entitlements.plist" \
         --sign "$KEYSCRIBE_CODESIGN_IDENTITY" "$staged_app"

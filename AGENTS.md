@@ -11,6 +11,9 @@ comments consistent with the platform loaders and defaults.
 For reusable cross-platform design principles and blind-agent test results, see
 [Agent Configuration Accessibility](https://github.com/zidell/agent-configuration-accessibility).
 
+Release tags, signing secrets, update feeds and the Microsoft Store flow are
+described in [docs/releasing.md](docs/releasing.md).
+
 ## Maintainer's local macOS dev loop
 
 The maintainer runs the `dist-native/KeyScribe.app` build as a login

@@ -38,13 +38,13 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 
 ## 설치
 
-[다운로드 및 설치 방법은 [KeyScribe 다운로드 페이지](https://keyscribe.gitools.net)에서 확인하세요. 모든 설치 파일은 [GitHub Releases](https://github.com/zidell/keyscribe/releases)에서 직접 배포합니다.
+다운로드 및 설치 방법은 [KeyScribe 다운로드 페이지](https://keyscribe.gitools.net)에서 확인하세요. macOS·Ubuntu 설치 파일은 [GitHub Releases](https://github.com/zidell/keyscribe/releases)에서, Windows 앱은 Microsoft Store로 배포합니다. 새 버전이 나오면 macOS 앱은 알려 준 뒤 설치하고, Windows 앱은 Microsoft Store가 자동으로 업데이트하며, Ubuntu 앱은 트레이 메뉴에 다운로드 항목을 띄웁니다.
 
 | 운영체제 | 파일 | 설치 또는 실행 |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMG를 열고 앱을 Applications로 복사 |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | GitHub Releases에서 SignPath 서명 설치 파일 다운로드 |
+| Windows 10/11 x64 | Microsoft Store | Microsoft Store 출시 준비 중 |
 | Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntu 네이티브 설치 방법](native/linux/README.md) |
 
 ## 처음 사용할 때
@@ -63,8 +63,6 @@ macOS·Windows 앱과 별도로 C/GTK로 컴파일한 Ubuntu 네이티브 앱을
 PipeWire/PulseAudio 녹음과 세 전사 서비스를 지원하며, GNOME과 KDE Plasma에서는
 데스크톱 포털로 전역 단축키와 자동 붙여넣기를 사용합니다. 필요한 포털이 없는
 데스크톱에서는 앱의 녹음 버튼으로 녹음하고 결과를 복사해 붙여넣습니다.
-버전 태그를 푸시하면 Ubuntu `.deb`도 자동으로 빌드해 macOS·Windows 설치 파일과 같은
-GitHub Release에 첨부하고, Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니다.
 
 ```sh
 ./native/linux/build.sh --test

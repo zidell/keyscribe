@@ -38,13 +38,13 @@ Las siguientes imágenes muestran el menú de control y el flujo de uso de la ap
 
 ## Instalación
 
-Consulta la [página de descargas de KeyScribe](https://keyscribe.gitools.net) para las descargas e instrucciones de instalación. Todos los instaladores se distribuyen directamente mediante [GitHub Releases](https://github.com/zidell/keyscribe/releases).
+Consulta la [página de descargas de KeyScribe](https://keyscribe.gitools.net) para las descargas e instrucciones de instalación. Los instaladores de macOS y Ubuntu se publican en [GitHub Releases](https://github.com/zidell/keyscribe/releases) y la aplicación de Windows se distribuye a través de Microsoft Store. Cuando hay una versión nueva, la aplicación de macOS la ofrece y la instala si aceptas, Microsoft Store actualiza automáticamente la de Windows y la de Ubuntu muestra una opción de descarga en el menú de la bandeja.
 
 | Sistema operativo | Archivo | Instalar o ejecutar |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | Abre el DMG y copia la aplicación a Aplicaciones |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | Abre el DMG y copia la aplicación a Aplicaciones |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | Descarga el instalador firmado por SignPath desde GitHub Releases |
+| Windows 10/11 x64 | Microsoft Store | Próximamente en Microsoft Store |
 | Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Instalación nativa para Ubuntu](native/linux/README.md) |
 
 ## Primer uso
@@ -63,8 +63,7 @@ compilada en C/GTK. Descarga el instalador `.deb` desde
 explican en la [guía de Ubuntu](native/linux/README.md). Admite grabación con PipeWire/PulseAudio
 y los tres servicios de transcripción, y en GNOME y KDE Plasma usa los portales del escritorio para
 los atajos globales y el pegado automático. En escritorios sin los portales necesarios, graba con el
-botón de la aplicación y copia el resultado para pegarlo. Las actualizaciones solo para Ubuntu se
-publican con etiquetas `linux-vMAJOR.MINOR.PATCH`.
+botón de la aplicación y copia el resultado para pegarlo.
 
 ## Proveedores de STT
 

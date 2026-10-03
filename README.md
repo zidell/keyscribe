@@ -38,13 +38,13 @@ The images below show the app's control menu and usage flow.
 
 ## Install
 
-See the [KeyScribe download page](https://keyscribe.gitools.net) for downloads and installation instructions. All installers are distributed directly through [GitHub Releases](https://github.com/zidell/keyscribe/releases).
+See the [KeyScribe download page](https://keyscribe.gitools.net) for downloads and installation instructions. macOS and Ubuntu installers are published on [GitHub Releases](https://github.com/zidell/keyscribe/releases); the Windows app is distributed through the Microsoft Store. The macOS app offers new versions and installs them on request, the Microsoft Store updates the Windows app automatically, and the Ubuntu app shows a download item in the tray menu when a new version is out.
 
 | Operating system | File | Install or run |
 | --- | --- | --- |
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | Open the DMG and copy the app to Applications |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | Open the DMG and copy the app to Applications |
-| Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | Download the SignPath-signed installer from GitHub Releases |
+| Windows 10/11 x64 | Microsoft Store | Coming soon to the Microsoft Store |
 | Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Native Linux installation](native/linux/README.md) |
 
 ### Ubuntu (native Linux app)
@@ -54,9 +54,7 @@ and Windows apps. Download the `.deb` from
 [the latest Ubuntu release](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)
 or see [Ubuntu build, installation, and usage](native/linux/README.md).
 It supports PipeWire/PulseAudio recording, the three STT providers, and portal-based
-global shortcuts and automatic paste on supported GNOME and KDE Plasma desktops. Tagged releases
-build and attach the Ubuntu `.deb` alongside the macOS and Windows installers;
-Ubuntu-only updates use `linux-vMAJOR.MINOR.PATCH` tags.
+global shortcuts and automatic paste on supported GNOME and KDE Plasma desktops.
 
 ## First use
 
