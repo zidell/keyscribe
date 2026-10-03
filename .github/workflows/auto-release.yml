@@ -1,0 +1,77 @@
+name: Auto release
+
+# Every main push that passes CI ships the platforms whose sources changed since
+# their last release: the patch version goes up by one, a platform tag is created,
+# and that platform's release workflow runs. Put [skip release] in the commit
+# message to push without releasing.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      !contains(github.event.workflow_run.head_commit.message, '[skip release]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+      WINDOWS_STORE_URL: ${{ vars.KEYSCRIBE_WINDOWS_STORE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag and release changed platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          # Only release the commit CI tested, and only while it is still the tip of main.
+          [[ "$(git rev-parse origin/main)" == "$SHA" ]] || {
+            echo "main moved past $SHA; the newer push releases instead."; exit 0;
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          shared=(assets docs/readme.txt config.toml.example)
+          release() {
+            local platform="$1" workflow="$2" first="$3"; shift 3
+            local latest next
+            latest="$(git tag -l "$platform-v*" | sed "s#^$platform-v##" |
+              grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+            if [[ -n "$latest" ]]; then
+              if git diff --quiet "$platform-v$latest" "$SHA" -- "$@" "${shared[@]}"; then
+                echo "$platform: no changes since $platform-v$latest"; return
+              fi
+              IFS=. read -r major minor patch <<< "$latest"
+              next="$major.$minor.$((patch + 1))"
+            else
+              next="$first"
+            fi
+            git tag -a "$platform-v$next" -m "KeyScribe $platform $next" "$SHA"
+            git push origin "$platform-v$next"
+            # Tags pushed with the workflow token do not start other workflows, so dispatch it.
+            gh workflow run "$workflow" --ref main -f tag="$platform-v$next"
+            echo "$platform: released $platform-v$next" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
+          release macos native-macos-release.yml 0.1.0 native/macos packaging/macos-entitlements.plist
+          release linux native-linux-release.yml 0.1.0 native/linux packaging/build-deb.sh
+          # Windows ships through the Microsoft Store, so it joins once the listing is live.
+          if [[ -n "$WINDOWS_STORE_URL" ]]; then
+            release windows native-windows-release.yml 1.0.0 native/windows packaging/build-msix.ps1 packaging/msix-assets
+          fi

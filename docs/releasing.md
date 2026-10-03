@@ -1,7 +1,23 @@
 # Releasing
 
-Each platform ships from its own tag series. Pushing a tag runs that platform's
-workflow; nothing else needs to be clicked.
+Releases are automatic. When a push to `main` passes CI, `auto-release.yml` checks
+each platform for changes since its last tag, raises the patch version by one, tags the
+tested commit and starts that platform's release workflow. A push that changes only
+documentation releases nothing, and `[skip release]` in the commit message skips a
+release on purpose. Windows joins the automatic releases once
+`KEYSCRIBE_WINDOWS_STORE_URL` is set.
+
+| Platform | Release when these change |
+| --- | --- |
+| macOS | `native/macos`, `packaging/macos-entitlements.plist` |
+| Ubuntu | `native/linux`, `packaging/build-deb.sh` |
+| Windows | `native/windows`, `packaging/build-msix.ps1`, `packaging/msix-assets` |
+
+`assets`, `docs/readme.txt` and `config.toml.example` count for every platform. To ship
+a minor or major version, push the tag by hand (for example `macos-v0.2.0`); automatic
+releases continue from the highest tag.
+
+Each platform ships from its own tag series:
 
 | Platform | Tag | Workflow | Where users get it | How installed apps update |
 | --- | --- | --- | --- | --- |
@@ -12,7 +28,8 @@ workflow; nothing else needs to be clicked.
 The macOS and Ubuntu workflows redeploy the landing page when they finish, so
 the download links, `appcast-*.xml` and `linux-version.txt` follow the newest tag.
 The Store requires a nonzero major version, so Windows tags start at `windows-v1.0.0`
-and must increase with every submission.
+and must increase with every submission. Tags created by the workflow token do not trigger
+workflows on their own, so `auto-release.yml` dispatches the release workflow itself.
 
 ## Secrets and variables
 
