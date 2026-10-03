@@ -6,7 +6,7 @@
 #include "overlay.h"
 #include "sounds.h"
 #ifndef KEYSCRIBE_VERSION
-#define KEYSCRIBE_VERSION "0.1.1"
+#define KEYSCRIBE_VERSION "0.1.2"
 #endif
 #include <json-glib/json-glib.h>
 #include <libintl.h>

@@ -12,9 +12,12 @@ intend to distribute them to. A binary built on a newer system may require newer
 libraries. Ubuntu 26.04 GNOME/Wayland is the local development environment.
 
 Download the Ubuntu amd64 `.deb` and its SHA-256 checksum from
-[KeyScribe Ubuntu 0.1.2](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.2).
+[the latest Ubuntu release](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true).
 Open the downloaded package to install, or run
-`sudo apt install ./KeyScribe-ubuntu-amd64-0.1.2.deb`.
+`sudo apt install ./KeyScribe-ubuntu-amd64-<version>.deb`.
+The installed app checks the landing page's `linux-version.txt` every six hours and adds a
+**새 버전 … 다운로드** item to the tray menu when a newer release is out; install that
+package the same way to update.
 To build from source:
 
 ```sh
