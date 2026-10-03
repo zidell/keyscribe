@@ -107,6 +107,4 @@ Groq 密钥归属于所选项目，免费层有请求和音频处理限制。提
 - Windows：`%APPDATA%\keyscribe\logs\`
 - 开发运行：`dist-native/logs/`
 
-macOS 登录应用和源代码监视构建的日志位于 `dist-native/app.log`、`dist-native/watch.log`。
-
 [隐私说明](docs/privacy.md)介绍音频传输和 API 密钥存储方式。源代码采用 [MIT 许可证](LICENSE)发布。

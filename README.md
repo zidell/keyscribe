@@ -132,8 +132,6 @@ You can check app status and errors in the menu-bar or tray menu. **Logs & Recor
 - Ubuntu: `~/.local/share/keyscribe/logs/` (or `$XDG_DATA_HOME/keyscribe/logs/`)
 - Development runs: `dist-native/logs/`
 
-Logs for the macOS login app and source-watch build are stored in `dist-native/app.log` and `dist-native/watch.log`.
-
 The [privacy notice](docs/privacy.md) explains how audio is sent and API keys are stored.
 
 The source code is available under the [MIT License](LICENSE).

@@ -17,3 +17,6 @@ config.toml
 *.keychain-db
 native/macos/.build/
 native/windows/target/
+
+# 메인테이너 개인 macOS 개발 루프 (AGENTS.md 참고)
+local/

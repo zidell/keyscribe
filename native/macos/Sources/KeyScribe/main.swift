@@ -818,10 +818,10 @@ final class KeyScribeApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func restart(_ sender: Any?) {
-        // The development LaunchAgent has KeepAlive enabled. Starting a second
-        // process here would leave two keyboard hooks alive, so let it perform
-        // the relaunch when it owns this process.
-        if ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == "net.gitools.keyscribe.dev" {
+        // A supervisor such as a launchd KeepAlive job sets KEYSCRIBE_KEEPALIVE.
+        // Starting a second process here would leave two keyboard hooks alive,
+        // so let the supervisor perform the relaunch when it owns this process.
+        if ProcessInfo.processInfo.environment["KEYSCRIBE_KEEPALIVE"] == "1" {
             DebugLog.shared.record("app restart requested through LaunchAgent")
             NSApp.terminate(nil)
             return

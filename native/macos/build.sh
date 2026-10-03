@@ -6,11 +6,6 @@ mac_root="$project_root/native/macos"
 output_dir="$project_root/dist-native"
 output="$output_dir/KeyScribe.app"
 
-local_identity='Developer ID Application: heunghyun lee (AF68GKBM82)'
-if [[ -z "${KEYSCRIBE_CODESIGN_IDENTITY:-}" ]] &&
-    security find-identity -v -p codesigning | grep -Fq "$local_identity"; then
-    KEYSCRIBE_CODESIGN_IDENTITY="$local_identity"
-fi
 if [[ -z "${KEYSCRIBE_CODESIGN_IDENTITY:-}" && -d "$output" ]] &&
     codesign -dv --verbose=2 "$output" 2>&1 | grep -Eq '^TeamIdentifier=[A-Z0-9]+'; then
     echo '서명된 앱을 서명 없는 빌드로 덮어쓸 수 없습니다. 서명 인증서를 확인해 주세요.' >&2

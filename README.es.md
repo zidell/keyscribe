@@ -107,4 +107,4 @@ Puedes consultar el estado y los errores en el menú de la barra de menús o de 
 - Windows: `%APPDATA%\keyscribe\logs\`
 - Ejecuciones de desarrollo: `dist-native/logs/`
 
-Los registros de la aplicación de inicio de sesión de macOS y de la compilación con vigilancia de fuentes se guardan en `dist-native/app.log` y `dist-native/watch.log`. El [aviso de privacidad](docs/privacy.md) explica cómo se envía el audio y se almacenan las claves de API. El código fuente está disponible bajo la [licencia MIT](LICENSE).
+El [aviso de privacidad](docs/privacy.md) explica cómo se envía el audio y se almacenan las claves de API. El código fuente está disponible bajo la [licencia MIT](LICENSE).

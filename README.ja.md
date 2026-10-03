@@ -107,4 +107,4 @@ Groqキーは選択したプロジェクトに属し、無料枠にはリクエ�
 - Windows: `%APPDATA%\keyscribe\logs\`
 - 開発実行: `dist-native/logs/`
 
-macOSログインアプリとソース監視ビルドのログは`dist-native/app.log`、`dist-native/watch.log`に保存されます。[プライバシー通知](docs/privacy.md)では音声送信とAPIキー保存について説明しています。ソースコードは[MITライセンス](LICENSE)で公開しています。
+[プライバシー通知](docs/privacy.md)では音声送信とAPIキー保存について説明しています。ソースコードは[MITライセンス](LICENSE)で公開しています。

@@ -141,8 +141,6 @@ Groq 키는 선택한 프로젝트에 귀속되고 무료 tier에는 요청·오
 - Windows: `%APPDATA%\keyscribe\logs\`
 - 개발 실행: `dist-native/logs/`
 
-macOS 로그인 앱과 소스 감시 빌드 로그는 `dist-native/app.log`, `dist-native/watch.log`에 저장됩니다.
-
 음성 전송과 API 키 저장 방식은 [개인정보 안내](docs/privacy.md)에 설명되어 있습니다.
 
 소스 코드는 [MIT 라이선스](LICENSE)로 공개합니다.
