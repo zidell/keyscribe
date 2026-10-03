@@ -50,21 +50,21 @@ KeyScribe는 마이크로 녹음된 음성을 텍스트로 변환해 현재 입�
 ## 처음 사용할 때
 
 1. 메뉴 막대 또는 트레이의 KeyScribe 아이콘에서 **설정...**을 열고 ElevenLabs, OpenAI 또는 Groq API 키와 모델을 선택합니다. Groq 기본 모델은 `whisper-large-v3-turbo`입니다.
-2. macOS에서는 마이크와 **시스템 설정 → 개인 정보 보호 및 보안 → 손쉬운 사용** 권한을 허용합니다. Windows에서는 **설정 → 개인 정보 및 보안 → 마이크**에서 데스크톱 앱의 마이크 접근을 허용합니다.
-3. 텍스트를 입력할 창에 커서를 놓고 오른쪽 Command(macOS) 또는 오른쪽 Alt(Windows)를 누른 채 말합니다. 키를 놓으면 전사 결과가 붙여넣어집니다.
+2. macOS에서는 마이크와 **시스템 설정 → 개인 정보 보호 및 보안 → 손쉬운 사용** 권한을 허용합니다. Windows에서는 **설정 → 개인 정보 및 보안 → 마이크**에서 데스크톱 앱의 마이크 접근을 허용합니다. Ubuntu에서는 설정의 단축키 / 권한 탭에서 시스템 창이 묻는 전역 단축키 등록과 키보드 제어(자동 붙여넣기) 권한을 허용합니다.
+3. 텍스트를 입력할 창에 커서를 놓고 오른쪽 Command(macOS), 오른쪽 Alt(Windows) 또는 Ctrl+Alt+Space(Ubuntu)를 누른 채 말합니다. 키를 놓으면 전사 결과가 붙여넣어집니다.
 
 설정에서 단축키, 녹음 종료 방식, 녹음 시간 제한(10·20·30·60분, 기본 30분), 인식 언어, 녹음 시작 효과음 음량, 자동 전송 여부를 바꿀 수 있습니다. 자동 전송을 켜면 붙여넣은 뒤 Enter도 누릅니다. 관리자 권한으로 실행한 Windows 앱에 자동 입력하려면 KeyScribe도 같은 권한으로 실행해야 할 수 있습니다.
 
 ## Ubuntu 지원
 
-macOS·Windows 앱에 더해 C/GTK로 컴파일하는 우분투 네이티브 앱을 추가했습니다.
-[Ubuntu 0.1.1 릴리스](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.1)에서
-`.deb` 설치 파일을 다운로드할 수 있습니다.
-[우분투 빌드·설치·사용 안내](native/linux/README.md)를 참고하세요. PipeWire/PulseAudio
-녹음과 세 서비스의 전사 API를 지원하며, GNOME 포털을 통해 전역 단축키와 자동
-붙여넣기를 사용합니다. 버전 태그를 푸시하면 Ubuntu `.deb`도 자동으로 빌드해
-macOS·Windows 설치 파일과 같은 GitHub Release에 첨부합니다.
-Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니다.
+macOS·Windows 앱과 별도로 C/GTK로 컴파일한 Ubuntu 네이티브 앱을 제공합니다.
+[최신 Ubuntu 릴리스](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)에서 `.deb` 설치 파일을 받을 수 있고,
+빌드·설치·사용법은 [Ubuntu 안내](native/linux/README.md)에 있습니다.
+PipeWire/PulseAudio 녹음과 세 전사 서비스를 지원하며, GNOME과 KDE Plasma에서는
+데스크톱 포털로 전역 단축키와 자동 붙여넣기를 사용합니다. 필요한 포털이 없는
+데스크톱에서는 앱의 녹음 버튼으로 녹음하고 결과를 복사해 붙여넣습니다.
+버전 태그를 푸시하면 Ubuntu `.deb`도 자동으로 빌드해 macOS·Windows 설치 파일과 같은
+GitHub Release에 첨부하고, Ubuntu 전용 업데이트는 `linux-vMAJOR.MINOR.PATCH` 태그로 배포합니다.
 
 ```sh
 ./native/linux/build.sh --test
@@ -140,6 +140,7 @@ Groq 키는 선택한 프로젝트에 귀속되고 무료 tier에는 요청·오
 
 - macOS: `~/Library/Application Support/keyscribe/logs/`
 - Windows: `%APPDATA%\keyscribe\logs\`
+- Ubuntu: `~/.local/share/keyscribe/logs/` (또는 `$XDG_DATA_HOME/keyscribe/logs/`)
 - 개발 실행: `dist-native/logs/`
 
 음성 전송과 API 키 저장 방식은 [개인정보 안내](docs/privacy.md)에 설명되어 있습니다.

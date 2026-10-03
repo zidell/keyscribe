@@ -45,14 +45,23 @@ KeyScribe 是一款语音输入应用：它将麦克风录音转写为文字，�
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | 打开 DMG 并将应用复制到 Applications |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | 打开 DMG 并将应用复制到 Applications |
 | Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | 从 GitHub Releases 下载经 SignPath 签名的安装程序 |
+| Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntu 原生版安装](native/linux/README.md) |
 
 ## 首次使用
 
 1. 从菜单栏或托盘的 KeyScribe 图标打开**设置...**，选择 ElevenLabs、OpenAI 或 Groq API 密钥和模型。Groq 默认模型为 `whisper-large-v3-turbo`。
-2. macOS 请允许麦克风及**系统设置 → 隐私与安全性 → 辅助功能**权限。Windows 请在**设置 → 隐私和安全性 → 麦克风**中允许桌面应用访问麦克风。
-3. 将光标放到需要输入文字的位置，按住右 Command（macOS）或右 Alt（Windows）说话。松开按键即可粘贴转写结果。
+2. macOS 请允许麦克风及**系统设置 → 隐私与安全性 → 辅助功能**权限。Windows 请在**设置 → 隐私和安全性 → 麦克风**中允许桌面应用访问麦克风。Ubuntu 请在设置的“快捷键 / 权限”标签页中，按系统对话框提示注册全局快捷键并允许键盘控制（自动粘贴）。
+3. 将光标放到需要输入文字的位置，按住右 Command（macOS）、右 Alt（Windows）或 Ctrl+Alt+Space（Ubuntu）说话。松开按键即可粘贴转写结果。
 
 可在设置中更改快捷键、录音停止方式、录音时限（10、20、30、60 分钟；默认 30 分钟）、识别语言、录音开始提示音音量和自动发送。启用自动发送后，粘贴完成会按 Enter。若要向以管理员身份运行的 Windows 应用自动输入，KeyScribe 也可能需要以管理员身份运行。
+
+## Ubuntu 支持
+
+除 macOS 和 Windows 应用外，KeyScribe 还提供用 C/GTK 编译的 Ubuntu 原生应用。
+可从[最新 Ubuntu 版本](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)下载 `.deb` 安装文件，构建、安装和使用说明见
+[Ubuntu 指南](native/linux/README.md)。支持 PipeWire/PulseAudio 录音和三种转写服务，
+在 GNOME 和 KDE Plasma 上通过桌面门户使用全局快捷键和自动粘贴。在缺少所需门户的桌面上，
+请用应用中的录音按钮录音，再复制结果粘贴。仅针对 Ubuntu 的更新通过 `linux-vMAJOR.MINOR.PATCH` 标签发布。
 
 ## STT 提供商
 
@@ -106,6 +115,7 @@ Groq 密钥归属于所选项目，免费层有请求和音频处理限制。提
 
 - macOS：`~/Library/Application Support/keyscribe/logs/`
 - Windows：`%APPDATA%\keyscribe\logs\`
+- Ubuntu：`~/.local/share/keyscribe/logs/`（或 `$XDG_DATA_HOME/keyscribe/logs/`）
 - 开发运行：`dist-native/logs/`
 
 [隐私说明](docs/privacy.md)介绍音频传输和 API 密钥存储方式。源代码采用 [MIT 许可证](LICENSE)发布。

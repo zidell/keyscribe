@@ -45,14 +45,26 @@ Consulta la [página de descargas de KeyScribe](https://keyscribe.gitools.net) p
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | Abre el DMG y copia la aplicación a Aplicaciones |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | Abre el DMG y copia la aplicación a Aplicaciones |
 | Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | Descarga el instalador firmado por SignPath desde GitHub Releases |
+| Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Instalación nativa para Ubuntu](native/linux/README.md) |
 
 ## Primer uso
 
 1. Abre **Configuración...** desde el icono de KeyScribe en la barra de menús o la bandeja, y elige una clave y un modelo de ElevenLabs, OpenAI o Groq. El modelo predeterminado de Groq es `whisper-large-v3-turbo`.
-2. En macOS, permite los permisos de Micrófono y **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. En Windows, permite el acceso al micrófono para aplicaciones de escritorio en **Configuración → Privacidad y seguridad → Micrófono**.
-3. Coloca el cursor en el campo donde quieras escribir y mantén pulsada la tecla Command derecha (macOS) o Alt derecha (Windows) mientras hablas. Suelta la tecla para pegar la transcripción.
+2. En macOS, permite los permisos de Micrófono y **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. En Windows, permite el acceso al micrófono para aplicaciones de escritorio en **Configuración → Privacidad y seguridad → Micrófono**. En Ubuntu, registra el atajo global y permite el control del teclado (pegado automático) en la pestaña Atajos / Permisos cuando lo pida el diálogo del sistema.
+3. Coloca el cursor en el campo donde quieras escribir y mantén pulsada la tecla Command derecha (macOS), Alt derecha (Windows) o Ctrl+Alt+Space (Ubuntu) mientras hablas. Suelta la tecla para pegar la transcripción.
 
 En Configuración puedes cambiar el atajo, el método para detener la grabación, el límite de tiempo (10, 20, 30 o 60 minutos; 30 de forma predeterminada), el idioma de reconocimiento, el volumen del sonido de inicio y el envío automático. Cuando está activado el envío automático, KeyScribe pulsa Enter después de pegar. Para escribir automáticamente en una aplicación de Windows ejecutada como administrador, es posible que KeyScribe también deba ejecutarse como administrador.
+
+## Compatibilidad con Ubuntu
+
+Además de las aplicaciones de macOS y Windows, KeyScribe ofrece una aplicación nativa para Ubuntu
+compilada en C/GTK. Descarga el instalador `.deb` desde
+[la última versión para Ubuntu](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true); la compilación, la instalación y el uso se
+explican en la [guía de Ubuntu](native/linux/README.md). Admite grabación con PipeWire/PulseAudio
+y los tres servicios de transcripción, y en GNOME y KDE Plasma usa los portales del escritorio para
+los atajos globales y el pegado automático. En escritorios sin los portales necesarios, graba con el
+botón de la aplicación y copia el resultado para pegarlo. Las actualizaciones solo para Ubuntu se
+publican con etiquetas `linux-vMAJOR.MINOR.PATCH`.
 
 ## Proveedores de STT
 
@@ -106,6 +118,7 @@ Puedes consultar el estado y los errores en el menú de la barra de menús o de 
 
 - macOS: `~/Library/Application Support/keyscribe/logs/`
 - Windows: `%APPDATA%\keyscribe\logs\`
+- Ubuntu: `~/.local/share/keyscribe/logs/` (o `$XDG_DATA_HOME/keyscribe/logs/`)
 - Ejecuciones de desarrollo: `dist-native/logs/`
 
 El [aviso de privacidad](docs/privacy.md) explica cómo se envía el audio y se almacenan las claves de API. El código fuente está disponible bajo la [licencia MIT](LICENSE).

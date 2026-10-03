@@ -45,14 +45,25 @@ KeyScribeは、マイクの録音を文字起こしし、現在の入力欄へ�
 | macOS Apple Silicon | `KeyScribe-macos-arm64-*.dmg` | DMGを開き、アプリをApplicationsへコピー |
 | macOS Intel | `KeyScribe-macos-x64-*.dmg` | DMGを開き、アプリをApplicationsへコピー |
 | Windows 10/11 x64 | `KeyScribe-windows-x64-*.msix` | GitHub ReleasesからSignPath署名済みインストーラーをダウンロード |
+| Ubuntu 24.04+ amd64 | `KeyScribe-ubuntu-amd64-*.deb` | [Ubuntuネイティブ版のインストール](native/linux/README.md) |
 
 ## 最初の使用
 
 1. メニューバーまたはトレイのKeyScribeアイコンから**設定...**を開き、ElevenLabs、OpenAI、またはGroqのAPIキーとモデルを選びます。Groqの既定モデルは`whisper-large-v3-turbo`です。
-2. macOSではマイクと**システム設定 → プライバシーとセキュリティ → アクセシビリティ**を許可します。Windowsでは**設定 → プライバシーとセキュリティ → マイク**でデスクトップアプリのマイクアクセスを許可します。
-3. 入力したい欄にカーソルを置き、右Command（macOS）または右Alt（Windows）を押したまま話します。キーを離すと文字起こし結果が貼り付けられます。
+2. macOSではマイクと**システム設定 → プライバシーとセキュリティ → アクセシビリティ**を許可します。Windowsでは**設定 → プライバシーとセキュリティ → マイク**でデスクトップアプリのマイクアクセスを許可します。Ubuntuでは、設定のショートカット / 権限タブで、システムのダイアログに従ってグローバルショートカットの登録とキーボード操作（自動貼り付け）を許可します。
+3. 入力したい欄にカーソルを置き、右Command（macOS）、右Alt（Windows）、またはCtrl+Alt+Space（Ubuntu）を押したまま話します。キーを離すと文字起こし結果が貼り付けられます。
 
 設定では、ショートカット、録音停止方法、録音時間（10・20・30・60分、既定30分）、認識言語、開始音量、自動送信を変更できます。自動送信を有効にすると、貼り付け後にEnterも押されます。管理者として実行されているWindowsアプリへ自動入力するには、KeyScribeも同じ権限で実行する必要がある場合があります。
+
+## Ubuntu対応
+
+macOS版・Windows版とは別に、C/GTKでコンパイルしたUbuntuネイティブ版を提供しています。
+[最新のUbuntuリリース](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)から`.deb`インストーラーをダウンロードでき、
+ビルド・インストール・使い方は[Ubuntuガイド](native/linux/README.md)にまとめています。
+PipeWire/PulseAudioでの録音と3つの文字起こしサービスに対応し、GNOMEとKDE Plasmaでは
+デスクトップポータルでグローバルショートカットと自動貼り付けを使います。必要なポータルがない
+デスクトップでは、アプリの録音ボタンで録音し、結果をコピーして貼り付けます。
+Ubuntu版だけの更新は`linux-vMAJOR.MINOR.PATCH`タグで配布します。
 
 ## STTプロバイダー
 
@@ -106,6 +117,7 @@ Groqキーは選択したプロジェクトに属し、無料枠にはリクエ�
 
 - macOS: `~/Library/Application Support/keyscribe/logs/`
 - Windows: `%APPDATA%\keyscribe\logs\`
+- Ubuntu: `~/.local/share/keyscribe/logs/`（または`$XDG_DATA_HOME/keyscribe/logs/`）
 - 開発実行: `dist-native/logs/`
 
 [プライバシー通知](docs/privacy.md)では音声送信とAPIキー保存について説明しています。ソースコードは[MITライセンス](LICENSE)で公開しています。

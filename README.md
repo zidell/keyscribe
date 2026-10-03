@@ -51,7 +51,7 @@ See the [KeyScribe download page](https://keyscribe.gitools.net) for downloads a
 
 Ubuntu support is available as a compiled GTK desktop app alongside the macOS
 and Windows apps. Download the `.deb` from
-[KeyScribe Ubuntu 0.1.2](https://github.com/zidell/keyscribe/releases/tag/linux-v0.1.2)
+[the latest Ubuntu release](https://github.com/zidell/keyscribe/releases?q=linux-v&expanded=true)
 or see [Ubuntu build, installation, and usage](native/linux/README.md).
 It supports PipeWire/PulseAudio recording, the three STT providers, and portal-based
 global shortcuts and automatic paste on supported GNOME and KDE Plasma desktops. Tagged releases
@@ -61,8 +61,8 @@ Ubuntu-only updates use `linux-vMAJOR.MINOR.PATCH` tags.
 ## First use
 
 1. Open **Settings...** from the KeyScribe menu-bar or tray icon, then choose an ElevenLabs, OpenAI, or Groq API key and model. Groq's default model is `whisper-large-v3-turbo`.
-2. On macOS, allow Microphone and **System Settings → Privacy & Security → Accessibility** permissions. On Windows, allow desktop-app microphone access under **Settings → Privacy & security → Microphone**.
-3. Put the cursor in the field where you want text, then hold Right Command (macOS) or Right Alt (Windows) while speaking. Release the key to paste the transcription.
+2. On macOS, allow Microphone and **System Settings → Privacy & Security → Accessibility** permissions. On Windows, allow desktop-app microphone access under **Settings → Privacy & security → Microphone**. On Ubuntu, register the global shortcut and allow keyboard control (automatic paste) in the Shortcuts / Permissions tab when the system dialog asks.
+3. Put the cursor in the field where you want text, then hold Right Command (macOS), Right Alt (Windows), or Ctrl+Alt+Space (Ubuntu) while speaking. Release the key to paste the transcription.
 
 In Settings you can change the shortcut, recording-stop method, recording time limit (10, 20, 30, or 60 minutes; 30 by default), recognition language, recording-start sound volume, and automatic sending. With automatic sending enabled, KeyScribe presses Enter after pasting. To automatically type into a Windows app running as administrator, KeyScribe may also need to run as administrator.
 

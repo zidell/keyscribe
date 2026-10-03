@@ -12,8 +12,16 @@ macos_arm64_size="${3:-~0.3 MB}"
 macos_x64_size="${4:-~0.3 MB}"
 windows_size="${5:-~12.18 MB}"
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
+# Ubuntu는 linux-v* 태그로 따로 릴리스하므로, 가장 높은 태그 버전을 다운로드 링크에 쓴다.
+linux_version="${KEYSCRIBE_LINUX_VERSION:-$(git -C "$project_root" ls-remote --tags --refs origin 'refs/tags/linux-v*' |
+    sed 's#.*refs/tags/linux-v##' | sort -V | tail -n 1)}"
+if ! [[ "$linux_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Ubuntu 릴리스 버전을 찾지 못했습니다: '$linux_version'" >&2
+    exit 1
+fi
 mkdir -p "$output_dir"
 sed -e "s/__VERSION__/$version/g" \
+    -e "s/__LINUX_VERSION__/$linux_version/g" \
     -e "s/__MACOS_ARM64_SIZE__/$macos_arm64_size/g" \
     -e "s/__MACOS_X64_SIZE__/$macos_x64_size/g" \
     -e "s/__WINDOWS_SIZE__/$windows_size/g" \

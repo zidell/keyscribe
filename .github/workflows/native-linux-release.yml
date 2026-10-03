@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -72,3 +73,7 @@ jobs:
             dist-native/linux/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
             --title "KeyScribe Ubuntu $KEYSCRIBE_VERSION" --generate-notes
+      - name: Redeploy landing page with the new Ubuntu version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
