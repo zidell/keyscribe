@@ -59,12 +59,10 @@ int main(int argc, char **argv) {
     g_assert_null(capture);
     g_assert_cmpstr(gtk_combo_box_get_active_id(GTK_COMBO_BOX(app.shortcut_choice)), ==, "Alt_R");
     g_assert_true(GTK_IS_COMBO_BOX_TEXT(app.language));
-    g_assert_true(GTK_IS_COMBO_BOX_TEXT(app.hold));
     if (app.model_timer) {
         g_source_remove(app.model_timer);
         app.model_timer = 0;
     }
-    app.settings.hold = FALSE;
     app.portal.keyboard_pending = TRUE;
     shortcut("record", TRUE, NULL);
     g_assert_cmpint(app.state, ==, IDLE);
@@ -81,7 +79,6 @@ int main(int argc, char **argv) {
     g_assert_cmpint(app.state, ==, CONNECTING);
     cancel_action(NULL, NULL);
     g_clear_pointer(&app.portal.keyboard, g_free);
-    app.settings.hold = TRUE;
     start_recording(FALSE);
     gint64 microphone_deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (app.state == CONNECTING && g_get_monotonic_time() < microphone_deadline) {

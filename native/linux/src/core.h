@@ -5,7 +5,7 @@
 typedef enum { PROVIDER_NONE, PROVIDER_OPENAI, PROVIDER_ELEVENLABS, PROVIDER_GROQ } Provider;
 typedef struct {
     char *api_key, *language, *models[4], *keyterms, *replacements, *overlay_position, *shortcut;
-    gboolean hold, auto_send, no_verbatim, mute_during_recording, shortcuts_enabled;
+    gboolean auto_send, no_verbatim, mute_during_recording, shortcuts_enabled;
     int limit_minutes, retention_hours, sound_volume;
 } Settings;
 void settings_init(Settings *s);

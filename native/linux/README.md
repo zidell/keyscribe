@@ -84,8 +84,8 @@ separately for GNOME and KDE so switching cannot overwrite the other grant.
    If permission is lost during transcription, the result is copied to the
    clipboard and Settings stays closed so the target keeps focus.
 4. Focus the target text field, hold the recording shortcut, speak, then release.
-   Select toggle in the recording-mode picker for toggle recording. The recording button and tray
-   menu always use toggle mode. Recording started from the app UI produces a
+   Holding it for more than a second stops recording on release; a shorter tap keeps
+   recording until the next press. The recording button and tray menu always use toggle mode. Recording started from the app UI produces a
    result for manual copying, because that UI has keyboard focus.
 
 On GNOME and KDE Plasma Wayland the app uses the **GlobalShortcuts**, **RemoteDesktop** (keyboard),
@@ -146,7 +146,7 @@ This port follows the existing macOS/Windows implementation:
 
 - Model selector with asynchronous provider model-list loading, refresh, and a
   separately remembered selection for each provider; language selector.
-- Hold/toggle recording, cancellation, 10/20/30/60-minute limits, and original
+- Hold-or-tap recording on one shortcut, cancellation, 10/20/30/60-minute limits, and original
   start/limit sounds with the same 0–200% gain and limiter.
 - Original 260×52 dark rounded recording widget, five animated input-level bars,
   elapsed time, all eight positions, and the original tray icon in idle/red/orange.

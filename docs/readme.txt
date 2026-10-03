@@ -89,7 +89,6 @@ template can supply different values; keep those unless the user requests a chan
 | Meaning | Key on all platforms | Values / default |
 | --- | --- | --- |
 | Transcription language (also UI language where supported) | `language` | String, e.g. `"ko"`, `"en"`, `"ja"`; default `ko` |
-| Hold versus press again to stop | `recording_control` | String: `"hold"` / `"toggle"`; default `"hold"` |
 | Recording time limit | `recording_time_limit_minutes` | Integer: `10`, `20`, `30`, `60`; default `30` |
 | Log and recording retention | `log_retention_hours` | Integer hours: `1`, `24`, `168`, `720`; default `168` |
 | Press Enter after pasting | `auto_send` | Boolean; default `true` |
@@ -102,7 +101,7 @@ template can supply different values; keep those unless the user requests a chan
 | Groq model | `groq_model` | String; default `whisper-large-v3-turbo` |
 | Recognition words | `keyterms` | Array of individual strings, at most 100; default `[]`; commas within a word are literal |
 | Replacement rules | `replacements` | Ordered array of individual rule strings; default `[]` |
-| Recording trigger | `shortcut` | Platform-specific, see below |
+| Recording trigger | `shortcut` | Platform-specific, see below. A tap records until the next press; holding over one second stops on release |
 | Linux shortcut authorization state | `shortcuts_enabled` | Linux only; app-managed boolean, default `false`; do not edit to bypass portal authorization |
 
 Provider selection comes from the API-key prefix (`sk-`, `sk_`, `gsk_`), not from
@@ -159,7 +158,7 @@ The migration maps:
 
 | Legacy INI field | TOML field |
 | --- | --- |
-| `hold=true` / `hold=false` | `recording_control="hold"` / `recording_control="toggle"` |
+| `hold` | dropped; recording mode now follows how long the shortcut is held |
 | `sound_volume` | `recording_start_sound_volume` |
 | `limit_minutes` | `recording_time_limit_minutes` |
 | `retention_hours` | `log_retention_hours` |

@@ -63,7 +63,6 @@ static void settings(void) {
     a.keyterms = g_strdup("A # B\nquoted \"name\"\n한글 🚀\nACME, Inc.");
     g_free(a.replacements);
     a.replacements = g_strdup("안녕 => hello\n하나 -> 둘\nquote => \"x\"\\path\nA # B => C=D");
-    a.hold = FALSE;
     a.auto_send = FALSE;
     a.limit_minutes = 60;
     a.retention_hours = 1;
@@ -80,7 +79,6 @@ static void settings(void) {
     g_assert_cmpstr(a.api_key, ==, b.api_key);
     g_assert_cmpstr(a.keyterms, ==, b.keyterms);
     g_assert_cmpstr(a.replacements, ==, b.replacements);
-    g_assert_false(b.hold);
     g_assert_false(b.auto_send);
     g_assert_cmpint(b.limit_minutes, ==, 60);
     g_assert_cmpint(b.retention_hours, ==, 1);
@@ -92,7 +90,7 @@ static void settings(void) {
     g_autofree char *config = settings_read(dir, "config.toml");
     g_assert_null(strstr(config, "gsk_dummy"));
     g_assert_null(strstr(config, "api_key ="));
-    g_assert_nonnull(strstr(config, "recording_control"));
+    g_assert_null(strstr(config, "recording_control"));
     g_assert_nonnull(strstr(config, "recording_time_limit_minutes"));
     g_assert_nonnull(strstr(config, "recording_start_sound_volume"));
     g_assert_nonnull(strstr(config, "log_retention_hours"));
@@ -173,7 +171,6 @@ static void legacy_settings(void) {
         g_assert_cmpstr(value.models[1], ==, "custom-openai");
         g_assert_cmpstr(value.models[2], ==, "custom-eleven");
         g_assert_cmpstr(value.models[3], ==, "custom-groq");
-        g_assert_false(value.hold);
         g_assert_false(value.auto_send);
         g_assert_false(value.no_verbatim);
         g_assert_false(value.mute_during_recording);
@@ -203,7 +200,6 @@ static void legacy_settings(void) {
         g_assert_cmpstr(value.api_key, ==, "gsk_dummy");
         g_assert_cmpstr(value.keyterms, ==, migrated_terms);
         g_assert_cmpstr(value.replacements, ==, "one => two\nthree => four");
-        g_assert_false(value.hold);
         g_assert_false(value.auto_send);
         settings_clear(&value);
         settings_cleanup(dir);
@@ -282,7 +278,6 @@ static void toml_syntax(void) {
     g_assert_true(settings_load(&value, dir, &error));
     g_assert_no_error(error);
     g_assert_cmpstr(value.language, ==, "ja");
-    g_assert_false(value.hold);
     g_assert_false(value.auto_send);
     g_assert_cmpint(value.limit_minutes, ==, 60);
     g_assert_cmpint(value.retention_hours, ==, 24);
@@ -312,7 +307,6 @@ static void invalid_toml(void) {
         "language = \"ja\"\nlanguage = \"en\"\n",
         "auto_send = \"false\"\n",
         "language = 12\n",
-        "recording_control = \"sometimes\"\n",
         "recording_time_limit_minutes = 45\n",
         "recording_time_limit_minutes = \"60\"\n",
         "log_retention_hours = 5\n",

@@ -14,7 +14,6 @@ void settings_init(Settings *s) {
                                g_strdup("scribe_v2"), g_strdup("whisper-large-v3-turbo")},
                     .keyterms = g_strdup(""),
                     .replacements = g_strdup(""),
-                    .hold = TRUE,
                     .auto_send = TRUE,
                     .no_verbatim = TRUE,
                     .mute_during_recording = TRUE,
@@ -74,8 +73,6 @@ static gboolean load_legacy(Settings *s, const char *path, GError **error) {
     if (g_key_file_has_key(k, "settings", "sound_volume", NULL))
         s->sound_volume =
             CLAMP(g_key_file_get_integer(k, "settings", "sound_volume", NULL), 0, 200);
-    if (g_key_file_has_key(k, "settings", "hold", NULL))
-        s->hold = g_key_file_get_boolean(k, "settings", "hold", NULL);
     if (g_key_file_has_key(k, "settings", "auto_send", NULL))
         s->auto_send = g_key_file_get_boolean(k, "settings", "auto_send", NULL);
     int limit = g_key_file_get_integer(k, "settings", "limit_minutes", NULL);
@@ -271,14 +268,6 @@ static gboolean load_toml(Settings *s, const char *path, GError **error) {
         read_toml_int(table, "log_retention_hours", &s->retention_hours, error) &&
         read_toml_array(table, "keyterms", &s->keyterms, error) &&
         read_toml_array(table, "replacements", &s->replacements, error);
-    char *control = g_strdup(s->hold ? "hold" : "toggle");
-    if (ok) ok = read_toml_string(table, "recording_control", &control, error);
-    if (ok && !g_str_equal(control, "hold") && !g_str_equal(control, "toggle")) {
-        INVALID("'recording_control' must be \"hold\" or \"toggle\"");
-        ok = FALSE;
-    }
-    if (ok) s->hold = g_str_equal(control, "hold");
-    g_free(control);
     if (ok && toml_get(table, "api_key").type != TOML_UNKNOWN) {
         INVALID("Store 'api_key' in user_config.json, not config.toml");
         ok = FALSE;
@@ -440,9 +429,8 @@ gboolean settings_save(const Settings *s, const char *dir, GError **error) {
         "# Top-level TOML keys, double-quoted strings, true/false, integers and string arrays.\n"
         "# API key is stored separately in user_config.json; never put it in this file.\n");
     append_string(out, "shortcut", s->shortcut,
-        "Recording shortcut (Linux portal accelerator), default CTRL+ALT+space; portal approval may be required.");
-    append_string(out, "recording_control", s->hold ? "hold" : "toggle",
-        "Allowed: hold (release key to stop), toggle (press again to stop). Default hold.");
+        "Recording shortcut (Linux portal accelerator), default CTRL+ALT+space; portal approval may be required. "
+        "Tap it to record until the next press; hold it over a second to stop on release.");
     g_string_append_printf(out,
         "\n# Recording limit, minutes: 10, 20, 30, 60. Default 30.\nrecording_time_limit_minutes = %d\n"
         "\n# Log/recording retention, hours: 1, 24, 168, 720. Default 168.\nlog_retention_hours = %d\n"

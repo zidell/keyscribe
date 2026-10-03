@@ -27,7 +27,7 @@ typedef enum { IDLE, CONNECTING, RECORDING, TRANSCRIBING } State;
 typedef struct {
     GtkApplication *application;
     GtkWidget *window, *status, *level, *record_button, *result, *key, *language, *model, *refresh,
-        *terms, *rules, *hold, *send, *limit, *retention, *mute, *no_verbatim, *volume, *position,
+        *terms, *rules, *send, *limit, *retention, *mute, *no_verbatim, *volume, *position,
         *shortcut_choice;
     AppIndicator *indicator;
     GtkWidget *menu_status;
@@ -41,6 +41,8 @@ typedef struct {
     guint timer;
     gboolean from_shortcut;
     gboolean trigger_down;
+    // 지금 누르고 있는 단축키가 녹음을 시작했다면 그 시각. 오래 누른 뒤 떼면 녹음을 끝낸다.
+    gint64 press_started_recording_at;
     GCancellable *cancel, *models_cancel;
     guint model_timer, model_generation;
     gulong model_changed_handler;
@@ -177,6 +179,8 @@ static gboolean key_press(GtkWidget *w, GdkEventKey *event, void *user) {
     }
     return FALSE;
 }
+// 녹음 단축키를 이보다 오래 누르고 있으면 떼는 순간 녹음을 끝낸다. 더 짧으면 다시 누를 때까지 녹음한다.
+#define HOLD_TO_TALK_US G_USEC_PER_SEC
 static void shortcut(const char *id, gboolean pressed, void *user) {
     (void)user;
     if (g_str_equal(id, "cancel")) {
@@ -190,18 +194,22 @@ static void shortcut(const char *id, gboolean pressed, void *user) {
         return;
     app.trigger_down = pressed;
     debug_log(pressed ? "record shortcut pressed" : "record shortcut released");
-    if (app.settings.hold) {
-        if (pressed && (app.state == IDLE || app.state == TRANSCRIBING))
+    if (pressed) {
+        if (app.state == IDLE || app.state == TRANSCRIBING) {
             start_recording(TRUE);
-        else if (!pressed && app.from_shortcut &&
-                 (app.state == RECORDING || app.state == CONNECTING))
+            if (app.state == RECORDING || app.state == CONNECTING)
+                app.press_started_recording_at = g_get_monotonic_time();
+        } else if (app.state == RECORDING || app.state == CONNECTING) {
             stop_recording(FALSE);
-    } else if (pressed) {
-        if (app.state == IDLE || app.state == TRANSCRIBING)
-            start_recording(TRUE);
-        else if (app.state == RECORDING || app.state == CONNECTING)
-            stop_recording(FALSE);
+        }
+        return;
     }
+    // 짧게 눌렀다 떼면 다시 누를 때까지 녹음하고, 오래 누르고 있었으면 떼는 순간 끝낸다.
+    gint64 held_since = app.press_started_recording_at;
+    app.press_started_recording_at = 0;
+    if (held_since && g_get_monotonic_time() - held_since >= HOLD_TO_TALK_US &&
+        (app.state == RECORDING || app.state == CONNECTING))
+        stop_recording(FALSE);
 }
 static void binding_done(GVariant *values, const GError *error, void *user) {
     (void)user;
@@ -213,9 +221,8 @@ static void binding_done(GVariant *values, const GError *error, void *user) {
     app.trigger_down = FALSE;
     settings_save(&app.settings, app.config_dir, NULL);
     g_autofree char *registered = g_strdup_printf(
-        "record shortcut registration response trigger=%s session=%s hold=%d",
-        app.settings.shortcut, app.portal.shortcuts ? app.portal.shortcuts : "none",
-        app.settings.hold);
+        "record shortcut registration response trigger=%s session=%s",
+        app.settings.shortcut, app.portal.shortcuts ? app.portal.shortcuts : "none");
     debug_log(registered);
     GString *message = g_string_new("전역 단축키: ");
     g_autoptr(GVariant) items =
@@ -591,7 +598,10 @@ static gboolean recording_tick(void *user) {
     if (app.state == RECORDING) {
         g_autofree char *message = g_strdup_printf(
             "녹음 중 %02d:%02d — %s", seconds / 60, seconds % 60,
-            app.settings.hold && app.from_shortcut ? "단축키를 놓으면 전사" : "다시 누르면 전사");
+            app.press_started_recording_at &&
+                    g_get_monotonic_time() - app.press_started_recording_at >= HOLD_TO_TALK_US
+                ? "단축키를 놓으면 전사"
+                : "다시 누르면 전사");
         set_status(message);
     }
     return G_SOURCE_CONTINUE;
@@ -731,6 +741,7 @@ static void start_recording(gboolean from_shortcut) {
 static void stop_recording(gboolean cancel) {
     if (app.state != RECORDING && app.state != CONNECTING)
         return;
+    app.press_started_recording_at = 0;
     audio_clear();
     output_restore(&app.output);
     app.input_level = 0;
@@ -960,7 +971,6 @@ static void save_settings(GtkWidget *w, void *user) {
         set_status("API 키에는 줄바꿈을 넣을 수 없습니다");
         return;
     }
-    next.hold = g_strcmp0(gtk_combo_box_get_active_id(GTK_COMBO_BOX(app.hold)), "hold") == 0;
     next.auto_send = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.send));
     next.no_verbatim = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.no_verbatim));
     next.mute_during_recording = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.mute));
@@ -1021,7 +1031,6 @@ static void discard_settings(GtkWidget *w, void *user) {
     gtk_range_set_value(GTK_RANGE(app.volume), app.settings.sound_volume);
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(app.position), app.settings.overlay_position);
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(app.shortcut_choice), app.settings.shortcut);
-    gtk_combo_box_set_active_id(GTK_COMBO_BOX(app.hold), app.settings.hold ? "hold" : "toggle");
     g_autofree char *limit = g_strdup_printf("%d", app.settings.limit_minutes),
                     *retention = g_strdup_printf("%d", app.settings.retention_hours);
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(app.limit), limit);
@@ -1270,13 +1279,6 @@ static void activate(GtkApplication *application, void *user) {
                        FALSE, 0);
     gtk_box_pack_start(GTK_BOX(settings), app.shortcut_choice, FALSE, FALSE, 0);
     button(settings, "키를 눌러 지정", G_CALLBACK(choose_shortcut));
-    app.hold = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app.hold), "hold", "누르는 동안 녹음");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app.hold), "toggle",
-                              "한번 누르면 시작, 다시 누르면 종료");
-    gtk_combo_box_set_active_id(GTK_COMBO_BOX(app.hold), app.settings.hold ? "hold" : "toggle");
-    gtk_box_pack_start(GTK_BOX(settings), gtk_label_new("녹음 방식"), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(settings), app.hold, FALSE, FALSE, 0);
     app.send = gtk_check_button_new_with_label("자동 붙여넣기 후 Enter 키 누르기");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.send), app.settings.auto_send);
     gtk_box_pack_start(GTK_BOX(settings), app.send, FALSE, FALSE, 0);
@@ -1326,7 +1328,6 @@ static void activate(GtkApplication *application, void *user) {
     gtk_grid_set_column_spacing(GTK_GRID(compact), 16);
     gtk_grid_set_row_spacing(GTK_GRID(compact), 8);
     detach(app.shortcut_choice);
-    detach(app.hold);
     detach(app.limit);
     detach(app.retention);
     detach(app.position);
@@ -1353,7 +1354,6 @@ static void activate(GtkApplication *application, void *user) {
     button(shortcut_row, "키 지정", G_CALLBACK(choose_shortcut));
     g_object_ref_sink(shortcut_row);
     form_row(compact, 0, "녹음 단축키", shortcut_row);
-    form_row(compact, 1, "녹음 방식", app.hold);
     GtkWidget *time_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(time_row), app.limit, TRUE, TRUE, 0);
     g_object_unref(app.limit);
@@ -1361,26 +1361,26 @@ static void activate(GtkApplication *application, void *user) {
     gtk_box_pack_start(GTK_BOX(time_row), app.retention, TRUE, TRUE, 0);
     g_object_unref(app.retention);
     g_object_ref_sink(time_row);
-    form_row(compact, 2, "녹음 시간 제한", time_row);
-    form_row(compact, 3, "녹음 위젯 위치", app.position);
-    form_row(compact, 4, "인식 단어\n(한 줄에 하나)", words_scroll);
-    form_row(compact, 5, "치환 단어\n찾을 말 => 바꿀 말", rules_scroll);
+    form_row(compact, 1, "녹음 시간 제한", time_row);
+    form_row(compact, 2, "녹음 위젯 위치", app.position);
+    form_row(compact, 3, "인식 단어\n(한 줄에 하나)", words_scroll);
+    form_row(compact, 4, "치환 단어\n찾을 말 => 바꿀 말", rules_scroll);
     GtkWidget *help_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     button(help_row, "사용법", G_CALLBACK(replacement_help));
-    gtk_grid_attach(GTK_GRID(compact), help_row, 0, 6, 1, 1);
-    gtk_grid_attach(GTK_GRID(compact), app.no_verbatim, 1, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(compact), help_row, 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(compact), app.no_verbatim, 1, 5, 1, 1);
     g_object_unref(app.no_verbatim);
-    gtk_grid_attach(GTK_GRID(compact), app.mute, 1, 7, 1, 1);
+    gtk_grid_attach(GTK_GRID(compact), app.mute, 1, 6, 1, 1);
     g_object_unref(app.mute);
-    gtk_grid_attach(GTK_GRID(compact), app.send, 1, 8, 1, 1);
+    gtk_grid_attach(GTK_GRID(compact), app.send, 1, 7, 1, 1);
     g_object_unref(app.send);
-    form_row(compact, 9, "녹음 시작 효과음", app.volume);
+    form_row(compact, 8, "녹음 시작 효과음", app.volume);
     GtkWidget *save_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_halign(save_row, GTK_ALIGN_END);
     button(save_row, "적용", G_CALLBACK(save_settings));
     GtkWidget *close = button(save_row, "닫기", G_CALLBACK(close_settings));
     gtk_widget_set_tooltip_text(close, "적용하지 않은 변경을 버리고 설정 창을 닫습니다.");
-    gtk_grid_attach(GTK_GRID(compact), save_row, 1, 10, 1, 1);
+    gtk_grid_attach(GTK_GRID(compact), save_row, 1, 9, 1, 1);
     GtkWidget *integration = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_container_set_border_width(GTK_CONTAINER(integration), 12);
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), integration, gtk_label_new("단축키 / 권한"));
